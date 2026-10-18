@@ -1,0 +1,19 @@
+{
+  "name": "mini-monday",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small monday.com-style work-management app and embedded-app platform, rebuilt from REA findings.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "bin": {
+    "mm": "cli/mm.js"
+  },
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "e2e": "node scripts/e2e-smoke.mjs"
+  }
+}
