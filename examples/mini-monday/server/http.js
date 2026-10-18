@@ -3,9 +3,10 @@
  * SPEC-2 §4 and SPEC-3 §3–4):
  *
  * - host: the boards app (`web/`), the GraphQL API at `/v2`, the SSE
- *   streams, app session tokens, public forms (`/f/<token>`) and the
- *   sign-in routes (`/auth/*`); with a site password, the site gate
- *   (`routes/gate.js`) runs before every host route and `/signin` exists;
+ *   streams, app session tokens, public forms (`/f/<token>`), the
+ *   importer (`/import/*`, SPEC-4 §5) and the sign-in routes (`/auth/*`);
+ *   with a site password, the site gate (`routes/gate.js`) runs before
+ *   every host route and `/signin` exists;
  * - apps: iframe apps (`apps/`), the SDK and the example app's backend.
  *   It sets no cookies and serves no API.
  *
@@ -30,6 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAuth } from "./auth.js";
 import { createEventHub } from "./events.js";
+import { createImportJobs } from "./import/jobs.js";
 import {
   STATUS_SUMMARY_PATH,
   getAppsConfig,
@@ -53,6 +55,12 @@ import {
   postSignin,
 } from "./routes/gate.js";
 import { getEvents, getSchema, postGraphql } from "./routes/graphql.js";
+import {
+  importJobRoute,
+  matchImportJobPath,
+  postImportRun,
+  postImportScan,
+} from "./routes/import.js";
 import { getHealthz, getRobots } from "./routes/platform.js";
 import { staticRoute } from "./routes/static.js";
 import { createSchema } from "./schema.js";
@@ -96,6 +104,8 @@ const HOST_ROUTES = new Map([
   ["/auth/demo-users", { GET: getDemoUsers }],
   ["/auth/demo-login", { POST: postDemoLogin }],
   ["/auth/logout", { POST: postLogout }],
+  ["/import/scan", { POST: postImportScan }],
+  ["/import/run", { POST: postImportRun }],
 ]);
 /** Hosted mode only (SPEC-3 §2, §4). */
 const HOSTED_ROUTES = [
@@ -117,10 +127,12 @@ const APPS_STATIC = staticRoute({
   csp: "appsCsp",
 });
 
-/** Host fallback: public form pages, then static files. */
+/** Host fallback: public form pages, import jobs, then static files. */
 function hostFallback(req, res, cfg, target) {
   const form = matchFormPath(target.pathname);
   if (form) return formRoute(req, res, cfg, form);
+  const job = matchImportJobPath(target.pathname);
+  if (job) return importJobRoute(req, res, cfg, job);
   return HOST_STATIC(req, res, cfg, target);
 }
 
@@ -274,7 +286,7 @@ function readLayout(options) {
 
 /** The shared server state route handlers receive as `cfg`. */
 async function createState(options, layout) {
-  const { store, log, demoLogin, trustProxy, now } = options;
+  const { store, log, demoLogin, trustProxy, now, importConnectors } = options;
   const [webRoot, appsRoot] = await Promise.all(
     ["web", "apps"].map((name) => realpath(path.join(ROOT, name))),
   );
@@ -290,6 +302,11 @@ async function createState(options, layout) {
   Object.assign(cfg, { schema: createSchema(), sdl: new Map(), demoLogin });
   Object.assign(cfg, { hosted: layout.hosted, gate, trustProxy, headers: [] });
   cfg.formLimiter = createFormLimiter({ now });
+  // Import progress reaches the importer's `stream=me` as `event: import`.
+  const publish = (userId, payload) =>
+    events.publish(userId, "import", payload);
+  const connectors = importConnectors;
+  cfg.imports = createImportJobs({ store, publish, connectors, log, now });
   return cfg;
 }
 
@@ -329,9 +346,11 @@ async function listenAll(cfg, layout, { bind, servers }) {
  * `demoLogin` (default true) turns on demo sign-in
  * (`server/routes/auth.js`); `sitePassword` turns on the site gate;
  * `trustProxy` takes client IPs from `X-Forwarded-For`
- * (`routes/rate-limit.js`); `now` is the clock of sessions and rate
- * limits. `close()` ends SSE streams, stops the services' store listeners
- * and closes the servers.
+ * (`routes/rate-limit.js`); `now` is the clock of sessions, rate limits
+ * and import jobs; `importConnectors` (`{ monday, clickup, files }`, each
+ * with `scan`) replaces the importer's connectors (tests). `close()` ends
+ * SSE streams and import jobs, stops the services' store listeners and
+ * closes the servers.
  * @returns {Promise<{ hostOrigin, appsOrigin, hostServer, appsServer, auth,
  *   close(): Promise<void> }>} (`appsServer` is null in hosted mode, where
  *   `hostServer` is the one listener)
@@ -344,14 +363,18 @@ export async function startServers({
   sitePassword = null,
   trustProxy = false,
   now = () => Date.now(),
+  importConnectors = null,
   ...layoutOptions
 } = {}) {
   if (typeof store?.getBoard !== "function")
     invalidOption("A store is required");
   if (typeof demoLogin !== "boolean") invalidOption("demoLogin is a boolean");
   if (typeof trustProxy !== "boolean") invalidOption("trustProxy is a boolean");
+  if (importConnectors !== null && typeof importConnectors !== "object")
+    invalidOption("importConnectors is an object of connector modules");
   const layout = readLayout(layoutOptions);
   const options = { store, log, demoLogin, sitePassword, trustProxy, now };
+  options.importConnectors = importConnectors;
   const cfg = await createState(options, layout);
   const servers = [];
   const stopSessions = cfg.auth.onSessionEnded((id) =>
@@ -359,6 +382,7 @@ export async function startServers({
   );
   const close = async () => {
     stopSessions();
+    cfg.imports.close();
     cfg.events.close();
     cfg.auth.close();
     await Promise.all(servers.map(closeServer));

@@ -15,6 +15,9 @@
  *   notification's `kind`, `url` and `text` rendered for that user, so a
  *   guest reads "Someone" for people outside their directory) and
  *   `notifications_read` events. They end when the user is deactivated.
+ *   `publish(userId, name, payload)` also sends them messages that are no
+ *   store change (`event: import`, the progress of the user's import
+ *   jobs, SPEC-4 §5).
  *
  * Streams are indexed by board, by user and by browser session, so a
  * change costs work only for the streams it can concern (`streamsFor`):
@@ -69,6 +72,8 @@ const ACCESS_REACH = Object.freeze({
 
 const message = (name, event) =>
   `event: ${name}\ndata: ${JSON.stringify(event)}\n\n`;
+/** Names `publish` may send (never "change" or "notification"). */
+const PUBLISHED_NAMES = new Set(["import"]);
 
 const SKIP = Object.freeze({ deliver: false, close: false });
 const DELIVER = Object.freeze({ deliver: true, close: false });
@@ -328,7 +333,8 @@ function streamOutput(index, onEmpty) {
  * Creates the hub over `store.on(...)` change events. `sessionActive(id)`
  * tells whether a browser session still exists (without extending it).
  * @returns {{ handle(req, res, options): boolean, endSession(id): void,
- *   close(): void, readonly size: number }}
+ *   publish(userId, name, payload): void, close(): void,
+ *   readonly size: number }}
  */
 export function createEventHub({
   store,
@@ -385,6 +391,24 @@ export function createEventHub({
       res.once("error", cleanup);
       send(client, ": connected\n\n");
       return true;
+    },
+    /**
+     * Sends `event: <name>` with `payload` to the notification streams of
+     * `userId` (an active user; streams of ended sessions end instead).
+     */
+    publish(userId, name, payload) {
+      if (!PUBLISHED_NAMES.has(name))
+        throw new TypeError(`Unknown event ${name}`);
+      const streams = Array.from(index.users.get(String(userId)) ?? []);
+      const active = isActive(store.getUser(String(userId)));
+      const text = message(name, payload);
+      for (const client of streams) {
+        if (client.stream !== "me") continue;
+        const { sessionId } = client;
+        const live = sessionId === null || sessionActive(sessionId);
+        if (!active || !live) end(client);
+        else send(client, text);
+      }
     },
     /** Ends the streams opened with browser session `sessionId`. */
     endSession(sessionId) {

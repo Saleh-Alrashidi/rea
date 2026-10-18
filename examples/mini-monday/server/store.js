@@ -2,14 +2,16 @@
  * The mini-monday (Worklane) store: `createStore` wires the shared state,
  * change listeners and persistence to the domain modules in
  * `server/store/` (people, workspaces, boards, items, grants, docs, notes,
- * forms, activity and app storage).
+ * forms, activity, app storage and imports).
  *
  * Records returned by the store are frozen. Every mutator emits one change
  * event `{ type, board_id?, item_id?, group_id?, column_id?, user_ids?,
  * resource_kind?, resource_id? }`, followed by one `notification_created`
  * event per notified user (and, for `deleteTeam`, one `members_changed`
  * event per resource that lost the team's grant), and returns the new or
- * updated record. Unknown IDs return null and emit nothing. Expected failures return
+ * updated record (`importBoard` writes a whole board as one change with
+ * one `board_imported` event, SPEC-4 §4). Unknown IDs return null and
+ * emit nothing. Expected failures return
  * `{ ok: false, reason, message?, … }` (see `server/store-state.js`);
  * arguments of the wrong type throw a TypeError.
  *
@@ -24,6 +26,7 @@ import { boardApi } from "./store/boards.js";
 import { docApi } from "./store/docs.js";
 import { formApi } from "./store/forms.js";
 import { grantApi } from "./store/grants.js";
+import { importApi } from "./store/imports.js";
 import { itemApi } from "./store/items.js";
 import { noteApi } from "./store/notes.js";
 import { peopleApi } from "./store/people.js";
@@ -49,6 +52,7 @@ const DOMAINS = [
   formApi,
   activityApi,
   storageApi,
+  importApi,
 ];
 
 /**
