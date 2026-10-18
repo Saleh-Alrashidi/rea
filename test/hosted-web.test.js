@@ -1,15 +1,16 @@
 /**
  * The browser side of the site gate (SPEC-3 §2): the sign-in page script
  * (`web/signin.js`: outcomes, `next` with the hash, the form's error and
- * busy states) and the API client (`web/api.js`), which opens the sign-in
- * page when the gate answers SITE_LOCKED and treats a sign-out the gate
- * already made as done.
+ * busy states) and the API clients (`web/api.js` and the importer's, which
+ * uses it), which open the sign-in page when the gate answers SITE_LOCKED
+ * and treat a sign-out the gate already made as done.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { graphql, listDemoUsers, logout, request } from "../web/api.js";
 import { requestedNext, signinOutcome, wireSignin } from "../web/signin.js";
+import { getJob } from "../web/ui/import/import-api.js";
 import { fire, installFakeDom } from "./fake-dom.js";
 
 const LOCKED = {
@@ -209,6 +210,10 @@ test("api.js opens the sign-in page when the site gate answers SITE_LOCKED", asy
   responses.push(jsonResponse(401, LOCKED));
   await assert.rejects(listDemoUsers(), /Sign in/);
   assert.equal(location.visits.length, 2);
+  // The importer's requests too: a job read while the site session ends.
+  responses.push(jsonResponse(401, LOCKED));
+  await assert.rejects(getJob("j".repeat(22)), /Sign in/);
+  assert.equal(location.visits.length, 3);
   // Other failures stay where they are.
   const expired = {
     errors: [{ message: "x", extensions: { code: "UNAUTHENTICATED" } }],
@@ -217,7 +222,7 @@ test("api.js opens the sign-in page when the site gate answers SITE_LOCKED", asy
   await assert.rejects(graphql("{ me { id } }"), /x/);
   responses.push(jsonResponse(403, { errors: [{ message: "No" }] }));
   await assert.rejects(graphql("{ me { id } }"), /No/);
-  assert.equal(location.visits.length, 2);
+  assert.equal(location.visits.length, 3);
 });
 
 test("logout: a session the gate already ended counts as signed out", async (t) => {

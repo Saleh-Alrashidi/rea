@@ -329,6 +329,13 @@ a.activity-item:hover {
   text-decoration: line-through var(--color-text-muted);
 }
 
+.activity-detail {
+  margin: 2px 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
 .activity-change {
   display: flex;
   flex-wrap: wrap;

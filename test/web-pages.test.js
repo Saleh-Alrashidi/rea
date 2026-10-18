@@ -19,7 +19,9 @@ import {
   NOTIFICATION_KINDS,
   RESOURCE_KINDS,
   boardKind,
+  notificationKind,
 } from "../web/ui/components/labels.js";
+import { NOTIFICATION_KINDS as SERVER_NOTIFICATION_KINDS } from "../server/store-state.js";
 import { byRecency, rememberVisit } from "../web/ui/shell/recent.js";
 import { sharedCards } from "../web/pages/shared.js";
 
@@ -209,6 +211,12 @@ test("labels cover every enum value and fall back safely", () => {
     for (const info of Object.values(table))
       assert.ok(icons.has(info.icon), info.icon);
   }
+  // Every notification the server sends has its own label.
+  assert.deepEqual(
+    Object.keys(NOTIFICATION_KINDS).sort(),
+    [...SERVER_NOTIFICATION_KINDS].sort(),
+  );
+  assert.equal(notificationKind("import_finished").label, "Import finished");
   assert.equal(plural(1, "board"), "1 board");
   assert.equal(plural(3, "board"), "3 boards");
   const now = Date.parse("2026-10-18T12:00:00Z");

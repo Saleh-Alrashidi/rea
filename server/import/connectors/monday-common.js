@@ -1,18 +1,11 @@
 /**
- * Shared parts of the monday.com connector: the warning report (repeats
- * are counted per path and message instead of listed one by one), path
- * scopes, scan limits, monday's JSON text fields (`value`, `settings_str`,
- * block `content`), monday color names, update HTML → text, and doc blocks
- * (delta JSON) → SPEC-2 blocks.
- *
- * Generic normalization (trimming and cutting names and texts to Worklane
- * limits, empty names, unknown users/groups/columns, invalid colors and
- * URLs, unknown block types, status labels used but not listed) belongs to
- * `../snapshot.js`, which validates every connector's output; this
- * connector passes source values through for it and reports only what
- * monday-specific conversion loses.
+ * monday.com-specific parts of the monday connector: monday's JSON text
+ * fields (`value`, `settings_str`, block `content`), monday color names,
+ * update HTML → text, and doc blocks (delta JSON) → SPEC-2 blocks. What
+ * every connector shares (warnings, scopes, limits) is `common.js`.
  */
-const MAX_WARNINGS = 1000;
+import { hexColor, isObject, str } from "./common.js";
+
 const BLOCK_TYPES = Object.freeze({
   normal_text: "paragraph",
   large_title: "heading1",
@@ -60,21 +53,6 @@ const ENTITIES = Object.freeze({
   nbsp: " ",
 });
 
-export const isObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** Strings as is, numbers as text, anything else "". */
-export function str(value) {
-  if (typeof value === "string") return value;
-  return typeof value === "number" ? String(value) : "";
-}
-
-/** A non-empty ID string (monday IDs are strings; numbers are accepted). */
-export const idOf = (value) => (str(value) === "" ? null : str(value));
-
-export const listOf = (value) =>
-  Array.isArray(value) ? value.filter(isObject) : [];
-
 /** monday's JSON text (`value`, `settings_str`, `content`) → value or null. */
 export function parseJson(text) {
   if (typeof text !== "string") return isObject(text) ? text : null;
@@ -91,69 +69,18 @@ export function settingsOf(text) {
 }
 
 /**
- * The scan's warnings. `add(code, message, path)` lists one; `count(code,
- * message, path)` folds repeats into one "message: n" warning. `finish()`
- * returns the list (at most 1,000 plus a warnings_omitted entry).
- */
-export function createReport() {
-  const list = [];
-  const counters = new Map();
-  let hidden = 0;
-  const add = (code, message, path) => {
-    if (list.length < MAX_WARNINGS) list.push({ code, message, path });
-    else hidden += 1;
-  };
-  const count = (code, message, path) => {
-    const key = JSON.stringify([code, message, path]);
-    const entry = counters.get(key) ?? { code, message, path, n: 0 };
-    entry.n += 1;
-    counters.set(key, entry);
-  };
-  const finish = () => {
-    for (const { code, message, path, n } of counters.values()) {
-      add(code, `${message}: ${n}`, path);
-    }
-    if (hidden > 0) {
-      const message = `${hidden} more warnings were not listed`;
-      list.push({ code: "warnings_omitted", message, path: "warnings" });
-    }
-    return list;
-  };
-  return { add, count, finish };
-}
-
-/** `add`/`count` bound to one snapshot path. */
-export function scopeAt(report, path) {
-  return {
-    path,
-    add: (code, message) => report.add(code, message, path),
-    count: (code, message) => report.count(code, message, path),
-  };
-}
-
-/**
- * A monday color as `#rrggbb`: hex colors (3 or 6 digits) and monday color
- * names map to colors, absent ones to `fallback`; anything else passes
- * through for the snapshot's color check to replace and report.
+ * A monday color as `#rrggbb`: monday color names map to colors, then as
+ * `hexColor` (hex colors, `fallback` when absent, anything else passed
+ * through for the snapshot's color check).
  */
 export function colorOf(value, fallback) {
-  if (value === undefined || value === null || value === "") return fallback;
-  const raw = str(value).trim().toLowerCase();
-  if (/^#[0-9a-f]{6}$/.test(raw)) return raw;
-  if (/^#[0-9a-f]{3}$/.test(raw)) {
-    return `#${raw.slice(1).replace(/./g, (digit) => digit + digit)}`;
-  }
-  return NAMED_COLORS[raw.replace(/[\s-]+/g, "_")] ?? str(value);
-}
-
-/** Records reaching scan limit `kind` once (and stops reading updates). */
-export function limitHit(ctx, kind, path) {
-  if (ctx.stopped.has(kind)) return;
-  ctx.stopped.add(kind);
-  if (kind === "updates") ctx.flags.updates = false;
-  const limit = ctx.limits[kind].toLocaleString("en-US");
-  const message = `Stopped at the scan limit of ${limit} ${kind}; the rest was not read`;
-  ctx.report.add(`limit_${kind}`, message, path);
+  const name = str(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return Object.hasOwn(NAMED_COLORS, name)
+    ? NAMED_COLORS[name]
+    : hexColor(value, fallback);
 }
 
 function decodeEntity(match, name) {

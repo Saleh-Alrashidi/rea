@@ -125,10 +125,16 @@ function entryNode(entry, board) {
         "p",
         { class: "activity-text" },
         h("strong", { class: "activity-actor" }, actor.name),
+        actor.via
+          ? h("span", { class: "activity-via" }, ` (${actor.via})`)
+          : null,
         " ",
         described.segments.map((segment) => segmentNode(segment, board.id)),
       ),
       changeChips(described),
+      described.detail
+        ? h("p", { class: "activity-detail" }, described.detail)
+        : null,
     ),
     h(
       "div",

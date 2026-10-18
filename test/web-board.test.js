@@ -194,6 +194,23 @@ test("activity entries read as sentences with from → to chips", () => {
   );
   assert.deepEqual(unknown.segments, [{ text: "made a change" }]);
   assert.deepEqual([unknown.from.text, unknown.to.text], ["x", "y"]);
+  // An imported board: the import's summary is a line of its own.
+  const imported = describeActivity(
+    entry({
+      kind: "board_imported",
+      actor_label: "Import from monday.com",
+      to_text: "Imported from monday.com account Acme: 3 items, 1 group",
+    }),
+    BOARD,
+  );
+  assert.equal(imported.icon, "inbox");
+  assert.deepEqual(imported.segments, [{ text: "imported this board" }]);
+  assert.deepEqual([imported.from, imported.to], [null, null]);
+  assert.equal(
+    imported.detail,
+    "Imported from monday.com account Acme: 3 items, 1 group",
+  );
+  assert.equal(status.detail, null, "other kinds have no detail line");
   // Unknown columns are named generically.
   const column = describeActivity(
     entry({ kind: "column_value_changed", column_id: "gone", to_text: "1" }),
@@ -206,6 +223,13 @@ test("activity actors: users, form submissions or hidden people", () => {
   const user = activityActor(entry({ kind: "item_created" }));
   assert.equal(user.kind, "user");
   assert.equal(user.user.color, "#d6409f");
+  assert.equal(user.via, null, "the label is the user's own name");
+  // A user acting through an import keeps the import's label.
+  const importer = activityActor(
+    entry({ kind: "member_added", actor_label: "Import from ClickUp" }),
+  );
+  assert.equal(importer.name, "Sam Lee");
+  assert.equal(importer.via, "Import from ClickUp");
   const form = activityActor(
     entry({
       kind: "form_submitted",

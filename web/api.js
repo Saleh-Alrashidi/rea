@@ -1,6 +1,7 @@
 /**
  * Host-app HTTP client: GraphQL over `POST /v2`, app session tokens, the
- * server-sent event streams and the demo sign-in routes. Every request is
+ * server-sent event streams, the demo sign-in routes and other JSON routes
+ * (`requestJson`, e.g. the importer's). Every request is
  * same-origin and authenticated by the HttpOnly session cookie; nothing here
  * stores credentials.
  *
@@ -37,7 +38,9 @@ const STATUS_CODES = new Map([
  * A failed request. `code` is the first error's `extensions.code`
  * (`NOT_FOUND`, `FORBIDDEN`, `VERSION_CONFLICT`, …), `errors` the full
  * GraphQL error list, `status` the HTTP status (when the request itself
- * failed) and `version` the current version on `VERSION_CONFLICT`.
+ * failed), `version` the current version on `VERSION_CONFLICT` and
+ * `details` the list a route attached as `extensions.errors` (an invalid
+ * import plan's `{ path, message }` entries).
  */
 export class ApiError extends Error {
   constructor(errors, { status } = {}) {
@@ -53,6 +56,8 @@ export class ApiError extends Error {
     this.status = status;
     const version = first?.extensions?.version;
     if (Number.isSafeInteger(version)) this.version = version;
+    const details = first?.extensions?.errors;
+    if (Array.isArray(details)) this.details = details;
   }
 }
 
@@ -115,22 +120,36 @@ function failed(response, body) {
   return error;
 }
 
-async function send(path, { method = "POST", body, headers = {} }) {
+/** `body` is sent as JSON; `raw` (a Blob or File) as is. */
+async function send(path, { method = "POST", body, raw, headers = {} }) {
   const init = {
     method,
     credentials: "same-origin",
     cache: "no-store",
     headers: { Accept: "application/json", ...headers },
   };
-  if (body !== undefined) {
+  if (raw !== undefined) {
+    init.body = raw;
+  } else if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
   return globalThis.fetch(path, init);
 }
 
-async function postJson(path, { body, headers = {} }) {
-  const response = await send(path, { body, headers });
+/**
+ * Calls a host REST route (POST unless `method` says otherwise) and
+ * returns the JSON object it answers. `body` is sent as JSON, `raw` (a
+ * Blob or File) as is with the caller's `headers`. Failures throw
+ * `ApiError`s like every request here, including the site gate's.
+ *
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown, raw?: Blob,
+ *   headers?: Record<string, string> }} [options]
+ * @returns {Promise<object>}
+ */
+export async function requestJson(path, options = {}) {
+  const response = await send(path, options);
   const parsed = await readJson(response);
   if (!response.ok || !isPlainObject(parsed)) {
     throw failed(response, parsed);
@@ -179,7 +198,7 @@ export async function graphql(query, variables = {}, options = {}) {
   if (typeof operationName === "string" && operationName !== "") {
     body.operationName = operationName;
   }
-  return postJson(API_PATH, { body, headers });
+  return requestJson(API_PATH, { body, headers });
 }
 
 /**
@@ -209,7 +228,7 @@ export async function request(query, variables = {}) {
  */
 export async function requestSessionToken(installId) {
   const body = { install_id: readId(installId, "installId") };
-  const result = await postJson(SESSION_TOKEN_PATH, { body });
+  const result = await requestJson(SESSION_TOKEN_PATH, { body });
   if (
     typeof result.token !== "string" ||
     typeof result.expires_at !== "string"

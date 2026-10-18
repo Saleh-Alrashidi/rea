@@ -5,7 +5,8 @@
  * bounded client (`../upstream.js`) and returns the normalized snapshot
  * (SPEC-4 §2). Conversion lives in `monday-board.js` (boards, items,
  * updates), `monday-columns.js` (columns and values) and
- * `monday-common.js` (warnings, limits, doc blocks).
+ * `monday-common.js` (monday's JSON fields, colors, HTML, doc blocks), with
+ * the warnings and limits every connector shares from `common.js`.
  *
  * Board metadata is listed 25 boards per page; items are then read per
  * board (`items_page` + `next_items_page`, 200 per page) so a failing board
@@ -25,7 +26,6 @@
 import { UpstreamError, createUpstream, throwIfAborted } from "../upstream.js";
 import { UPDATES_PER_ITEM, addItems, createBoard } from "./monday-board.js";
 import {
-  convertBlocks,
   createReport,
   idOf,
   isObject,
@@ -33,7 +33,8 @@ import {
   listOf,
   scopeAt,
   str,
-} from "./monday-common.js";
+} from "./common.js";
+import { convertBlocks } from "./monday-common.js";
 import { LIMITS } from "../../input.js";
 import { SNAPSHOT_LIMITS } from "../snapshot.js";
 

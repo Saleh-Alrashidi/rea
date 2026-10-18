@@ -6,12 +6,12 @@
  * cannot leave their path segment, ClickUp's epoch-millisecond times, and
  * the people a scan sees.
  *
- * Generic helpers (warning report, path scopes, scan limits, colors) are
- * the monday connector's `monday-common.js`, shared rather than copied.
+ * The helpers every connector shares (warning report, path scopes, scan
+ * limits, hex colors) are `common.js`.
  */
 import { UpstreamError } from "../upstream.js";
 import { SNAPSHOT_LIMITS } from "../snapshot.js";
-import { idOf, isObject, str } from "./monday-common.js";
+import { idOf, isObject, str } from "./common.js";
 
 /** Failed requests in a row that end the scan (docs only stop reading). */
 export const MAX_FAILURES = 3;

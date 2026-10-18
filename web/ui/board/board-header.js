@@ -1,6 +1,7 @@
 /**
  * Board header: the workspace link, the board name and description
- * (inline-editable for owners), kind and "View only" badges, the members'
+ * (inline-editable for owners), kind, "View only" and "Imported from …"
+ * (SPEC-4 §6, with the source link) badges, the members'
  * avatars and the Share button (both open the share dialog), the board
  * settings menu, view tabs (Main table, Kanban, one per app view, Activity,
  * Forms) and, for item views, the toolbar with "New item" and the
@@ -20,6 +21,7 @@ import { inlineInput } from "../components/inline-edit.js";
 import { BOARD_KINDS } from "../components/labels.js";
 import { menuButton } from "../components/menu.js";
 import { skeletonBlock, skeletonLine } from "../components/skeleton.js";
+import { importBadge } from "../import/import-badge.js";
 
 const MAX_DESCRIPTION = 1000;
 const MAX_MEMBER_AVATARS = 4;
@@ -195,6 +197,7 @@ function titleRow(container, props) {
       { class: "board-badges" },
       board.kind ? boardKindBadge(board.kind) : null,
       caps.viewOnly ? accessBadge("viewer") : null,
+      importBadge(board.import),
     ),
     h(
       "div",

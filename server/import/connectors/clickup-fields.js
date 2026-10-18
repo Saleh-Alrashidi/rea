@@ -22,14 +22,7 @@ import { LIMITS } from "../../input.js";
 import { COLUMN_LIMITS } from "../snapshot-columns.js";
 import { truncate } from "../snapshot-rules.js";
 import { dateOf, noteUser } from "./clickup-common.js";
-import {
-  colorOf,
-  idOf,
-  isObject,
-  listOf,
-  scopeAt,
-  str,
-} from "./monday-common.js";
+import { hexColor, idOf, isObject, listOf, scopeAt, str } from "./common.js";
 
 const LABEL_COLOR = "#c4c4c4";
 const HOUR_MS = 3_600_000;
@@ -78,7 +71,7 @@ function addLabel(plan, label, color) {
   if (known !== undefined) return known;
   // Past the limit the snapshot adds used labels itself (in its color).
   if (plan.column.labels.length >= COLUMN_LIMITS.labels) return label;
-  plan.column.labels.push({ label, color: colorOf(color, LABEL_COLOR) });
+  plan.column.labels.push({ label, color: hexColor(color, LABEL_COLOR) });
   plan.known.set(key, label);
   return label;
 }

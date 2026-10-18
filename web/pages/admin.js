@@ -8,7 +8,9 @@
  * role legend. Content: every board and doc with privacy, owner and
  * workspace, and "Take ownership" with a confirmation. Both tabs share one
  * mount (the router keeps the page when the tab changes) and keep their
- * data until the page is left; every change reloads from the server.
+ * data until the page is left; every change reloads from the server. The
+ * "Import" tab links to the importer page (`#/import`, SPEC-4 §6), which
+ * shows the same tabs (`adminTabs`).
  */
 
 import { h } from "../dom.js";
@@ -18,6 +20,7 @@ import {
   boardHash,
   docHash,
   homeHash,
+  importHash,
 } from "../router.js";
 import {
   ADMIN_CONTENT_QUERY,
@@ -46,7 +49,26 @@ const TABS = Object.freeze({
     href: adminContentHash(),
     title: "Content directory",
   },
+  // Its own page (`pages/import.js`), for users who may import.
+  import: {
+    label: "Import",
+    icon: "inbox",
+    href: importHash(),
+    title: "Import",
+    capability: "import_data",
+  },
 });
+
+/**
+ * The Admin section tabs `me` may open, with `active` selected (the
+ * Import page shows them too).
+ */
+export function adminTabs(me, active) {
+  const items = Object.entries(TABS)
+    .filter(([, info]) => !info.capability || can(me, info.capability))
+    .map(([id, { label, icon, href }]) => ({ id, label, icon, href }));
+  return tabs({ label: "Admin sections", items, active });
+}
 
 function adminsOnly() {
   return h(
@@ -323,13 +345,7 @@ async function showTab(a, tab) {
   const name = Object.hasOwn(SECTIONS, tab) ? tab : "users";
   a.tab = name;
   setDocumentTitle(TABS[name].title);
-  a.tabsSlot.replaceChildren(
-    tabs({
-      label: "Admin sections",
-      items: Object.entries(TABS).map(([id, info]) => ({ id, ...info })),
-      active: name,
-    }),
-  );
+  a.tabsSlot.replaceChildren(adminTabs(a.ctx.me, name));
   const section = SECTIONS[name];
   if (!a.views[name]) {
     a.body.replaceChildren(...section.placeholder());

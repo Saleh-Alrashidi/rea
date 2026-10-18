@@ -2,8 +2,9 @@
  * Sidebar: primary navigation (Home, My work, Shared with me, Notes), the
  * workspace switcher, the current workspace's boards (icon per kind), docs
  * and forms, the "+ Add" menu (Board / Doc / Form, only when the user can
- * create there) and, at the bottom, Teams and Admin (admins only). Under
- * 900 px it is an off-canvas drawer.
+ * create there, plus "Import from monday.com / ClickUp" for users who may
+ * import) and, at the bottom, Teams and Admin (admins only; it stays
+ * selected on the importer page). Under 900 px it is an off-canvas drawer.
  */
 
 import { clear, h } from "../../dom.js";
@@ -14,6 +15,7 @@ import {
   docsHash,
   formHash,
   homeHash,
+  importHash,
   myWorkHash,
   notesHash,
   sharedHash,
@@ -109,6 +111,13 @@ function addMenu(props, workspace) {
             icon: "forms",
             hint: "Collect responses into a board",
             onSelect: () => props.onCreate("form"),
+          },
+          can(props.me, "import_data") && { type: "separator" },
+          can(props.me, "import_data") && {
+            label: "Import from monday.com / ClickUp",
+            icon: "inbox",
+            hint: "Boards, people and docs, or a spreadsheet",
+            href: importHash(),
           },
         ],
       }),
@@ -224,7 +233,7 @@ function bottomLinks(props) {
             label: "Admin",
             iconName: "admin",
             hash: adminHash(),
-            active: isActive(route, ["admin"]),
+            active: isActive(route, ["admin", "import"]),
           })
         : null,
     ),

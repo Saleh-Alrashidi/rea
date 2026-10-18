@@ -44,6 +44,7 @@ const BOARD_QUERY = `query HostBoard($ids: [ID!]) {
     columns { id title type settings_str }
     groups { id title color position }
     views { id name type app_install_id app_url }
+    import { source source_url imported_at imported_by { id name } }
   }
 }`;
 
@@ -127,6 +128,8 @@ export async function loadBoard(boardId) {
     columns,
     groups: sortGroups(raw.groups),
     views: raw.views,
+    // Where the board was imported from (SPEC-4 §6 badge), or null.
+    import: raw.import ?? null,
     items: rawItems.map((item) => decodeItem(item, columns)),
     truncated: Boolean(cursor),
   };

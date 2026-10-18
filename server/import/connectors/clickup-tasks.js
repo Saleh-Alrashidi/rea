@@ -26,14 +26,7 @@ import {
   fieldPlan,
   readValues,
 } from "./clickup-fields.js";
-import {
-  idOf,
-  isObject,
-  limitHit,
-  listOf,
-  scopeAt,
-  str,
-} from "./monday-common.js";
+import { idOf, isObject, limitHit, listOf, scopeAt, str } from "./common.js";
 
 export const GROUPS = Object.freeze([
   Object.freeze({ source_id: "open", title: "Open", color: "#579bfc" }),

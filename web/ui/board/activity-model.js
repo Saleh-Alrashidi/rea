@@ -25,6 +25,7 @@ import { SOMEONE } from "../components/labels.js";
  * @property {Segment[]} segments     the sentence after the actor's name
  * @property {{ text: string | null, color: string | null } | null} from
  * @property {{ text: string | null, color: string | null } | null} to
+ * @property {string | null} detail  a line under the sentence, or null
  */
 
 const text = (value) => ({ text: value });
@@ -133,6 +134,13 @@ function boardSentence(entry) {
         icon: "admin",
         segments: [text("took ownership of the board as an admin")],
       };
+    case "board_imported":
+      return {
+        icon: "inbox",
+        segments: [text("imported this board")],
+        // The source and what came from it, as the server summarized it.
+        detail: entry.to_text ?? null,
+      };
     default:
       return null;
   }
@@ -158,6 +166,7 @@ export function describeActivity(entry, board) {
   const side = (value) =>
     chips ? chip(chipText(column, value), statusColor(column, value)) : null;
   return {
+    detail: null,
     ...(known ?? GENERIC),
     from: side(entry.from_text),
     to: side(entry.to_text),
@@ -168,16 +177,19 @@ export function describeActivity(entry, board) {
  * The actor of an entry for display: the user (with avatar data), a form
  * (`form_submitted`, labelled "Form: Feature request"), or a person the
  * viewer may not see, whom the server labels "Someone" and gives no
- * `actor` record.
- * @returns {{ kind: "user", user: object, name: string } |
- *   { kind: "form" | "hidden", name: string }}
+ * `actor` record. A user acting through something else (an import,
+ * labelled "Import from monday.com") has that label as `via`.
+ * @returns {{ kind: "user", user: object, name: string,
+ *   via: string | null } | { kind: "form" | "hidden", name: string }}
  */
 export function activityActor(entry) {
   if (entry.actor) {
+    const label = entry.actor_label;
     return {
       kind: "user",
       user: { ...entry.actor, id: String(entry.actor.id) },
       name: entry.actor.name,
+      via: label && label !== entry.actor.name ? label : null,
     };
   }
   return {

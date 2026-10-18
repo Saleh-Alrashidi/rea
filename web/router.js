@@ -86,6 +86,7 @@ export const notesHash = () => "#/notes";
 export const teamsHash = () => "#/teams";
 export const adminHash = () => "#/admin";
 export const adminContentHash = () => "#/admin/content";
+export const importHash = () => "#/import";
 export const workspaceHash = (id) => `#/workspaces/${id}`;
 export const workspaceSettingsHash = (id) => `#/workspaces/${id}/settings`;
 export const boardHash = (id) => `#/boards/${id}`;
@@ -330,7 +331,7 @@ const boardKey = (params) => `board:${params.boardId}`;
 const NOTES = page("notes");
 const ADMIN = page("admin");
 
-/** `[pattern, loader, options]` for every route of SPEC-2 §5.1. */
+/** `[pattern, loader, options]` for every route of SPEC-2 §5.1 and SPEC-4 §6. */
 export const APP_ROUTES = Object.freeze([
   ["/home", page("home"), { name: "home" }],
   ["/my-work", page("my-work"), { name: "my-work" }],
@@ -388,6 +389,8 @@ export const APP_ROUTES = Object.freeze([
     ADMIN,
     { name: "admin", key: () => "admin", params: { tab: "content" } },
   ],
+  // SPEC-4 §6: the importer (admins; the Admin page links to it).
+  ["/import", page("import"), { name: "import" }],
 ]);
 
 /** Loader of the not-found page (also the fallback for unknown paths). */
