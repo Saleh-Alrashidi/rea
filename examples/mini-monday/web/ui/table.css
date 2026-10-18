@@ -1,0 +1,354 @@
+/* Main table view: groups, column headers, rows and cells. */
+
+.table-view {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: max-content;
+  min-width: 100%;
+  padding-top: 12px;
+}
+
+.notice {
+  position: sticky;
+  left: 0;
+  width: fit-content;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+}
+
+.group {
+  --group-color: #579bfc;
+}
+
+.group-header {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: calc(100vw - 48px);
+  padding-bottom: 6px;
+  color: var(--group-color);
+}
+
+.group-toggle.icon-btn {
+  color: var(--group-color);
+}
+
+.group-title {
+  width: auto;
+  min-width: 6ch;
+  max-width: 420px;
+  field-sizing: content;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--group-color);
+}
+
+.group-count {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 0 4px;
+}
+
+.board-table {
+  /* Fixed layout: the table is exactly as wide as its columns. */
+  table-layout: fixed;
+  width: 1px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface);
+}
+
+.col-name {
+  width: 340px;
+}
+
+.col-status {
+  width: 150px;
+}
+
+.col-people {
+  width: 120px;
+}
+
+.col-date {
+  width: 150px;
+}
+
+.col-numbers {
+  width: 120px;
+}
+
+.col-text {
+  width: 210px;
+}
+
+.col-add,
+.col-actions {
+  width: 48px;
+}
+
+.board-table th,
+.board-table td {
+  height: 40px;
+  padding: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  text-align: center;
+  vertical-align: middle;
+  background: var(--surface);
+}
+
+.board-table th {
+  height: 36px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-table .cell-name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: left;
+  border-left: 6px solid var(--group-color);
+}
+
+.board-table th.cell-name {
+  padding-left: 12px;
+  border-top-left-radius: 6px;
+}
+
+.board-table tfoot .cell-name {
+  border-bottom-left-radius: 6px;
+}
+
+.board-table .cell-add,
+.board-table .cell-actions {
+  border-right: 0;
+}
+
+.item-row:hover td,
+.item-row:focus-within td {
+  background: var(--row-hover);
+}
+
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 4px;
+}
+
+.open-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.open-item:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.item-row:hover .open-item,
+.item-row:focus-within .open-item,
+.row-delete:focus-visible,
+.item-row:hover .row-delete,
+.item-row:focus-within .row-delete {
+  opacity: 1;
+}
+
+.row-delete.icon-btn {
+  opacity: 0;
+}
+
+.row-delete.icon-btn:hover {
+  color: var(--danger);
+}
+
+.add-column.icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.board-table td .inline-input {
+  height: 39px;
+  border-radius: 0;
+  text-align: center;
+}
+
+.board-table .cell-name .inline-input {
+  height: 32px;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.add-item-row td {
+  height: 38px;
+}
+
+.add-item-form {
+  padding: 0 6px 0 4px;
+}
+
+.add-item-input:not(:focus) {
+  color: var(--text-muted);
+}
+
+.add-group {
+  position: sticky;
+  left: 0;
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------ cells */
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  background: var(--status-empty);
+  color: #fff;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.status-pill:hover {
+  filter: brightness(0.94);
+}
+
+.status-pill.empty {
+  background: var(--status-empty);
+}
+
+.status-pill .placeholder {
+  font-weight: 400;
+  opacity: 0.9;
+}
+
+.board-table .status-pill {
+  width: 100%;
+  height: 39px;
+}
+
+.people-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 39px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.people-button:hover {
+  background: var(--surface-hover);
+}
+
+.people-empty {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  user-select: none;
+}
+
+.avatar-small {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+
+.avatar-stack {
+  display: inline-flex;
+}
+
+.avatar-stack .avatar + .avatar {
+  margin-left: -6px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.avatar-more {
+  background: var(--text-muted);
+}
+
+.cell-date::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+
+/* An empty date shows nothing until the cell is hovered or focused. */
+.cell-date.empty:not(:hover, :focus)::-webkit-datetime-edit,
+.cell-date.empty:not(:hover, :focus)::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+
+.cell-unsupported {
+  color: var(--text-muted);
+}
+
+@media (hover: none) {
+  .open-item,
+  .row-delete.icon-btn {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 600px) {
+  .col-name {
+    width: 230px;
+  }
+
+  .open-item span {
+    display: none;
+  }
+
+  .group-header {
+    max-width: calc(100vw - 32px);
+  }
+}
