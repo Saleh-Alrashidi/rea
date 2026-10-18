@@ -27,6 +27,60 @@ function refreshFailed(state, render, error) {
 }
 
 /**
+ * Single-flight board reloads around `reload(always)`. `refresh()` reloads
+ * and redraws the page; `refresh({ ifChanged: true })` redraws only when
+ * the board changed (a no-op redraw of a wide board's table freezes the
+ * page). Calls during a reload are merged into one more, which redraws if
+ * any merged call asked to; `scheduleRefresh(options)` is a debounced
+ * `refresh` merged the same way.
+ */
+function createReloads(reload) {
+  let timer = null;
+  let running = null;
+  let again = false;
+  // Whether a reload asked for (and not yet run) must redraw the page.
+  let drawAlways = false;
+  let scheduledAlways = false;
+
+  function refresh({ ifChanged = false } = {}) {
+    if (!ifChanged) drawAlways = true;
+    if (running) {
+      again = true;
+      return running;
+    }
+    running = (async () => {
+      try {
+        do {
+          again = false;
+          const always = drawAlways;
+          drawAlways = false;
+          await reload(always);
+        } while (again);
+      } finally {
+        running = null;
+      }
+    })();
+    return running;
+  }
+
+  function scheduleRefresh({ ifChanged = false } = {}) {
+    if (!ifChanged) scheduledAlways = true;
+    globalThis.clearTimeout(timer);
+    timer = globalThis.setTimeout(() => {
+      const options = { ifChanged: !scheduledAlways };
+      scheduledAlways = false;
+      refresh(options);
+    }, REFRESH_DELAY_MS);
+  }
+
+  return {
+    refresh,
+    scheduleRefresh,
+    cancel: () => globalThis.clearTimeout(timer),
+  };
+}
+
+/**
  * Creates the sync controller for the board page `state`.
  * `forwardEvent(change)` receives every change of the open board (for app
  * views); `watchBoard(boardId, listener, onEnd) → unwatch` is `ctx.bus.watchBoard`
@@ -42,34 +96,10 @@ export function createBoardSync(options) {
   const { state, render, forwardEvent, watchBoard, refreshShell } = options;
   let events = { boardId: null, close: null };
   let destroyed = false;
-  let refreshTimer = null;
-  let refreshing = null;
-  let refreshAgain = false;
+  const reloads = createReloads((always) => reloadBoard(always));
+  const { refresh, scheduleRefresh } = reloads;
 
-  function refresh() {
-    if (refreshing) {
-      refreshAgain = true;
-      return refreshing;
-    }
-    refreshing = (async () => {
-      try {
-        do {
-          refreshAgain = false;
-          await reloadBoard();
-        } while (refreshAgain);
-      } finally {
-        refreshing = null;
-      }
-    })();
-    return refreshing;
-  }
-
-  function scheduleRefresh() {
-    globalThis.clearTimeout(refreshTimer);
-    refreshTimer = globalThis.setTimeout(refresh, REFRESH_DELAY_MS);
-  }
-
-  async function reloadBoard() {
+  async function reloadBoard(always) {
     const { boardId, mutationSeq } = state;
     if (!boardId || destroyed) return;
     let board;
@@ -88,10 +118,16 @@ export function createBoardSync(options) {
       state.pendingMutations > 0;
     if (stale) return;
     state.refreshFailed = false;
-    state.board = board;
+    // An unchanged board keeps its objects, which the drawn page refers to.
+    const unchanged =
+      !always &&
+      board !== null &&
+      state.board !== null &&
+      JSON.stringify(board) === JSON.stringify(state.board);
+    if (!unchanged) state.board = board;
     state.boardStatus = board ? "ready" : "missing";
     if (state.card && board) await reloadCard();
-    if (boardId === state.boardId) render();
+    if (boardId === state.boardId) render(unchanged ? ["card"] : undefined);
   }
 
   async function reloadCard() {
@@ -143,7 +179,7 @@ export function createBoardSync(options) {
   /** Stops the stream and discards results that are still in flight. */
   function destroy() {
     destroyed = true;
-    globalThis.clearTimeout(refreshTimer);
+    reloads.cancel();
     events.close?.();
     events = { boardId: null, close: null };
   }

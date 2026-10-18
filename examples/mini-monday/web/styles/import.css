@@ -1,0 +1,500 @@
+/*
+ * The importer (`#/import`, SPEC-4 §6): the stepper, source cards and
+ * forms, progress, panels, the review's sticky footer and the board
+ * header's "Imported from …" badge (the review's tree, people table and
+ * warnings and the done step are in import-review.css). Panels, badges,
+ * buttons, inputs, tables (`.admin-table`) and stat tiles come from the
+ * shared styles; every color is a token from tokens.css, so light and
+ * dark themes need no rules here.
+ */
+
+.import-page {
+  display: grid;
+  align-content: start;
+}
+
+.import-body,
+.import-step,
+.import-form-body,
+.import-panel-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.import-step-title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+}
+
+.import-step-text {
+  margin-top: calc(-1 * var(--space-2));
+  color: var(--color-text-secondary);
+}
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ----------------------------------------------------------- stepper */
+
+.import-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+
+.import-steps-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.import-steps-item:not(:last-child)::after {
+  content: "";
+  width: 24px;
+  height: 1px;
+  margin-left: var(--space-2);
+  background: var(--color-border-strong);
+}
+
+.import-steps-marker {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-panel);
+  font-size: var(--text-xs);
+}
+
+.import-steps-item.complete {
+  color: var(--color-text-secondary);
+}
+
+.import-steps-item.complete .import-steps-marker {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.import-steps-item.current {
+  color: var(--color-text);
+}
+
+.import-steps-item.current .import-steps-marker {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+}
+
+/* ------------------------------------------------------ source cards */
+
+.import-sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.import-source {
+  position: relative;
+  display: block;
+  cursor: pointer;
+}
+
+.import-source-input {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  opacity: 0;
+}
+
+.import-source-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  height: 100%;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.import-source:hover .import-source-card {
+  border-color: var(--color-border-strong);
+}
+
+.import-source-input:checked + .import-source-card {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.import-source-input:focus-visible + .import-source-card {
+  box-shadow: var(--focus-ring);
+}
+
+.import-source-input:disabled + .import-source-card {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.import-source-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  color: var(--color-primary-text);
+}
+
+.import-source-text {
+  display: grid;
+  gap: 2px;
+}
+
+.import-source-label {
+  font-weight: var(--weight-semibold);
+}
+
+.import-source-description {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.import-source-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  color: transparent;
+}
+
+.import-source-input:checked + .import-source-card .import-source-check {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+}
+
+/* --------------------------------------------------------- the form */
+
+.import-form {
+  max-width: 720px;
+}
+
+.import-where {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  font-size: var(--text-sm);
+}
+
+.import-where .icon {
+  margin-top: 2px;
+}
+
+.import-pick-hint {
+  font-size: var(--text-sm);
+}
+
+.import-fieldset {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.import-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2);
+}
+
+.import-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.import-check input {
+  margin-top: 3px;
+  accent-color: var(--color-primary);
+}
+
+.import-check-text {
+  display: grid;
+}
+
+.import-limits summary {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.import-limits[open] summary {
+  margin-bottom: var(--space-2);
+}
+
+.import-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.import-drop {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+  border: 2px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-sunken);
+  color: var(--color-text-secondary);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.import-drop:hover,
+.import-drop.dragging {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.import-file-input:focus-visible + .import-drop {
+  box-shadow: var(--focus-ring);
+}
+
+.import-drop-title {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+
+.import-file-status,
+.import-file-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.import-file-name .icon {
+  color: var(--color-success);
+}
+
+.import-file-name.invalid .icon,
+.import-field-error {
+  color: var(--color-danger);
+}
+
+.import-field-error {
+  font-size: var(--text-sm);
+}
+
+.import-banner.banner-success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.import-banner-text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-banner-details {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+/* ---------------------------------------------------------- progress */
+
+.import-progress {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 720px;
+  padding: var(--space-5);
+}
+
+.import-progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.import-progress-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.import-progress-count,
+.import-progress-message {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.import-bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-sunken);
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
+}
+
+.import-bar-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+
+.import-bar.indeterminate .import-bar-fill {
+  width: 35%;
+  animation: import-slide 1.4s var(--ease-standard) infinite;
+}
+
+@keyframes import-slide {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(290%);
+  }
+}
+
+.import-progress-hint {
+  max-width: 720px;
+}
+
+/* ------------------------------------------------------------ panels */
+
+.import-panel-header {
+  flex-wrap: wrap;
+}
+
+.import-panel-count {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+}
+
+.import-panel-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.import-panel-body {
+  padding-top: var(--space-3);
+}
+
+/* ------------------------------------------------------------ footer */
+
+.import-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-raised);
+  box-shadow: var(--shadow-md);
+}
+
+.import-summary {
+  flex: 1 1 320px;
+  font-size: var(--text-sm);
+}
+
+/* ------------------------------------------------------ board badge */
+
+a.import-badge {
+  text-decoration: none;
+}
+
+a.import-badge:hover {
+  text-decoration: underline;
+}
+
+/* -------------------------------------------------------- responsive */
+
+@media (max-width: 640px) {
+  .import-steps-item:not(.current) .import-steps-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .import-steps {
+    gap: var(--space-2);
+  }
+
+  .import-steps-item:not(:last-child)::after {
+    display: none;
+  }
+
+  .import-footer {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .import-summary {
+    font-size: var(--text-xs);
+  }
+
+  .import-actions .btn {
+    flex: 1 1 auto;
+  }
+}

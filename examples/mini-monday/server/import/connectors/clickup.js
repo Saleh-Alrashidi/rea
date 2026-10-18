@@ -44,7 +44,7 @@ import {
   limitHit,
   listOf,
   str,
-} from "./monday-common.js";
+} from "./common.js";
 
 /** Default and maximum scan limits (SPEC-4 §1; docs are bounded too). */
 export const CLICKUP_LIMITS = Object.freeze({

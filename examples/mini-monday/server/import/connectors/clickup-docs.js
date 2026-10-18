@@ -18,14 +18,7 @@
 import { LIMITS } from "../../input.js";
 import { UpstreamError } from "../upstream.js";
 import { MAX_FAILURES, get, pathId } from "./clickup-common.js";
-import {
-  idOf,
-  isObject,
-  limitHit,
-  listOf,
-  scopeAt,
-  str,
-} from "./monday-common.js";
+import { idOf, isObject, limitHit, listOf, scopeAt, str } from "./common.js";
 
 const DOC_PAGE = 50;
 /** ClickUp's doc parent types (`parent.type`). */

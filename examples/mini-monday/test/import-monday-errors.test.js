@@ -119,9 +119,10 @@ test("a failing board becomes a warning and the scan goes on", async (t) => {
     kind: "graphql_error",
     message: "Board is locked",
   });
-  server.fail({ ...items, match: { board: "108" }, kind: "slow", ms: 1500 });
+  server.fail({ ...items, match: { board: "108" }, kind: "slow", ms: 6000 });
   server.fail({ ...items, match: { board: "200" }, kind: "oversized" });
-  const snapshot = await run({ limits: { timeoutMs: 300 } });
+  // Ample for every other answer, even on a loaded machine.
+  const snapshot = await run({ limits: { timeoutMs: 1200 } });
   const failed = codes(snapshot, "read_failed");
   const message = (name) =>
     failed.find((w) => w.message.includes(`"${name}"`))?.message;
@@ -129,7 +130,7 @@ test("a failing board becomes a warning and the scan goes on", async (t) => {
     message("Broken board"),
     /could not be fully read: Board is locked/,
   );
-  assert.match(message("Orphan board"), /did not answer within 0\.3 s/);
+  assert.match(message("Orphan board"), /did not answer within 1\.2 s/);
   assert.match(message("Team board 1"), /larger than 10 MiB/);
   for (const name of ["Broken board", "Orphan board", "Team board 1"]) {
     assert.deepEqual(boardNamed(snapshot, name).items, [], name);

@@ -19,9 +19,10 @@ It has two halves:
   a small CLI.
 
 The contracts are [`SPEC.md`](SPEC.md) (part 1: engine, API, platform),
-[`SPEC-2.md`](SPEC-2.md) (part 2: the full workspace) and
-[`SPEC-3.md`](SPEC-3.md) (part 3: private hosted deployment). This README
-summarizes them; the specs win where they differ.
+[`SPEC-2.md`](SPEC-2.md) (part 2: the full workspace),
+[`SPEC-3.md`](SPEC-3.md) (part 3: private hosted deployment) and
+[`SPEC-4.md`](SPEC-4.md) (part 4: the importer). This README summarizes
+them; the specs win where they differ.
 
 ## How it maps to the REA findings
 
@@ -87,6 +88,11 @@ mode instead, see [Deploy privately on CranL](#deploy-privately-on-cranl)):
 | `MM_APPS_ORIGIN` | `http://127.0.0.1:<apps port>` | Public apps origin (a different site on purpose)                                            |
 | `MM_DEMO_LOGIN`  | on                             | `0` turns off auto sign-in and the user switcher                                            |
 | `MM_TRUST_PROXY` | `0`                            | `1` takes client IPs (rate limits) from `X-Forwarded-For`; only behind a proxy that sets it |
+
+Tests point the importer at fake upstream servers with
+`MM_IMPORT_MONDAY_URL` and `MM_IMPORT_CLICKUP_URL` (see
+[Import from monday.com or ClickUp](#import-from-mondaycom-or-clickup));
+leave them unset otherwise.
 
 The data file format is `mini-monday-store/3`. A part-1 file is refused
 with a message; move it away and the server reseeds. A
@@ -224,6 +230,7 @@ ordered `viewer < editor < owner`.
 | Implicit access to workspace docs                       | editor       | editor       | viewer         | —            |
 | Can be added to Private boards                          | ✓            | ✓            | ✓              |              |
 | Can be added to Shareable boards, docs and notes        | ✓            | ✓            | ✓              | ✓            |
+| Import from monday.com, ClickUp or a spreadsheet        | ✓            |              |                |              |
 | Edit                                                    | per resource | per resource | never (viewer) | per resource |
 
 Admins have no silent access to private content: the content directory
@@ -342,6 +349,164 @@ command lines). `https:` endpoints always verify certificates; `http:` is
 allowed only for loopback hosts; `--read-only` refuses mutations before
 sending them.
 
+## Import from monday.com or ClickUp
+
+Admins can bring an existing monday.com account, a ClickUp workspace, a
+CSV file or a monday.com Excel board export into Worklane (SPEC-4). Open
+**Admin → Import** (or **+ Add → Import from monday.com / ClickUp**) and
+follow the five steps: choose the source, let it scan, review, import,
+done. Nothing is written to Worklane before you press **Import**, and
+nothing is ever changed in the source.
+
+### Getting a token
+
+- **monday.com**: click your avatar → **Developers** → **My access
+  tokens**, then copy the personal API token. It can read whatever your
+  monday.com user can read, so scan with an account that sees the boards
+  you want.
+- **ClickUp**: **Settings** → **Apps** → **API Token** (generate one if
+  there is none; it starts with `pk_`).
+- **CSV**: any spreadsheet saved as CSV (comma, semicolon or tab; UTF-8,
+  UTF-16 with a byte order mark or Windows-1252).
+- **monday Excel export**: export the board to Excel from its menu in
+  monday.com. Other `.xlsx` workbooks are read as one table from their
+  first visible sheet.
+
+### What the token is used for
+
+The token is pasted into a password field (`autocomplete="off"`), sent
+once with the scan request and cleared from the field in the same moment;
+the page never keeps it in its state, `localStorage` or
+`sessionStorage`. On the server it is held in memory only while that scan
+runs, and used only as the `Authorization` header of the connector's calls
+to the fixed hosts `https://api.monday.com/v2` or
+`https://api.clickup.com/api` (v2, and v3 for ClickUp docs). It is never
+stored, persisted, logged, echoed or put in a job: every text a scan keeps (the snapshot, progress messages,
+errors, logged details) has it replaced with `[redacted]`, and upstream
+error texts are redacted before use. Callers cannot supply a URL, no
+redirect is followed, and unknown scan options are refused. The scan
+result itself (the source data) stays in server memory for 30 minutes
+after the scan ends, visible only to the admin who started it.
+
+### What maps to what
+
+| Source                 | Worklane                                                                                                                               |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| monday.com workspace   | A workspace (open/closed kept). Boards and docs outside any workspace go to "Main workspace".                                          |
+| ClickUp Space          | A workspace `<Team> / <Space>` (private spaces closed); workspace-level docs go to `<Team> / Workspace docs`.                          |
+| monday.com board       | A board (Main/Private/Shareable from `board_kind`) with its groups, columns, items and members (owners → owner, subscribers → editor). |
+| ClickUp List           | A board `<Folder> / <List>` (Private when the list, folder or space is), groups "Open" and "Closed" by status type.                    |
+| CSV file, Excel export | One closed workspace `Imported from <file>` with one Private board named after the file.                                               |
+| Subitems / subtasks    | Items right after their parent in the parent's group, with a "Parent item" text column.                                                |
+| Updates / comments     | Updates with their original dates; replies become "Reply: …"; text only (HTML is never kept).                                          |
+| Docs                   | Docs owned by the importing admin (public ones Workspace-visible, others Private), as SPEC-2 blocks.                                   |
+| People                 | Matched by email to active Worklane users, or invited (member, viewer or guest), or skipped (per person).                              |
+
+monday.com columns: `status`/`color` → Status with their labels and colors,
+`people`/`person` → People, `date` → Date, `numbers` → Numbers, `text` and
+`long_text` → Text, the item name → the item name. ClickUp: Status (the
+list's statuses and colors), Assignees, Due date and Start date (UTC days),
+Priority (Urgent, High, Normal, Low), Time estimate (h), Tags, Description,
+and custom fields (`drop_down` → Status, `number`/`currency`/`emoji` →
+Numbers, `date` → Date, `users` → People, `text`/`short_text`/`email`/
+`phone`/`url` → Text, `checkbox` → Text "Yes"/"No"). CSV and Excel columns
+are typed from their values (dates, numbers, up to 30 short values →
+Status, emails or Assignee/Owner/Person headers → People, else Text); a
+Name/Task name/Item column names the items and a Group/List/Status type
+column picks the groups.
+
+In the review you choose, per source workspace, a new workspace (the
+default) or an existing one you can manage, which boards and docs to
+include, and what happens to each person. People values and board grants
+keep only mapped people who may open the board (guests only where guests
+are allowed); refused grants and dropped people are listed as warnings.
+The importing admin owns every created board and doc. Importing the same
+board again creates a new copy named `<name> (imported again)`: nothing
+is merged.
+
+Each board is written in one step: one save, one `board_imported` change
+event, no per-item events and no notifications except one "Import
+finished" notification for the admin. The board's activity says
+"Alex Rivera (Import from monday.com) imported this board" with the
+source and counts, and the board header shows an "Imported from
+monday.com" (or ClickUp, CSV, Excel) badge linking to the original board
+or list (`http`/`https` only, `rel="noopener noreferrer"`). The GraphQL
+API has the same as `Board.import { source source_id source_url
+imported_at imported_by }`.
+
+### What is not exact (always reported)
+
+Nothing is dropped silently: every loss below is a warning with its path
+in the source (`workspaces[0].boards[2].columns[5]`), grouped by code on
+the review and done steps and downloadable as a `.txt` file.
+
+- **Becomes text**: every other monday.com column type (dropdown, tags,
+  timeline, link, email, phone, checkbox, rating, mirror, formula, file,
+  board relation, dependency, location, country, world clock, week, hour,
+  vote, …) keeps monday's display text (`column_as_text`); ClickUp
+  `labels` fields become comma-joined text (`labels_as_text`) and other
+  unknown field types become text; a status column with more than 200
+  labels becomes text.
+- **Dropped detail**: times of day on dates (`time_dropped`), number units
+  and currencies (`unit_dropped`), teams in people columns
+  (`teams_dropped`), embedded mentions in doc blocks (`embeds_dropped`),
+  ClickUp checklists (`checklists_dropped`), time estimates rounded to
+  0.01 h (`rounded`), descriptions and texts cut to 2,000 characters,
+  names to 255 and update bodies to 10,000 (`truncated`), unknown doc block
+  types read as paragraphs, docs cut to 2,000 blocks.
+- **Not read**: more than 100 updates per monday.com item
+  (`updates_capped`), ClickUp time tracked, dependencies, watchers and the
+  members of private lists (`members_not_imported`: only the importer can
+  open such a board until it is shared), anything beyond the scan limits
+  (`limit_*`), and boards a failing request could not read (`read_failed`;
+  three failed requests in a row end the scan).
+- **Files**: formulas are never evaluated: a CSV cell starting with `=`,
+  `+`, `-` or `@` stays text (`formula_text`), and an Excel formula cell
+  keeps the value Excel last computed, or the formula as text
+  (`formula_values`); other sheets of a workbook are not read
+  (`other_sheets`).
+
+### Limits
+
+| What                       | Limit                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| One scan (monday, ClickUp) | 200 boards/lists, 50,000 items, 5,000 updates, 200 docs; the Scan limits fields lower them                                                  |
+| Upstream requests          | 10 MiB per answer, 30 s each, at most 5 attempts honoring `Retry-After`, `X-RateLimit-Reset` and monday's `retry_in_seconds` (waits ≤ 60 s) |
+| ClickUp                    | At most 90 requests a minute (a ClickUp limit): large workspaces take minutes                                                               |
+| Files                      | 20 MiB; CSV ≤ 50,000 rows and 200 columns; `.xlsx` ≤ 100 MiB unpacked and 2,000 parts                                                       |
+| Jobs                       | One running job per admin and two per server; results kept 30 minutes, 10 per admin                                                         |
+
+### Over HTTP
+
+The wizard uses these routes. Locally an admin's API token with
+`boards:write` (`boards:read` to read jobs) can call them too; everyone
+else gets 403. In hosted mode they sit behind the site gate, which lets
+API tokens through to `/v2` only, so there they need a signed-in browser.
+
+| Route                           | Does                                                                                                                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /import/scan`             | JSON `{ source: "monday" \| "clickup", token, options }`, or a raw file (`application/octet-stream`, `X-Import-Filename`, `X-Import-Kind: csv \| xlsx`) → 202 `{ job_id }` |
+| `GET /import/jobs/<id>`         | The job: `state`, `progress`, and the `preview` of a scan or the `report` of an import                                                                                     |
+| `POST /import/jobs/<id>/cancel` | Cancels it; an import stops before its next board or doc and keeps what it created                                                                                         |
+| `POST /import/run`              | `{ scan_job_id, plan: { users, workspace_map, include } }` → 202 `{ job_id }`; a bad plan is 400 with each path                                                            |
+
+Progress also arrives on `GET /v2/events?stream=me` as `event: import`.
+
+### Verified against fixtures, not live accounts
+
+Real monday.com and ClickUp accounts were not reachable while this was
+built. The connectors were verified against fake servers in
+`test/fixtures/import/` that implement the documented shapes: monday.com's
+GraphQL API as typed by its official client (`@mondaydotcomorg/api`
+14.3.1, validated like a real GraphQL server, with every column type in
+monday's value formats) and ClickUp's REST API v2/v3 (with strict query
+checks), including pagination, rate limits and complexity errors, 401,
+oversized answers and timeouts. Details that could not be confirmed
+against the live services (error bodies, doc block content, ClickUp v3
+doc parameters, some field shapes) may differ; the Excel layout parser was
+likewise checked only against workbooks built from the SPEC-4
+description. Try a small scan first (Scan limits) and read the warnings.
+
 ## Architecture
 
 ```
@@ -353,13 +518,21 @@ server/
   routes/          graphql.js static.js forms.js auth.js apps.js common.js
                    gate.js (site gate, /signin) platform.js (/healthz,
                    /robots.txt) rate-limit.js (client IP, limiter)
+                   import.js (/import scan, jobs, run)
+  import/          the importer (SPEC-4): snapshot*.js (validates and
+                   normalizes every connector's output), engine.js
+                   plan.js board-spec.js report.js (preview, plan, run),
+                   jobs.js (scan and import jobs, token redaction),
+                   upstream.js (the bounded HTTP client for the fixed
+                   hosts), csv.js xlsx.js (file readers), connectors/
+                   (monday*, clickup*, files.js, common.js)
   access.js        the only interpreter of roles, grants and teams
   store.js         createStore(): records, change events, persistence
   store/           people workspaces boards items docs notes forms grants
-                   activity storage seed seed-data persistence
+                   activity storage seed seed-data persistence imports
   schema.js        merges server/schema/*.js into one buildSchema() call
   schema/          common people workspaces boards items sharing docs notes
-                   forms inbox search storage
+                   forms inbox search storage imports
   graphql/         parse.js schema.js validate.js execute.js errors.js
                    (the engine)
   auth.js          API tokens, browser sessions, app principals, JWTs
@@ -372,14 +545,15 @@ web/               the host app (plain ES modules, no build)
   signin.html signin.js  the site gate's sign-in page
   pages/           one module per route (mount(container, ctx, params))
   ui/              components/ shell/ board/ docs/ notes/ forms/ admin/
-                   teams/ workspaces/
+                   teams/ workspaces/ import/ (the import wizard)
   styles/          design tokens, base, components and feature sheets
 apps/status-summary/  example iframe app
 sdk/               the iframe-app SDK (served from the apps origin)
 cli/               the mm CLI
-scripts/           browser tests (e2e-smoke, e2e-roles, e2e-hosted) and
-                   their harness
-test/              node:test suites
+scripts/           browser tests (e2e-smoke, e2e-roles, e2e-hosted,
+                   e2e-import) and their harness
+test/              node:test suites; fixtures/import/ has the fake
+                   monday.com and ClickUp servers and an .xlsx writer
 ```
 
 **One owner for access.** `server/access.js` is the single module that
@@ -494,6 +668,13 @@ from these streams.
 - **Secrets**: tokens, app secrets and session IDs are random per run;
   signatures are compared with `crypto.timingSafeEqual`; JWTs accept only
   HS256.
+- **Import** (SPEC-4): admins only (`import_data`, checked in
+  `server/access.js` on every route); source tokens are used for one scan
+  and never stored, logged or echoed; the server talks only to the fixed
+  monday.com and ClickUp hosts, follows no redirect and bounds every
+  answer, retry and file (an `.xlsx` is unpacked with size, entry and path
+  checks, and nothing is evaluated). See
+  [What the token is used for](#what-the-token-is-used-for).
 
 ## Testing
 
@@ -505,6 +686,7 @@ node --test test/permissions.test.js   # one suite
 npm run e2e                    # node scripts/e2e-smoke.mjs
 node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
 node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
+node scripts/e2e-import.mjs    # the importer against fake upstreams
 ```
 
 - The unit and integration suites cover the GraphQL engine, the store and
@@ -527,7 +709,7 @@ node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
   and `e2e-roles-ux3.mjs` cover the server's verdicts and explanations in
   the share dialog and people pickers, refused assignees, the share dialog
   by keyboard and at 360 px, the "/" menu next to its block and the "Live
-  updates paused" banner. Both fail on console
+  updates paused" banner. All of them fail on console
   errors, page errors, CSP violations, failed requests and unexpected HTTP
   errors, and save screenshots to `e2e-output/`.
 - The `test/hosted-*.test.js` suites cover hosted mode: configuration
@@ -539,6 +721,21 @@ node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
   send the password before its script runs, a wrong password, signing in
   to the requested page, a board, demo switching, a public form signed out
   and signing out.
+- The `test/import-*.test.js` and `test/web-import*.test.js` suites cover
+  the importer: snapshot validation with exact paths, every monday.com
+  column type and ClickUp field type against the fake servers (pagination,
+  rate limits, complexity errors, 401, oversized answers, timeouts), CSV
+  edge cases, the `.xlsx` reader (workbooks built in the test, a zip bomb,
+  unsafe names, 1904 dates), preview, plans, runs, cancellation and
+  re-import, the jobs and routes (tokens never in a job, log or error;
+  non-admins refused) and the wizard. `e2e-import.mjs` starts both fake
+  servers itself and, in Chromium, opens the importer from the Admin
+  page, checks a member is refused, cancels a monday.com scan midway,
+  reviews a scan (tree, people, warnings) with one person invited,
+  imports it, downloads the warnings, opens an imported board (badge,
+  items, statuses, people, updates, activity), then imports from ClickUp,
+  a CSV file and a monday Excel export; each wizard step is photographed
+  light, dark and 360 px wide.
 - The browser tests need `playwright` or `playwright-core` and a Chromium;
   without them they print why and exit 0. `MM_E2E_CHROMIUM` names a browser
   executable; `MM_E2E_STEPS=2,5` runs selected steps while developing.
@@ -558,6 +755,22 @@ node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
   refuses: run it against a local server.
 - **One account.** There is a single account (`id "1"`) with no sign-up,
   passwords, invitations by email or multi-tenancy.
+- **Importer.** The monday.com and ClickUp connectors were verified only
+  against fake servers built from the official API shapes, not live
+  accounts, and the Excel layout parser only against generated workbooks
+  (see [Verified against fixtures, not live accounts](#verified-against-fixtures-not-live-accounts)).
+  Scans and their results live in the server process: a restart loses
+  running jobs and unimported scans. Validating a very large scan (50,000
+  items) or reading the largest `.xlsx` files holds the server for about
+  one to two seconds.
+- **Large boards.** The table draws every item (up to 5,000) and column
+  at once, without virtual scrolling: an imported board of 455 items and
+  42 columns takes about 3 s to open in Chromium, and its item card about
+  2 s.
+- **Multi-line text.** Text values keep their line breaks (monday.com
+  long text, ClickUp descriptions), but text cells and the item card edit
+  them in one-line fields, which show the lines run together and save
+  them that way when edited.
 - **In-memory sessions.** Browser sessions live in the server process
   (24 h idle timeout, 12 h behind the site gate) and are lost on restart,
   like the sign-in failure counts. The two API tokens are

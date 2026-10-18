@@ -9,15 +9,8 @@
  */
 import { BOARD_LIMITS } from "../snapshot-board.js";
 import { addColumn, readOther, subitemPlan } from "./monday-columns.js";
-import {
-  colorOf,
-  htmlText,
-  idOf,
-  limitHit,
-  listOf,
-  scopeAt,
-  str,
-} from "./monday-common.js";
+import { idOf, limitHit, listOf, scopeAt, str } from "./common.js";
+import { colorOf, htmlText } from "./monday-common.js";
 
 const BOARD_KINDS = new Set(["public", "private", "share"]);
 const GROUP_COLOR = "#579bfc";

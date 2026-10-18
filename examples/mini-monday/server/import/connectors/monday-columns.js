@@ -13,15 +13,8 @@
  */
 import { LIMITS } from "../../input.js";
 import { COLUMN_LIMITS } from "../snapshot-columns.js";
-import {
-  colorOf,
-  idOf,
-  isObject,
-  parseJson,
-  scopeAt,
-  settingsOf,
-  str,
-} from "./monday-common.js";
+import { idOf, isObject, scopeAt, str } from "./common.js";
+import { colorOf, parseJson, settingsOf } from "./monday-common.js";
 
 const NATIVE = Object.freeze({
   status: "status",

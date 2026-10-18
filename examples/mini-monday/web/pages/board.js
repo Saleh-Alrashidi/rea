@@ -262,8 +262,11 @@ function syncCard(page, itemId) {
   }
 }
 
+const sameView = (a, b) => a.view === b.view && a.installId === b.installId;
+
 function applyRoute(page, params) {
   const { state } = page;
+  const shown = currentViewSpec(page);
   state.route = {
     view: params.view ?? null,
     installId: params.installId ?? null,
@@ -276,7 +279,11 @@ function applyRoute(page, params) {
     });
   }
   syncCard(page, state.route.itemId);
-  page.render();
+  // Opening or closing an item card leaves the header and the view as
+  // they are: rebuilding a wide board's table would freeze the page.
+  const cardOnly = page.routed && sameView(shown, currentViewSpec(page));
+  page.routed = true;
+  page.render(cardOnly ? ["card"] : undefined);
 }
 
 function setSearch(page, term) {
@@ -328,15 +335,15 @@ async function share(page) {
 
 /**
  * Once per mount, when the board first loads: open its change stream (a
- * missing or inaccessible board never opens one), refresh once to catch
- * changes made before the stream opened, remember the visit and select the
- * board's workspace.
+ * missing or inaccessible board never opens one), reload once to catch
+ * changes made before the stream opened (redrawing only if there were
+ * any), remember the visit and select the board's workspace.
  */
 function onBoardReady(page) {
   if (page.announced) return;
   page.announced = true;
   page.sync.subscribe(page.state.boardId);
-  page.sync.scheduleRefresh();
+  page.sync.scheduleRefresh({ ifChanged: true });
   rememberVisit(page.ctx.me.id, "board", page.state.boardId);
   const board = page.state.board;
   if (board?.workspace && board.workspaceAccessible) {

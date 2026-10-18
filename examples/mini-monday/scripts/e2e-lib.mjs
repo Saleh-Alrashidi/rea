@@ -1,6 +1,6 @@
 /**
  * Shared harness of the browser tests (`e2e-smoke.mjs`, `e2e-roles.mjs`,
- * `e2e-hosted.mjs`).
+ * `e2e-hosted.mjs`, `e2e-import.mjs`).
  *
  * `runE2E({ name, steps })` starts the host and apps servers over an
  * in-memory store, launches headless Chromium and runs the steps in order,
@@ -17,7 +17,8 @@
  * Chromium is installed, the run prints why and exits 0. MM_E2E_CHROMIUM
  * names a browser executable; MM_HOST_PORT / MM_APPS_PORT (default 0, a
  * free port) and MM_BIND choose where the servers listen (a script can
- * start other servers with `serve`, as `e2e-hosted.mjs` does). Screenshots
+ * start other servers with `serve`, as `e2e-hosted.mjs` and
+ * `e2e-import.mjs` do). Screenshots
  * go to `e2e-output/`.
  */
 import { mkdir } from "node:fs/promises";
@@ -390,7 +391,7 @@ export function localServeConfig(env = process.env) {
 }
 
 /** The default `serve`: local mode over an in-memory store. */
-async function serveLocal(log) {
+export async function serveLocal(log) {
   const { hostPort, appsPort, bind } = localServeConfig();
   const store = await createStore({ file: null, log });
   const servers = await startServers({ store, hostPort, appsPort, bind, log });
@@ -406,7 +407,8 @@ async function start({ serve = serveLocal, ...options }) {
   const problems = [];
   const log = problemLog(problems);
   await mkdir(OUTPUT_DIR, { recursive: true });
-  const { store, servers } = await serve(log);
+  const served = await serve(log);
+  const { store, servers } = served;
   let browser = null;
   try {
     browser = await launchBrowser(playwright.chromium);
@@ -419,6 +421,7 @@ async function start({ serve = serveLocal, ...options }) {
   } finally {
     await browser?.close();
     await servers.close();
+    await served.close?.();
   }
 }
 
@@ -427,7 +430,9 @@ async function start({ serve = serveLocal, ...options }) {
  * code. `prefix` names failure screenshots (`<prefix>failure-<n>.png`);
  * `setup(run)` runs once before the first step; `serve(log)` starts the
  * servers (`{ store, servers }`, `servers` as `startServers` returns
- * them), local mode over an in-memory store by default.
+ * them, and optionally `close()` for whatever else it started, called
+ * after the servers close), local mode over an in-memory store by default
+ * (`serveLocal`).
  *
  * A step receives `run`: `{ browser, servers, store, hostOrigin,
  * appsOrigin, token, outputDir, documentCsp, screenshots, newContext(

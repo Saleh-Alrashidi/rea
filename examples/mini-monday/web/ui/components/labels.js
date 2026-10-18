@@ -133,6 +133,7 @@ export const NOTIFICATION_KINDS = Object.freeze({
   update: { label: "New update", icon: "chat" },
   form_response: { label: "Form response", icon: "forms" },
   role: { label: "Role changed", icon: "admin", changesAccess: true },
+  import_finished: { label: "Import finished", icon: "inbox" },
 });
 
 /**
