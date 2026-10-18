@@ -1,7 +1,9 @@
 /**
  * Menus: a popover with `role="menu"` and keyboard navigation (arrow keys,
- * Home/End, typeahead by first letter). Selecting an item closes the menu
- * first, then runs `onSelect`.
+ * Home/End, typeahead). Typeahead matches the start of an item's label
+ * (`.menu-label`, not its icon or glyph); letters typed in quick succession
+ * extend the match ("quo" → "Quote"), a repeated single letter cycles.
+ * Selecting an item closes the menu first, then runs `onSelect`.
  *
  * Items:
  *   { label, onSelect, icon?, hint?, badge?: Node, danger?, checked?,
@@ -27,6 +29,9 @@ import { icon as iconElement } from "./icon.js";
 import { openPopover } from "./popover.js";
 
 const ITEM_SELECTOR = '[role^="menuitem"]:not([aria-disabled="true"])';
+const TYPEAHEAD_MS = 700;
+/** Typed text per menu element: `{ text, at }`. */
+const typed = new WeakMap();
 
 function moveFocus(menu, target) {
   const items = [...menu.querySelectorAll(ITEM_SELECTOR)];
@@ -39,18 +44,31 @@ function moveFocus(menu, target) {
   items[next].focus();
 }
 
+const labelOf = (item) =>
+  (item.querySelector(".menu-label") ?? item).textContent.trim().toLowerCase();
+
 function typeahead(menu, key) {
-  const letter = key.toLowerCase();
+  const now = Date.now();
+  const last = typed.get(menu);
+  const fresh = !last || now - last.at > TYPEAHEAD_MS;
+  let text = fresh ? key.toLowerCase() : last.text + key.toLowerCase();
+  // "ttt" cycles through the items starting with "t".
+  if ([...text].every((letter) => letter === text[0])) text = text[0];
+  typed.set(menu, { text, at: now });
   const items = [...menu.querySelectorAll(ITEM_SELECTOR)];
   const index = items.indexOf(globalThis.document.activeElement);
-  const ordered = [...items.slice(index + 1), ...items.slice(0, index + 1)];
-  const match = ordered.find((item) =>
-    item.textContent.trim().toLowerCase().startsWith(letter),
-  );
-  match?.focus();
+  // A single letter looks past the current item; longer text includes it.
+  const start = text.length === 1 ? index + 1 : Math.max(index, 0);
+  const ordered = [...items.slice(start), ...items.slice(0, start)];
+  ordered.find((item) => labelOf(item).startsWith(text))?.focus();
 }
 
-function onMenuKeydown(event) {
+/**
+ * Arrow keys, Home/End and typeahead over the `menuitem*` children of the
+ * listening element (`event.currentTarget`); other pickers built as menus
+ * (the status picker) reuse it.
+ */
+export function onMenuKeydown(event) {
   const menu = event.currentTarget;
   const keys = { ArrowDown: 1, ArrowUp: -1, Home: "first", End: "last" };
   if (Object.hasOwn(keys, event.key)) {

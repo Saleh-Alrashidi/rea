@@ -1,33 +1,24 @@
 /**
  * People: the account, users (the directory), teams and their mutations.
- *
- * Directory visibility (unspecified in SPEC-2, recorded with the builder
- * report): active non-guest users see every user and team. Guests see
- * themselves, the members of their teams and the people on the content
- * they can access (grants, note owners, board and doc authors, people
- * assigned to items), and only the teams they belong to. Users outside that set are reported exactly
- * like unknown IDs, in lists, counts, search and as share subjects.
+ * Who may see which users and teams is decided by `server/access.js`
+ * (`visibleUserIds`, `teamVisible`); users outside the caller's directory
+ * are reported exactly like unknown IDs, in lists, counts, search, as
+ * share subjects and in every User-valued field (`lookupUser`).
  */
 import {
-  boardAccess,
   can,
   canManageTeam,
-  docAccess,
-  isAdmin,
-  isGuest,
-  membersOf,
-  noteAccess,
-  requireCapability,
-  subjectUserIds,
-  teamRole,
-} from "../access.js";
-import { peopleIds } from "../column-values.js";
-import {
-  allBoards,
-  badInput,
   describe,
+  isAdmin,
+  requireCapability,
+  teamRole,
+  teamVisible,
+} from "../access.js";
+import {
+  badInput,
   fail,
   initials,
+  lookupUser,
   notFound,
   pick,
   read,
@@ -37,74 +28,10 @@ import {
   readName,
   storeResult,
   viewerOf,
+  visibleUsers,
   wrapAll,
   write,
 } from "./common.js";
-
-// --------------------------------------------------------------- directory
-
-function addSubjects(store, ids, kind, resource) {
-  for (const grant of membersOf(kind, resource)) {
-    for (const id of subjectUserIds(store, grant)) ids.add(id);
-  }
-}
-
-/** Adds the people assigned to items of `board` (people columns). */
-function addAssignees(store, ids, board) {
-  const people = store
-    .listColumns(board.id)
-    .filter((column) => column.type === "people");
-  if (people.length === 0) return;
-  const limit = Number.MAX_SAFE_INTEGER;
-  for (const item of store.listItems({ boardId: board.id, limit }).items) {
-    for (const column of people) {
-      for (const id of peopleIds(column, item.values[column.id])) ids.add(id);
-    }
-  }
-}
-
-/** Users a guest may see (see the module comment). */
-function guestDirectory(store, guest) {
-  const ids = new Set([guest.id]);
-  for (const team of store.listTeams()) {
-    if (teamRole(team, guest) === null) continue;
-    for (const member of team.members) ids.add(member.user_id);
-  }
-  for (const board of allBoards(store)) {
-    if (boardAccess(store, guest, board) === null) continue;
-    addSubjects(store, ids, "board", board);
-    addAssignees(store, ids, board);
-    if (board.creator_id) ids.add(board.creator_id);
-  }
-  for (const doc of store.listDocs()) {
-    if (docAccess(store, guest, doc) === null) continue;
-    addSubjects(store, ids, "doc", doc);
-    for (const id of [doc.created_by, doc.updated_by]) if (id) ids.add(id);
-  }
-  for (const note of store.listNotes()) {
-    if (noteAccess(store, guest, note) === null) continue;
-    addSubjects(store, ids, "note", note);
-    ids.add(note.owner_id);
-  }
-  return ids;
-}
-
-/** The users `viewer` may see, in store order. */
-export function visibleUsers(store, viewer) {
-  const users = store.listUsers();
-  if (!isGuest(viewer)) return users;
-  const ids = guestDirectory(store, viewer);
-  return users.filter((user) => ids.has(user.id));
-}
-
-/** A lookup that only finds users `viewer` may see. */
-export function visibleUserLookup(store, viewer) {
-  const ids = new Set(visibleUsers(store, viewer).map((user) => user.id));
-  return (id) => (ids.has(id) ? store.getUser(id) : null);
-}
-
-export const teamVisible = (viewer, team) =>
-  Boolean(team) && (!isGuest(viewer) || teamRole(team, viewer) !== null);
 
 /**
  * Checks share or team-member subjects: every ID must be a user (or team)
@@ -115,12 +42,11 @@ export function readSubjectIds(ctx, { kind, ids }) {
   const viewer = viewerOf(ctx);
   const wanted = readIds(ids);
   if (wanted.length === 0) badInput("List at least one user or team");
-  const findUser = visibleUserLookup(ctx.store, viewer);
   for (const id of wanted) {
     const found =
       kind === "team"
         ? teamVisible(viewer, ctx.store.getTeam(id))
-        : findUser(id) !== null;
+        : lookupUser(ctx, id) !== null;
     if (!found) {
       const label = kind === "team" ? "team" : "user";
       badInput(`Unknown ${label} ${describe(id)}`, { subject_id: id });
@@ -143,7 +69,7 @@ function managedTeam(ctx, teamId) {
 // --------------------------------------------------------------- resolvers
 
 function account(_p, _a, ctx) {
-  const users = visibleUsers(ctx.store, viewerOf(ctx));
+  const users = visibleUsers(ctx);
   const counts = { admin: 0, member: 0, viewer: 0, guest: 0 };
   for (const user of users) counts[user.role] += 1;
   return {
@@ -157,10 +83,7 @@ function account(_p, _a, ctx) {
 const Query = wrapAll(read, {
   me: (_p, _a, ctx) => viewerOf(ctx),
   users: (_p, { ids, limit }, ctx) =>
-    pick(visibleUsers(ctx.store, viewerOf(ctx)), ids).slice(
-      0,
-      readLimit(limit),
-    ),
+    pick(visibleUsers(ctx), ids).slice(0, readLimit(limit)),
   teams: (_p, _a, ctx) => {
     const viewer = viewerOf(ctx);
     return ctx.store.listTeams().filter((team) => teamVisible(viewer, team));
@@ -169,10 +92,8 @@ const Query = wrapAll(read, {
 });
 
 /** A visible user for `update_user`, or NOT_FOUND. */
-function visibleUser(ctx, userId) {
-  const user = visibleUserLookup(ctx.store, viewerOf(ctx))(userId);
-  return user ?? notFound("User", userId);
-}
+const visibleUser = (ctx, userId) =>
+  lookupUser(ctx, userId) ?? notFound("User", userId);
 
 function updateUser(_p, args, ctx) {
   const viewer = viewerOf(ctx);
@@ -258,11 +179,16 @@ const Mutation = wrapAll(write, {
     teamMembers(ctx, managedTeam(ctx, args.team_id), args, "addTeamMembers"),
   remove_team_members: (_p, args, ctx) =>
     teamMembers(ctx, managedTeam(ctx, args.team_id), args, "removeTeamMembers"),
+  set_team_member_role(_p, args, ctx) {
+    const team = managedTeam(ctx, args.team_id);
+    const [userId] = readSubjectIds(ctx, { kind: "user", ids: [args.user_id] });
+    const result = ctx.store.setTeamMemberRole(team.id, userId, args.role);
+    return storeResult(result, () => notFound("Team", team.id));
+  },
   delete_team(_p, args, ctx) {
     const team = managedTeam(ctx, args.team_id);
-    return storeResult(ctx.store.deleteTeam(team.id), () =>
-      notFound("Team", team.id),
-    );
+    const result = ctx.store.deleteTeam(team.id, { actorId: viewerOf(ctx).id });
+    return storeResult(result, () => notFound("Team", team.id));
   },
 });
 
@@ -309,11 +235,15 @@ export const definition = {
       update_team(team_id:ID!,name:String,description:String):Team!
       add_team_members(team_id:ID!,user_ids:[ID!]!,as_owner:Boolean=false):Team!
       remove_team_members(team_id:ID!,user_ids:[ID!]!):Team!
+      set_team_member_role(team_id:ID!,user_id:ID!,role:String!):Team!
       delete_team(team_id:ID!):Team!`,
   },
   resolvers: { Query, Mutation, User, Team },
   extras: {
     "Query.me": { description: "The calling user." },
     "Query.users": { description: "Users the caller may see." },
+    "Mutation.set_team_member_role": {
+      description: 'Makes a team member "owner" or "member" in one change.',
+    },
   },
 };

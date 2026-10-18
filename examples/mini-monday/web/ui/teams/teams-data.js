@@ -3,7 +3,8 @@
  * `#/teams/<id>`). `teams` lists only the teams the user may see (guests:
  * their own teams), so an unknown and a hidden team read the same.
  * Managing a team needs `can_manage` (team owners and admins); the server
- * checks it again (`access.canManageTeam`) and keeps at least one owner.
+ * checks it again (`access.canManageTeam`) and keeps at least one active
+ * owner. Role changes are one `set_team_member_role` each.
  */
 
 import { REASONS } from "../components/permissions.js";
@@ -28,13 +29,8 @@ export const TEAM_MUTATIONS = Object.freeze({
   removeMembers: `mutation RemoveTeamMembers($teamId: ID!, $userIds: [ID!]!) {
   remove_team_members(team_id: $teamId, user_ids: $userIds) { id }
 }`,
-  // The API promotes with add_team_members(as_owner: true) but has no
-  // demotion, so an owner becomes a member by leaving and rejoining in one
-  // request. Mutations run in order: when the removal is refused (the last
-  // owner), the add leaves the existing owner unchanged.
-  makeMember: `mutation MakeTeamMember($teamId: ID!, $userIds: [ID!]!) {
-  removed: remove_team_members(team_id: $teamId, user_ids: $userIds) { id }
-  added: add_team_members(team_id: $teamId, user_ids: $userIds, as_owner: false) { id }
+  setRole: `mutation SetTeamMemberRole($teamId: ID!, $userId: ID!, $role: String!) {
+  set_team_member_role(team_id: $teamId, user_id: $userId, role: $role) { id }
 }`,
   remove: `mutation DeleteTeam($teamId: ID!) {
   delete_team(team_id: $teamId) { id }
@@ -78,31 +74,28 @@ export function sortTeams(teams) {
   });
 }
 
+const isActiveOwner = (entry) =>
+  entry.role === "owner" && entry.status !== "deactivated";
+
 /**
  * What the user may do to `member` of `team`, as reasons for disabled
- * controls (null when allowed): `{ remove, promote, demote }`.
+ * controls (null when allowed): `{ remove, promote, demote }`. A team keeps
+ * an active owner (deactivated owners cannot manage it), as the server's
+ * `store.keepsManager` requires.
  */
 export function memberActions(team, member) {
   if (!team.canManage) {
     const reason = "Only team owners and admins can change members";
     return { remove: reason, promote: reason, demote: reason };
   }
-  const owners = team.members.filter((entry) => entry.role === "owner");
-  const lastOwner = member.role === "owner" && owners.length <= 1;
-  const keep = "A team keeps at least one owner";
-  const inactive =
-    member.status === "deactivated"
-      ? "Deactivated people keep their current role"
-      : null;
+  const activeOwners = team.members.filter(isActiveOwner);
+  const lastOwner = isActiveOwner(member) && activeOwners.length <= 1;
+  const keep = "A team keeps at least one active owner";
   return {
     remove: lastOwner ? keep : null,
-    promote: member.role === "owner" ? "Already an owner" : inactive,
+    promote: member.role === "owner" ? "Already an owner" : null,
     demote:
-      member.role !== "owner"
-        ? "Already a member"
-        : lastOwner
-          ? keep
-          : inactive,
+      member.role !== "owner" ? "Already a member" : lastOwner ? keep : null,
   };
 }
 

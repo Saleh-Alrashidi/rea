@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import test from "node:test";
+import { ALL_SCOPES } from "../server/auth.js";
 import { DEFAULT_STATUS_SETTINGS } from "../server/column-values.js";
+import { GraphQLError } from "../server/graphql/errors.js";
+import { execute } from "../server/graphql/execute.js";
 import { parse } from "../server/graphql/parse.js";
+import { createSchema } from "../server/schema.js";
+import { createStore } from "../server/store.js";
 import { graphql, requestSessionToken } from "../web/api.js";
 import { loadBoard, loadItem, mutate } from "../web/ui/board/board-data.js";
 import { CLEAR_VALUE, encodeValue } from "../web/ui/board/values.js";
 import { loadDirectory } from "../web/ui/components/directory.js";
 import { loadShellData } from "../web/ui/shell/shell-data.js";
 
-const SCHEMA_URL = new URL("../server/schema.js", import.meta.url);
 const STATUS_SETTINGS = JSON.stringify(DEFAULT_STATUS_SETTINGS);
 
 function jsonResponse(status, body) {
@@ -279,14 +282,8 @@ test("every document the UI sends parses with the server parser", async (t) => {
 // ------------------------------------------------------------------------
 // End-to-end against the real schema and store, through the same request
 // path http.js serves (parse → execute with a browser-session principal).
-// Skipped until server/schema.js serves the SPEC-2 API (workspaces).
 
 async function realApi(t) {
-  const { createSchema } = await import("../server/schema.js");
-  const { execute } = await import("../server/graphql/execute.js");
-  const { GraphQLError } = await import("../server/graphql/errors.js");
-  const { createStore } = await import("../server/store.js");
-  const { ALL_SCOPES } = await import("../server/auth.js");
   const store = await createStore({ file: null });
   const schema = createSchema();
   const principal = {
@@ -476,23 +473,10 @@ async function checkWideBoard() {
   assert.equal(board.truncated, false);
 }
 
-/** True when the real schema serves the SPEC-2 workspace API. */
-async function hasWorkspaceApi() {
-  if (!existsSync(SCHEMA_URL)) return false;
-  const { createSchema } = await import("../server/schema.js");
-  return createSchema().types.get("Query").fields.has("workspaces");
-}
-
 test("UI loaders and mutations work against the real schema", async (t) => {
-  if (!(await hasWorkspaceApi())) {
-    t.skip("server/schema.js does not serve the SPEC-2 API yet");
-    return;
-  }
-  {
-    await realApi(t);
-    const board = await checkSeededBoard();
-    await checkItemFlow(board);
-    await checkStructureFlow(board);
-    await checkWideBoard();
-  }
+  await realApi(t);
+  const board = await checkSeededBoard();
+  await checkItemFlow(board);
+  await checkStructureFlow(board);
+  await checkWideBoard();
 });

@@ -105,13 +105,17 @@ async function markRead(n, variables) {
   }
 }
 
+/** Marks a notification read once it is opened (here or from Home). */
+function markOpened(n, notification) {
+  if (notification.read) return;
+  notification.read = true;
+  setCount(n, n.count - 1);
+  markRead(n, { ids: [notification.id] });
+}
+
 function openNotification(n, notification) {
   n.popover?.close();
-  if (!notification.read) {
-    notification.read = true;
-    setCount(n, n.count - 1);
-    markRead(n, { ids: [notification.id] });
-  }
+  markOpened(n, notification);
   const hash = hashFromUrl(notification.url);
   if (hash) n.router.navigate(hash);
 }
@@ -202,7 +206,8 @@ async function onNotification(n, event) {
  * Creates the bell. `router` navigates; `toast` reports failures.
  * @param {{ router: object, toast: object }} options
  * @returns {{ element: HTMLElement, setCount(count: number): void,
- *   refresh(): Promise<void>, onNotification(event: object): void }}
+ *   refresh(): Promise<void>, onNotification(event: object): void,
+ *   markOpened(notification: object): void }}
  */
 export function createNotifications({ router, toast }) {
   const n = {
@@ -233,5 +238,6 @@ export function createNotifications({ router, toast }) {
     setCount: (count) => setCount(n, count),
     refresh: () => load(n),
     onNotification: (event) => onNotification(n, event),
+    markOpened: (notification) => markOpened(n, notification),
   };
 }

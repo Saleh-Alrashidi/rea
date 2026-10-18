@@ -1,8 +1,11 @@
 /**
  * Anchored popovers. Only one popover is open at a time; it closes on
- * Escape, on a pointer press outside it, on window resize and on
+ * Escape, on a pointer press outside it, when Tab leaves it (past its first
+ * or last control, or any Tab in a `menu`), on window resize and on
  * navigation, and returns focus to its anchor (or to the element that
  * replaced the anchor after a re-render, found by `data-focus-key`).
+ * In the tab order it sits right after its anchor. `update()` keeps focus
+ * on the control with the same `data-focus-key`, else the first control.
  *
  * ```js
  * const popover = openPopover({ anchor, label: "Choose status",
@@ -13,6 +16,7 @@
  */
 
 import { h } from "../../dom.js";
+import { findByFocusKey } from "./focus.js";
 
 const MARGIN = 8;
 const GAP = 4;
@@ -63,6 +67,34 @@ function firstFocusable(element) {
     element.querySelector("[data-autofocus]") ??
     element.querySelector(FOCUSABLE)
   );
+}
+
+const focusables = (element) =>
+  [...element.querySelectorAll(FOCUSABLE)].filter((node) => !node.inert);
+
+/** Re-renders `element`, keeping focus inside it when it was there. */
+function rerender(element, render) {
+  const doc = globalThis.document;
+  const active = doc.activeElement;
+  const hadFocus = element.contains(active);
+  const key = hadFocus ? active.dataset?.focusKey : undefined;
+  element.replaceChildren(render());
+  if (!hadFocus) return;
+  const same = key ? findByFocusKey(element, key) : null;
+  const usable = same && !same.disabled ? same : null;
+  (usable ?? focusables(element)[0] ?? element).focus();
+}
+
+/**
+ * Whether Tab leaves the popover: always in a menu (arrow keys move inside
+ * it), otherwise past the first (Shift+Tab) or last control.
+ */
+function tabLeaves(element, role, event) {
+  if (role === "menu") return true;
+  const items = focusables(element);
+  const active = globalThis.document.activeElement;
+  if (items.length === 0 || active === element) return true;
+  return event.shiftKey ? active === items[0] : active === items.at(-1);
 }
 
 function restoreFocus(anchor, focusKey) {
@@ -125,6 +157,15 @@ export function openPopover(options) {
   anchor.setAttribute("aria-expanded", "true");
 
   function onKeydown(event) {
+    if (event.key === "Tab") {
+      if (!element.contains(doc.activeElement)) return;
+      if (!tabLeaves(element, role, event)) return;
+      // Closing focuses the anchor; Tab then moves on from there, and
+      // Shift+Tab stops on the anchor itself.
+      handle.close();
+      if (event.shiftKey) event.preventDefault();
+      return;
+    }
     if (event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
@@ -143,7 +184,7 @@ export function openPopover(options) {
     element,
     anchor,
     update() {
-      element.replaceChildren(render());
+      rerender(element, render);
       position(element, anchor, placement);
     },
     close() {

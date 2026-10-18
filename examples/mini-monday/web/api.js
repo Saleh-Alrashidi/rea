@@ -199,9 +199,18 @@ export async function requestSessionToken(installId) {
   return { token: result.token, expires_at: result.expires_at };
 }
 
-/** Opens an EventSource on `url` and forwards parsed `eventName` objects. */
-function subscribe(url, eventName, onEvent) {
+/**
+ * Opens an EventSource on `url` and forwards parsed `eventName` objects.
+ * The server ends a stream for good by refusing its reconnection (a board
+ * the user lost access to answers 404): EventSource then reports an error
+ * in the CLOSED state, which `onEnd()` announces. Network drops keep the
+ * CONNECTING state and retry on their own.
+ */
+function subscribe(url, eventName, onEvent, onEnd = null) {
   const source = new globalThis.EventSource(url);
+  source.addEventListener("error", () => {
+    if (source.readyState === globalThis.EventSource.CLOSED) onEnd?.();
+  });
   source.addEventListener(eventName, (event) => {
     let payload;
     try {
@@ -216,18 +225,22 @@ function subscribe(url, eventName, onEvent) {
 
 /**
  * Subscribes to a board's server-sent change events. `onEvent` receives each
- * parsed change object; malformed events are ignored. Returns `close()`.
+ * parsed change object; malformed events are ignored. `onEnd()` runs once
+ * the server has ended the stream for good (lost access, deleted board).
+ * Returns `close()`.
  *
  * @param {string} boardId
  * @param {(change: object) => void} onEvent
+ * @param {() => void} [onEnd]
  * @returns {() => void}
  */
-export function subscribeBoardEvents(boardId, onEvent) {
+export function subscribeBoardEvents(boardId, onEvent, onEnd) {
   const id = readId(boardId, "boardId");
   const url = `${EVENTS_PATH}?board_id=${encodeURIComponent(id)}`;
-  return subscribe(url, "change", (change) => {
+  const forward = (change) => {
     if (typeof change.type === "string") onEvent(change);
-  });
+  };
+  return subscribe(url, "change", forward, onEnd);
 }
 
 /**

@@ -3,7 +3,10 @@
  *
  * Everything goes through the SDK bridge to the host page (exact origin from
  * /apps/config.js): board data via the host-proxied GraphQL API, the note via
- * instance storage with optimistic versions, notices and item navigation via
+ * instance storage with optimistic versions (only the board's editors may
+ * change it, so the app reads `my_access` and keeps the note read-only for
+ * everyone else, as the server refuses their writes), notices and item
+ * navigation via
  * `execute`, and live refresh via `listen("events")`. The session token is
  * verified by this app's own backend. All data is rendered with DOM APIs and
  * textContent, never as HTML.
@@ -20,11 +23,14 @@ const MAX_NOTICE_LENGTH = 200;
 const FALLBACK_COLOR = "#c4c4c4";
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 const VERIFY_URL = "/apps/status-summary/api/verify";
+/** Board roles that may change the shared note (storage:write needs editor). */
+const NOTE_EDITORS = new Set(["owner", "editor"]);
 
 const BOARD_QUERY = `query StatusSummaryBoard($board: ID!) {
   boards(ids: [$board]) {
     id
     name
+    my_access
     columns { id title type settings_str }
   }
 }`;
@@ -54,6 +60,7 @@ const ui = {
   bars: byId("bars"),
   barsEmpty: byId("bars-empty"),
   note: byId("note"),
+  noteAccess: byId("note-access"),
   noteVersion: byId("note-version"),
   saveNote: byId("save-note"),
   reloadNote: byId("reload-note"),
@@ -241,6 +248,7 @@ function barItem(bucket, total) {
 
 function renderSummary({ board, column, buckets, total }) {
   ui.boardName.textContent = board.name;
+  applyNoteAccess(board.my_access);
   ui.itemTotal.textContent = `${total} ${total === 1 ? "item" : "items"}`;
   ui.columnName.textContent = column ? column.title : "";
   ui.bars.replaceChildren(...buckets.map((b) => barItem(b, total)));
@@ -292,6 +300,22 @@ async function openFirstItem(bucket) {
 }
 
 // --------------------------------------------------------------------- note
+
+/**
+ * The note is shared by everyone who uses this view, so only the board's
+ * editors and owners can change it; the page starts read-only and stays so
+ * until the board says the user may edit (fail closed).
+ */
+function applyNoteAccess(access) {
+  const editable = NOTE_EDITORS.has(access);
+  ui.note.readOnly = !editable;
+  ui.saveNote.hidden = !editable;
+  ui.saveNote.disabled = !editable;
+  ui.note.placeholder = editable
+    ? "Write a note for everyone who uses this view"
+    : "No note yet";
+  ui.noteAccess.hidden = editable;
+}
 
 function setNoteVersion(version) {
   state.noteVersion = Number.isInteger(version) ? version : null;

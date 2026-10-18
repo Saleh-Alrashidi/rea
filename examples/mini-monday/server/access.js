@@ -16,9 +16,12 @@
  *   owners of public boards in workspaces they can reach.
  * - A note owner keeps "owner" even with a viewer account (personal notes
  *   are always editable by their owner); shared roles are capped.
- * - Last-owner protection counts user owner grants; team owner grants are
- *   extra, so deleting a team never leaves a resource without an owner.
+ * - Last-owner protection counts user owner grants that make their user
+ *   an owner (active, not a viewer account, guests only where admitted);
+ *   team owner grants are extra, so deleting a team never leaves a
+ *   resource without an owner. Teams likewise keep an active owner.
  */
+import { peopleIds } from "./column-values.js";
 import { GraphQLError } from "./graphql/errors.js";
 
 export const ROLE_RANK = Object.freeze({ viewer: 1, editor: 2, owner: 3 });
@@ -59,6 +62,7 @@ const LABELS = Object.freeze({
   note: "Note",
   form: "Form",
   item: "Item",
+  install: "App install",
 });
 
 const knownRole = (role) =>
@@ -188,6 +192,15 @@ export function formAccess(store, user, form) {
   return boardAccess(store, user, store.getBoard(form.board_id));
 }
 
+/**
+ * Access to an app install: the board access of its board. App principals
+ * act as their user (SPEC-2 §1.2), so writing app storage needs editor.
+ */
+export function installAccess(store, user, install) {
+  if (!install) return null;
+  return boardAccess(store, user, store.getBoard(install.board_id));
+}
+
 const ACCESSORS = Object.freeze({
   workspace: workspaceAccess,
   board: boardAccess,
@@ -224,6 +237,69 @@ export function notificationVisible(store, user, notification) {
   return resourceAccess(store, user, kind, resource) !== null;
 }
 
+// -------------------------------------------------------------- directory
+
+function addSubjects(store, ids, kind, resource) {
+  for (const grant of membersOf(kind, resource)) {
+    for (const id of subjectUserIds(store, grant)) ids.add(id);
+  }
+}
+
+/** Adds the people assigned to items of `board` (people columns). */
+function addAssignees(store, ids, board) {
+  const people = store.listColumns(board.id).filter((c) => c.type === "people");
+  if (people.length === 0) return;
+  const limit = Number.MAX_SAFE_INTEGER;
+  for (const item of store.listItems({ boardId: board.id, limit }).items) {
+    for (const column of people) {
+      for (const id of peopleIds(column, item.values[column.id])) ids.add(id);
+    }
+  }
+}
+
+function guestDirectory(store, guest) {
+  const ids = new Set([guest.id]);
+  for (const team of store.listTeams()) {
+    if (teamRole(team, guest) === null) continue;
+    for (const member of team.members) ids.add(member.user_id);
+  }
+  for (const board of store.listBoards({ limit: Number.MAX_SAFE_INTEGER })) {
+    if (boardAccess(store, guest, board) === null) continue;
+    addSubjects(store, ids, "board", board);
+    addAssignees(store, ids, board);
+    if (board.creator_id) ids.add(board.creator_id);
+  }
+  for (const doc of store.listDocs()) {
+    if (docAccess(store, guest, doc) === null) continue;
+    addSubjects(store, ids, "doc", doc);
+    for (const id of [doc.created_by, doc.updated_by]) if (id) ids.add(id);
+  }
+  for (const note of store.listNotes()) {
+    if (noteAccess(store, guest, note) === null) continue;
+    addSubjects(store, ids, "note", note);
+    ids.add(note.owner_id);
+  }
+  return ids;
+}
+
+/**
+ * The users `viewer` may see, as a Set of IDs, or null for everyone
+ * (unspecified in SPEC-2, recorded with the builder report). Active
+ * non-guests see every user. Guests see themselves, the members of their
+ * teams and the people on the content they can access (grants, note
+ * owners, board and doc authors, people assigned to items); everyone else
+ * is reported like an unknown ID wherever a user would appear. Needs a
+ * full store (`list*` methods).
+ */
+export function visibleUserIds(store, viewer) {
+  if (!isActive(viewer)) return new Set();
+  return isGuest(viewer) ? guestDirectory(store, viewer) : null;
+}
+
+/** Guests see only the teams they belong to; others see every team. */
+export const teamVisible = (viewer, team) =>
+  Boolean(team) && (!isGuest(viewer) || teamRole(team, viewer) !== null);
+
 // ----------------------------------------------------------------- grants
 
 /** User IDs a subject stands for: the user, or the team's members. */
@@ -247,11 +323,33 @@ export function explicitOwners(store, resourceKind, resource) {
   });
 }
 
-function keepsAnOwner(members, subject, role) {
-  const owners = members.filter((g) => g.kind === "user" && g.role === "owner");
-  const isSubject = (g) => g.id === subject.id;
-  if (subject.kind !== "user" || !owners.some(isSubject)) return true;
-  return role === "owner" || owners.length > 1;
+/**
+ * True when `grant` is a user owner grant that makes its user an owner of
+ * `resource`: the user is active, not a viewer account (capped) and, for
+ * guests, on a resource that admits them.
+ */
+function ownsThrough(store, { resourceKind, resource }, grant) {
+  if (grant.kind !== "user" || grant.role !== "owner") return false;
+  const user = store.getUser(grant.id);
+  return resourceAccess(store, user, resourceKind, resource) === "owner";
+}
+
+/** Whether a resource still has an effective user owner after the change. */
+function keepsAnOwner(store, { resourceKind, resource, subject, role }) {
+  if (subject.kind !== "user" || role === "owner") return true;
+  const target = { resourceKind, resource };
+  const owners = membersOf(resourceKind, resource).filter((grant) =>
+    ownsThrough(store, target, grant),
+  );
+  return !owners.some((grant) => grant.id === subject.id) || owners.length > 1;
+}
+
+/** Active owners of `team`: the users who manage it, besides admins. */
+export function teamManagers(store, team) {
+  const owners = (team?.members ?? []).filter((m) => m.role === "owner");
+  return owners
+    .map((member) => member.user_id)
+    .filter((id) => isActive(store.getUser(id)));
 }
 
 function guestAllowed(resourceKind, resource) {
@@ -290,15 +388,14 @@ export function canGrant({ resourceKind, resource, subject, role, store }) {
       return reject("note_owner");
     }
   }
-  const members = membersOf(resourceKind, resource);
-  return keepsAnOwner(members, subject, role)
-    ? { ok: true }
-    : reject("last_owner");
+  const change = { resourceKind, resource, subject, role };
+  return keepsAnOwner(store, change) ? { ok: true } : reject("last_owner");
 }
 
 // ------------------------------------------------- NOT_FOUND vs FORBIDDEN
 
-const describe = (value) => {
+/** A short JSON rendering of a caller-supplied value for messages. */
+export const describe = (value) => {
   const text = String(value);
   return JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}…` : text);
 };
@@ -368,15 +465,26 @@ export function requireForm(ctx, id, minRole = "viewer") {
   return requireRecord(ctx, { kind: "form", id, record, minRole });
 }
 
-/** An item, checked against the access of its board (NOT_FOUND as Item). */
-export function requireItem(ctx, id, minRole = "viewer") {
-  const item = ctx.store.getItem(id);
-  const board = item ? ctx.store.getBoard(item.board_id) : null;
+/** A record checked against the access of its board (NOT_FOUND as `kind`). */
+function requireOnBoard(ctx, { kind, id, record, minRole }) {
+  const board = record ? ctx.store.getBoard(record.board_id) : null;
   const role = boardAccess(ctx.store, actingUser(ctx), board);
   const outcome = accessOutcome(role, minRole);
-  if (outcome === "not_found") throw notFoundError("item", id);
+  if (outcome === "not_found") throw notFoundError(kind, id);
   if (outcome === "forbidden") throw forbiddenError("board", minRole);
-  return item;
+  return record;
+}
+
+/** An item, checked against the access of its board (NOT_FOUND as Item). */
+export function requireItem(ctx, id, minRole = "viewer") {
+  const record = ctx.store.getItem(id);
+  return requireOnBoard(ctx, { kind: "item", id, record, minRole });
+}
+
+/** An app install, checked against the access of its board. */
+export function requireInstall(ctx, id, minRole = "viewer") {
+  const record = ctx.store.getInstall(id);
+  return requireOnBoard(ctx, { kind: "install", id, record, minRole });
 }
 
 /** Dispatches on a `ResourceKind` (workspace | board | doc | note). */

@@ -17,13 +17,6 @@ import {
 } from "./common.js";
 import { readSubjectIds } from "./people.js";
 
-const LABELS = {
-  workspace: "Workspace",
-  board: "Board",
-  doc: "Doc",
-  note: "Note",
-};
-
 /** The resource of a sharing mutation; managing members needs owner. */
 const managed = (ctx, args) =>
   requireResource(ctx, {
@@ -34,7 +27,7 @@ const managed = (ctx, args) =>
 
 /** Maps a store result to the resource's Member list. */
 function membersAfter(ctx, kind, result, id) {
-  const resource = storeResult(result, () => notFound(LABELS[kind], id));
+  const resource = storeResult(result, () => notFound(kind, id));
   return memberRecords(ctx.store, kind, resource);
 }
 

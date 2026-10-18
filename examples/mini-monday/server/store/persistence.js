@@ -6,9 +6,17 @@
  * grants, team members, doc blocks and form questions, the shared ID
  * counter and cross-record references. Invalid files throw and are never
  * overwritten, so data is never silently lost. Part-1 files
- * (`mini-monday-store/1`) are rejected as an unsupported format.
+ * (`mini-monday-store/1`) are rejected as an unsupported format. Temp
+ * files of interrupted saves are removed before loading.
  */
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { ACCESS_ROLES, ACCOUNT_ROLES, RESOURCE_KINDS } from "../access.js";
@@ -279,6 +287,35 @@ export async function loadState(file) {
 function serialize(state) {
   const columns = state.columns.map(({ settings_str: _derived, ...c }) => c);
   return `${JSON.stringify({ ...state, columns }, null, 2)}\n`;
+}
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const TEMP_NAME = new RegExp(`^\\.(.+)\\.${UUID}\\.tmp$`);
+
+/**
+ * Deletes the temp files that interrupted saves of `file` left behind (a
+ * process killed mid-write): each is a full or partial copy of the data,
+ * tokens and app secrets included. Run before loading; one store process
+ * owns a data file, so no live writer can still own them. Returns the
+ * removed names.
+ */
+export async function removeStaleTemps(file) {
+  const directory = path.dirname(file);
+  const base = path.basename(file);
+  let names;
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+  const stale = names.filter((name) => TEMP_NAME.exec(name)?.[1] === base);
+  const remove = (name) =>
+    unlink(path.join(directory, name)).catch((error) => {
+      if (error?.code !== "ENOENT") throw error;
+    });
+  await Promise.all(stale.map(remove));
+  return stale;
 }
 
 /** Writes `text` to a synced temp file in the same directory, then renames. */

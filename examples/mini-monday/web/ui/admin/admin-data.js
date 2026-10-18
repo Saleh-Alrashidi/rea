@@ -72,8 +72,10 @@ const isActiveAdmin = (user) =>
 
 /**
  * What `me` may do to `user` in the users table, with the reason a control
- * is disabled: `{ roleReason, statusReason }` (null when allowed). Admins
- * never act on themselves, and the last active admin keeps the role.
+ * is disabled: `{ roleReason, statusReason }` (null when allowed), as the
+ * server's `update_user` and `deactivate_user` decide: admins never
+ * deactivate themselves, may change their own role, and the last active
+ * admin keeps the role.
  *
  * @param {object} me
  * @param {object} user
@@ -83,16 +85,14 @@ export function userActions(me, user, users) {
   if (!can(me, "manage_users")) {
     return { roleReason: REASONS.admins, statusReason: REASONS.admins };
   }
-  if (String(user.id) === String(me.id)) {
-    return {
-      roleReason: "You can’t change your own role",
-      statusReason: "You can’t deactivate yourself",
-    };
-  }
   const lastAdmin =
     isActiveAdmin(user) && users.filter(isActiveAdmin).length <= 1;
   const reason = lastAdmin ? "Worklane keeps at least one active admin" : null;
-  return { roleReason: reason, statusReason: reason };
+  const self = String(user.id) === String(me.id);
+  return {
+    roleReason: reason,
+    statusReason: self ? "You can’t deactivate yourself" : reason,
+  };
 }
 
 /** Users matching `query` (name, email or title), in the API's order. */

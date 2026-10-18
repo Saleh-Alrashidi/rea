@@ -1,12 +1,14 @@
 /**
  * Read-only chips for assigned items (My work, Home): the status as a
- * colored chip and the due date with today / overdue accents.
+ * colored chip and the due date with today / overdue accents (finished
+ * items are never shown as overdue).
  */
 
 import { h } from "../../dom.js";
 import { formatDay, todayString } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { REASONS } from "../components/permissions.js";
+import { isOverdue } from "./my-work-data.js";
 import { statusOption, textColorOn } from "./values.js";
 
 /** A static status chip for a work item (`loadMyWork` record). */
@@ -32,7 +34,7 @@ export function statusChip(item) {
 /** Due date text with "Today" and overdue accents. */
 export function dueChip(item, today = todayString()) {
   if (!item.due) return h("span", { class: "due-chip empty" }, "No date");
-  const overdue = item.due < today;
+  const overdue = isOverdue(item, today);
   return h(
     "span",
     {

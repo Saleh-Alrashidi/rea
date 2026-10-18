@@ -38,10 +38,8 @@ async function run(t, { query, variables, success, failure }) {
 function setRole(t, member, role) {
   const owner = role === "owner";
   return run(t, {
-    query: owner ? TEAM_MUTATIONS.addMembers : TEAM_MUTATIONS.makeMember,
-    variables: owner
-      ? { userIds: [member.id], asOwner: true }
-      : { userIds: [member.id] },
+    query: TEAM_MUTATIONS.setRole,
+    variables: { userId: member.id, role: owner ? "owner" : "member" },
     success: `${member.name} is now ${owner ? "an owner" : "a member"}`,
     failure: "Couldn’t change the role",
   });

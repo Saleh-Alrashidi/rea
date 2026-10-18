@@ -110,7 +110,7 @@
 
 .btn-danger {
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-text-on-danger);
 }
 
 .btn-danger:hover:not(:disabled, [aria-disabled="true"]) {

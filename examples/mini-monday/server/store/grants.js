@@ -4,17 +4,22 @@
  * takeovers. Every grant change is checked with `canGrant` from
  * `server/access.js` (valid roles, guest rules, deactivated users, last
  * owner), applied atomically, logged on boards and announced to the users
- * it reaches (notification kind `share`, never to the actor).
+ * it reaches (notification kind `share`, never to the actor). Admin
+ * takeovers are announced to the resource's owners.
  */
 import {
+  boardAccess,
   can,
   canGrant,
+  explicitOwners,
   grantField,
   isGuest,
+  resourceAccess,
   subjectUserIds,
 } from "../access.js";
 import {
   BOARD_KINDS,
+  BOARD_KIND_LABELS,
   byId,
   commit,
   failure,
@@ -35,11 +40,6 @@ const COLLECTIONS = Object.freeze({
   board: "boards",
   doc: "docs",
   note: "notes",
-});
-const KIND_LABELS = Object.freeze({
-  public: "Main",
-  private: "Private",
-  share: "Shareable",
 });
 const REASONS = Object.freeze({
   invalid_role: "That role is not available for this resource",
@@ -103,18 +103,38 @@ function logMemberChange(ctx, { board, change, actorId }) {
   });
 }
 
+/**
+ * Recipients of a grant grouped by the role they now really have (a
+ * viewer account granted editor is told "viewer"); users without access
+ * are left out.
+ */
+function byEffectiveRole(ctx, { resourceKind, resource, subject }) {
+  const groups = new Map();
+  for (const id of subjectUserIds(ctx.reader, subject)) {
+    const user = byId(ctx.state.users, id);
+    const role = resourceAccess(ctx.reader, user, resourceKind, resource);
+    if (role === null) continue;
+    groups.set(role, [...(groups.get(role) ?? []), id]);
+  }
+  return groups;
+}
+
 function announce(ctx, { resourceKind, resource, changes, actorId }) {
   const who = actorName(ctx, actorId) ?? "Someone";
+  const title = quoted(titleOf(resource));
   for (const { subject, to } of changes) {
     if (to === null) continue;
-    notify(ctx, {
-      userIds: subjectUserIds(ctx.reader, subject),
-      actorId,
-      kind: "share",
-      text: `${who} shared the ${resourceKind} ${quoted(titleOf(resource))} with you (${to})`,
-      url: resourceUrl(resourceKind, resource.id),
-      resource: { kind: resourceKind, id: resource.id, record: resource },
-    });
+    const target = { resourceKind, resource, subject };
+    for (const [role, userIds] of byEffectiveRole(ctx, target)) {
+      notify(ctx, {
+        userIds,
+        actorId,
+        kind: "share",
+        text: `${who} shared the ${resourceKind} ${title} with you (${role})`,
+        url: resourceUrl(resourceKind, resource.id),
+        resource: { kind: resourceKind, id: resource.id, record: resource },
+      });
+    }
   }
 }
 
@@ -158,6 +178,32 @@ function draftChanges(ctx, { resourceKind, resource, requests }) {
     changes.push({ subject, from, to: role });
   }
   return { next: draft, changes };
+}
+
+/**
+ * Removes every grant of `subject` (a team being deleted) from every
+ * resource. Boards log each removal and every changed resource queues a
+ * `members_changed` event that the caller's `commit` emits after its own.
+ * There is no last-owner check: team grants never count as owners.
+ */
+export function dropSubjectGrants(ctx, subject, { actorId = null } = {}) {
+  for (const [resourceKind, name] of Object.entries(COLLECTIONS)) {
+    const field = grantField(resourceKind);
+    for (const record of ctx.state[name]) {
+      const grant = record[field].find((entry) => sameSubject(entry, subject));
+      if (!grant) continue;
+      const members = withGrant(record[field], subject, null);
+      const next = replace(ctx.state[name], record, {
+        ...record,
+        [field]: members,
+      });
+      if (resourceKind === "board") {
+        const change = { subject, from: grant.role, to: null };
+        logMemberChange(ctx, { board: next, change, actorId });
+      }
+      ctx.pending.push(membersEvent(resourceKind, next));
+    }
+  }
 }
 
 function readSubjectKind(kind) {
@@ -221,8 +267,8 @@ function shareApi(ctx) {
       });
     },
     /**
-     * Makes the acting admin an owner of a board or doc, recorded in the
-     * board's activity log. Non-admins → `forbidden`.
+     * Makes the acting admin an owner of a board or doc. Non-admins →
+     * `forbidden`. See `takeOwnership` for how the override stays visible.
      */
     adminTakeOwnership({ resourceKind, resourceId, actorId }) {
       if (resourceKind !== "board" && resourceKind !== "doc") {
@@ -235,28 +281,52 @@ function shareApi(ctx) {
           message: "Only admins can take ownership",
         });
       }
-      const subject = { kind: "user", id: actorId };
-      const draft = draftChanges(ctx, {
-        resourceKind,
-        resource,
-        requests: [{ subject, role: "owner" }],
-      });
-      if (draft.ok === false) return draft;
-      if (draft.changes.length === 0) return resource;
-      const next = draft.next;
-      replace(state[COLLECTIONS[resourceKind]], resource, next);
-      if (resourceKind === "board") {
-        const toText = roleText(ctx, subject, "owner");
-        recordActivity(ctx, {
-          boardId: next.id,
-          actorId,
-          kind: "ownership_taken",
-          toText,
-        });
-      }
-      return commit(ctx, membersEvent(resourceKind, next), next);
+      return takeOwnership(ctx, { resourceKind, resource, actorId });
     },
   };
+}
+
+/**
+ * Adds the admin `actorId` as an owner. The override is never silent: the
+ * resource's owners are notified (a record the admin cannot remove, so
+ * unsharing afterwards does not erase it), and boards also log it.
+ */
+function takeOwnership(ctx, { resourceKind, resource, actorId }) {
+  const subject = { kind: "user", id: actorId };
+  const requests = [{ subject, role: "owner" }];
+  const draft = draftChanges(ctx, { resourceKind, resource, requests });
+  if (draft.ok === false) return draft;
+  if (draft.changes.length === 0) return resource;
+  const { next } = draft;
+  const owners = explicitOwners(ctx.reader, resourceKind, resource);
+  replace(ctx.state[COLLECTIONS[resourceKind]], resource, next);
+  if (resourceKind === "board") {
+    const toText = roleText(ctx, subject, "owner");
+    const kind = "ownership_taken";
+    recordActivity(ctx, { boardId: next.id, actorId, kind, toText });
+  }
+  const who = actorName(ctx, actorId) ?? "An admin";
+  notify(ctx, {
+    userIds: owners,
+    actorId,
+    kind: "share",
+    text: `${who} (admin) took ownership of the ${resourceKind} ${quoted(titleOf(next))}`,
+    url: resourceUrl(resourceKind, next.id),
+    resource: { kind: resourceKind, id: next.id, record: next },
+  });
+  return commit(ctx, membersEvent(resourceKind, next), next);
+}
+
+/**
+ * True when the change from `board` to `next` would take away all access
+ * of the user making it (an admin's implicit ownership of a Main board, a
+ * guest's grant), which would report a committed change as inaccessible.
+ */
+function locksOut(ctx, { board, next, actorId }) {
+  const actor = byId(ctx.state.users, actorId);
+  if (!actor) return false;
+  const before = boardAccess(ctx.reader, actor, board);
+  return before !== null && boardAccess(ctx.reader, actor, next) === null;
 }
 
 function boardKindApi(ctx) {
@@ -264,7 +334,8 @@ function boardKindApi(ctx) {
   return {
     /**
      * Changes a board's kind. Leaving "share" removes guest user grants
-     * (logged as member removals); a guest that is the last owner blocks it.
+     * (logged as member removals); a guest that is the last owner blocks
+     * it, and so does a change that would lock out the actor (`own_access`).
      */
     setBoardKind(boardId, boardKind, { actorId = null } = {}) {
       const board = byId(state.boards, boardId);
@@ -288,13 +359,19 @@ function boardKindApi(ctx) {
       });
       if (draft.ok === false) return draft;
       const next = { ...draft.next, board_kind: boardKind };
+      if (locksOut(ctx, { board, next, actorId })) {
+        return failure("own_access", {
+          message:
+            "That kind would remove your own access; add yourself as an owner first",
+        });
+      }
       replace(state.boards, board, next);
       recordActivity(ctx, {
         boardId,
         actorId,
         kind: "board_kind_changed",
-        fromText: KIND_LABELS[board.board_kind],
-        toText: KIND_LABELS[boardKind],
+        fromText: BOARD_KIND_LABELS[board.board_kind],
+        toText: BOARD_KIND_LABELS[boardKind],
       });
       for (const change of draft.changes)
         logMemberChange(ctx, { board: next, change, actorId });

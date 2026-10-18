@@ -7,6 +7,7 @@
 import { docAccess, requireCapability, requireDoc } from "../access.js";
 import {
   badInput,
+  lookupUser,
   memberRecords,
   notFound,
   parseJson,
@@ -18,9 +19,8 @@ import {
   wrapAll,
   write,
 } from "./common.js";
-import { targetWorkspace } from "./workspaces.js";
+import { requireTargetWorkspace } from "./workspaces.js";
 
-const userOf = (store, id) => (id ? store.getUser(id) : null);
 const missing = (id) => () => notFound("Doc", id);
 
 const Query = wrapAll(read, {
@@ -46,7 +46,7 @@ function readBlocksJson(text) {
 const Mutation = wrapAll(write, {
   create_doc(_p, args, ctx) {
     const creator = requireCapability(ctx, "create_content");
-    const workspace = targetWorkspace(ctx, args.workspace_id ?? null);
+    const workspace = requireTargetWorkspace(ctx, args.workspace_id ?? null);
     const result = ctx.store.createDoc({
       title: readName(args.title, "Doc title"),
       workspaceId: workspace.id,
@@ -85,8 +85,8 @@ const Doc = {
   members: (doc, _a, { store }) => memberRecords(store, "doc", doc),
   my_access: (doc, _a, ctx) => docAccess(ctx.store, viewerOf(ctx), doc),
   blocks_json: (doc) => JSON.stringify(doc.blocks),
-  created_by: (doc, _a, { store }) => userOf(store, doc.created_by),
-  updated_by: (doc, _a, { store }) => userOf(store, doc.updated_by),
+  created_by: (doc, _a, ctx) => lookupUser(ctx, doc.created_by),
+  updated_by: (doc, _a, ctx) => lookupUser(ctx, doc.updated_by),
   url: (doc) => `#/docs/${doc.id}`,
 };
 

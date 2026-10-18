@@ -122,12 +122,20 @@ export const FORM_ACCESS = Object.freeze({
 });
 
 export const NOTIFICATION_KINDS = Object.freeze({
-  share: { label: "Shared with you", icon: "shared" },
+  share: { label: "Shared with you", icon: "shared", changesAccess: true },
   assign: { label: "Assigned to you", icon: "myWork" },
   update: { label: "New update", icon: "chat" },
   form_response: { label: "Form response", icon: "forms" },
-  role: { label: "Role changed", icon: "admin" },
+  role: { label: "Role changed", icon: "admin", changesAccess: true },
 });
+
+/**
+ * Whether a notification of `kind` means the user's account role or access
+ * changed (a role change, a new share or takeover), so what they may see
+ * and do must be loaded again.
+ */
+export const changesAccess = (kind) =>
+  lookup(NOTIFICATION_KINDS, kind).changesAccess === true;
 
 const FALLBACK = Object.freeze({
   label: "Unknown",

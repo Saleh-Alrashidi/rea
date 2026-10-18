@@ -2,6 +2,8 @@
  * "My work": the items assigned to the signed-in user (`my_work`, already
  * limited to accessible boards and ordered by date), decoded with each
  * board's columns, and the due-date buckets used by Home and My work.
+ * Finished items (`done`, see `isDoneStatus`) are never overdue: they get
+ * their own bucket and no overdue accent.
  */
 
 import { request } from "../../api.js";
@@ -11,6 +13,7 @@ import { mutate } from "./board-data.js";
 import {
   decodeItem,
   encodeValue,
+  isDoneStatus,
   prepareColumns,
   statusOption,
 } from "./values.js";
@@ -27,12 +30,13 @@ export const MY_WORK_QUERY = `query MyWork($limit: Int) {
 export const MAX_MY_WORK = 50;
 const WEEK_DAYS = 7;
 
-/** Due-date buckets in display order. */
+/** Buckets in display order; `optional` ones are shown only when used. */
 export const DUE_BUCKETS = Object.freeze([
   { key: "overdue", label: "Overdue", tone: "danger" },
   { key: "week", label: "This week", tone: "primary" },
   { key: "later", label: "Later", tone: "neutral" },
-  { key: "none", label: "No date", tone: "neutral" },
+  { key: "none", label: "No date", tone: "neutral", optional: true },
+  { key: "done", label: "Done", tone: "success", optional: true },
 ]);
 
 /**
@@ -45,10 +49,18 @@ export function dueBucket(due, today = todayString()) {
   return due < addDays(today, WEEK_DAYS) ? "week" : "later";
 }
 
-/** Groups work items by `dueBucket`, keeping the API order inside each. */
+/** The bucket of a work item: "done" when finished, else by due date. */
+export const workBucket = (item, today = todayString()) =>
+  item.done ? "done" : dueBucket(item.due, today);
+
+/** Whether a work item's due date has passed while it is not finished. */
+export const isOverdue = (item, today = todayString()) =>
+  workBucket(item, today) === "overdue";
+
+/** Groups work items by `workBucket`, keeping the API order inside each. */
 export function groupByDue(items, today = todayString()) {
   const groups = new Map(DUE_BUCKETS.map((bucket) => [bucket.key, []]));
-  for (const item of items) groups.get(dueBucket(item.due, today)).push(item);
+  for (const item of items) groups.get(workBucket(item, today)).push(item);
   return DUE_BUCKETS.map((bucket) => ({
     ...bucket,
     items: groups.get(bucket.key),
@@ -77,6 +89,7 @@ function decodeWorkItem(raw, columnsByBoard) {
     statusLabel: statusColumn
       ? (statusOption(statusColumn, status)?.label ?? "")
       : "",
+    done: statusColumn ? isDoneStatus(statusColumn, status) : false,
     due: dateColumn ? (item.values[dateColumn.id] ?? null) : null,
   };
 }

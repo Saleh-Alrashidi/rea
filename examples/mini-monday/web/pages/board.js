@@ -17,6 +17,7 @@ import { h } from "../dom.js";
 import { boardHash, homeHash, itemHash, viewHash } from "../router.js";
 import { loadDirectory } from "../ui/components/directory.js";
 import { setDocumentTitle } from "../ui/components/page-header.js";
+import { changesAccess } from "../ui/components/labels.js";
 import { onPopoverClose } from "../ui/components/popover.js";
 import { createActions } from "../ui/board/actions.js";
 import {
@@ -402,7 +403,8 @@ function wire(page) {
     state,
     render,
     forwardEvent: (change) => page.slot.emit("events", change),
-    watchBoard: (boardId, listener) => ctx.bus.watchBoard(boardId, listener),
+    watchBoard: (boardId, listener, onEnd) =>
+      ctx.bus.watchBoard(boardId, listener, onEnd),
     refreshShell: () => ctx.refreshShell(),
   });
   page.actions = createActions({
@@ -424,6 +426,10 @@ function wire(page) {
     () => globalThis.document.removeEventListener("focusout", flush),
     onPopoverClose(flush),
     ctx.bus.on(BUS_EVENTS.theme, () => emitContext(page)),
+    // A new role or share can change what this board lets the user do.
+    ctx.bus.on(BUS_EVENTS.notification, (event) => {
+      if (changesAccess(event?.kind)) page.sync.scheduleRefresh();
+    }),
     ctx.router.onChange((route) => {
       if (route.name === "board" && route.params.boardId === state.boardId) {
         applyRoute(page, route.params);

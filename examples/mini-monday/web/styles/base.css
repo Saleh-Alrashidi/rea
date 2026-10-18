@@ -93,6 +93,26 @@ svg.icon {
   white-space: nowrap;
 }
 
+/* "Skip to content": hidden until it has keyboard focus. */
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-md), var(--focus-ring);
+  color: var(--color-primary-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--space-4)));
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
 .muted {
   color: var(--color-text-muted);
 }

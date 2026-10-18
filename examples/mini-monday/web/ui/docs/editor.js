@@ -2,8 +2,9 @@
  * The doc block editor: a column of plain-text `contenteditable` blocks
  * backed by the pure model in `blocks.js`. The model is the source of
  * truth; the DOM is reconciled from it by block ID (unchanged blocks keep
- * their element, caret and native undo), and every structural edit moves
- * the caret explicitly.
+ * their element and caret), and every structural edit moves the caret
+ * explicitly. Undo and redo cover the whole doc, structural edits included
+ * (`history.js`), instead of the browser's undo stack.
  *
  * Keys: Enter splits (Shift+Enter, and Enter in code, add a line break;
  * Ctrl/⌘+Enter toggles a to-do or leaves a code block), Backspace at a
@@ -24,6 +25,7 @@
 
 import { h } from "../../dom.js";
 import { ensureEditable, insertParagraphAfter } from "./blocks.js";
+import { createHistory } from "./history.js";
 import { FULL_MESSAGE, apply, focusAt, reconcile } from "./editor-core.js";
 import {
   onBeforeInput,
@@ -56,6 +58,7 @@ export function createBlockEditor(options) {
       readOnly,
       views: new Map(),
     },
+    history: createHistory(),
     onChange: options.onChange ?? (() => {}),
     onExitUp: options.onExitUp,
     notify: options.notify ?? (() => {}),
@@ -80,11 +83,13 @@ export function createBlockEditor(options) {
     /** Replaces the content (after a reload); the caret is not kept. */
     setBlocks(blocks) {
       ed.state.blocks = ed.state.readOnly ? blocks : ensureEditable(blocks);
+      ed.history.clear();
       reconcile(ed);
     },
     setReadOnly(flag) {
       if (ed.state.readOnly === Boolean(flag)) return;
       ed.state.readOnly = Boolean(flag);
+      ed.history.clear();
       if (!flag) ed.state.blocks = ensureEditable(ed.state.blocks);
       reconcile(ed);
     },

@@ -46,9 +46,13 @@
  *   Reloads me, account, workspaces (sidebar), forms and the unread count,
  *   and drops the cached user/team directory. Call it after creating,
  *   renaming, sharing or deleting anything the sidebar lists.
+ * @property {(notification: { id: string, read: boolean }) => void} markNotificationRead
+ *   Marks a notification read when a page other than the bell opens it
+ *   (Home), keeping the bell's unread count in step.
  * @property {ReturnType<typeof import("./ui/shell/bus.js").createBus>} bus
  *   Event emitter: `on(type, listener)` → off, `emit(type, data)`,
- *   `watchBoard(boardId, listener)` → unwatch (board SSE). Events:
+ *   `watchBoard(boardId, listener, onEnd)` → unwatch (board SSE; `onEnd`
+ *   runs when the server ends the stream). Events:
  *   "notification", "board-change", "theme", "shell", "workspace" (see
  *   `ui/shell/bus.js`).
  */
@@ -85,9 +89,23 @@ function elements() {
   };
 }
 
+/**
+ * The skip link moves focus to the page content. Routes live in the hash,
+ * so it must not navigate to "#page".
+ */
+function wireSkipLink(page) {
+  doc()
+    .getElementById("skip-link")
+    ?.addEventListener("click", (event) => {
+      event.preventDefault();
+      page.focus();
+    });
+}
+
 function pageFailed(error, retry) {
   return emptyState({
     icon: "alert",
+    headingLevel: 1,
     title: "This page didn’t load",
     text: error?.message || "Something went wrong while opening this page.",
     action: { label: "Try again", icon: "refresh", onClick: retry },
@@ -102,6 +120,7 @@ function renderOffline(page) {
       { class: "page-root" },
       emptyState({
         icon: "alert",
+        headingLevel: 1,
         title: "Can’t reach Worklane",
         text: "The server did not answer. Start it and reload this page.",
         action: {
@@ -175,6 +194,7 @@ async function openShare(ctx, options) {
 
 async function start() {
   const dom = elements();
+  wireSkipLink(dom.page);
   initTheme();
   mountToasts(doc().getElementById("toasts"));
   dom.page.replaceChildren(skeletonPage());
@@ -198,6 +218,8 @@ async function start() {
     dialog: { confirm: confirmDialog, form: formDialog, open: openDialog },
     openShare: (options) => openShare(ctx, options),
     refreshShell: () => shell.refresh(),
+    markNotificationRead: (notification) =>
+      shell.markNotificationRead(notification),
     bus,
   };
   let palette = null;

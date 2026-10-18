@@ -41,12 +41,16 @@ function readSelection(element) {
 
 /**
  * Records focus inside `container`. Returns null when focus is elsewhere,
- * `{ blocked: true }` when an editable element without a focus key has focus
- * (the region must not be rebuilt), or `{ key, value?, selection? }`.
+ * `{ blocked: true }` when an editable element without a focus key, or a
+ * number input with unparsable text, has focus (the region must not be
+ * rebuilt), or `{ key, value?, selection? }`.
  */
 export function snapshotFocus(container) {
   const active = activeElement();
   if (!active || !container.contains(active)) return null;
+  // A number input holding text that is not a number reports "" as its
+  // value, so its text cannot move to a new element: the region waits.
+  if (active.validity?.badInput) return { blocked: true };
   const key = active.dataset?.focusKey;
   if (!key) return EDITABLE_TAGS.has(active.tagName) ? { blocked: true } : null;
   const snapshot = { key };

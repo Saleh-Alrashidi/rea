@@ -109,7 +109,7 @@ test("create_workspace, update_workspace and delete_workspace", async (t) => {
   const remove = `mutation D($w: ID!) { delete_workspace(workspace_id: $w) { id } }`;
   const busy = await users.noa.error(remove, { w: made.id });
   assert.equal(busy.extensions.code, "BAD_USER_INPUT");
-  assert.match(busy.message, /boards and docs/);
+  assert.match(busy.message, /only an empty workspace/i);
   await users.noa.data(
     `mutation D($b: ID!) { delete_board(board_id: $b) { id } }`,
     { b: create_board.id },

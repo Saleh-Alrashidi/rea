@@ -7,6 +7,7 @@
  */
 import { notificationVisible } from "../access.js";
 import {
+  lookupUser,
   read,
   readIds,
   readLimit,
@@ -14,8 +15,6 @@ import {
   wrapAll,
   write,
 } from "./common.js";
-
-const userOf = (store, id) => (id ? store.getUser(id) : null);
 
 /** The caller's visible notifications, newest first. */
 function visibleNotifications(ctx, { unreadOnly = false } = {}) {
@@ -50,7 +49,7 @@ const Mutation = wrapAll(write, {
   },
 });
 
-const actor = (record, _a, { store }) => userOf(store, record.actor_id);
+const actor = (record, _a, ctx) => lookupUser(ctx, record.actor_id);
 
 export const definition = {
   types: {

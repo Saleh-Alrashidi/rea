@@ -1,4 +1,10 @@
-import { BOARD_KINDS, DOC_VISIBILITIES, WORKSPACE_KINDS } from "./labels.js";
+import { boardHash, docHash, noteHash, workspaceHash } from "../../router.js";
+import {
+  BOARD_KINDS,
+  DOC_VISIBILITIES,
+  WORKSPACE_KINDS,
+  boardKind,
+} from "./labels.js";
 
 /**
  * Data and rules of the share dialog (no DOM): the GraphQL documents for
@@ -107,16 +113,14 @@ export function normalizeMember(member) {
   };
 }
 
-/** The in-app hash of a resource (absolute API URLs are reduced to it). */
-function resourceHash(kind, id) {
-  const paths = {
-    board: "boards",
-    doc: "docs",
-    note: "notes",
-    workspace: "workspaces",
-  };
-  return `#/${paths[kind]}/${id}`;
-}
+/** The in-app hash of a resource, from the router's hash builders. */
+const RESOURCE_HASHES = Object.freeze({
+  board: boardHash,
+  doc: docHash,
+  note: noteHash,
+  workspace: workspaceHash,
+});
+const resourceHash = (kind, id) => RESOURCE_HASHES[kind](id);
 
 /**
  * Normalizes the query result for `kind`/`id` into
@@ -181,12 +185,54 @@ export function normalizeResource(kind, data, id) {
 
 /**
  * Why `member` cannot be removed or demoted, or null. A resource always
- * keeps at least one owner grant (notes keep their owner outside shares).
+ * keeps at least one owner (notes keep theirs outside shares). Only people
+ * count: the server never counts team owner grants (`access.keepsAnOwner`),
+ * so removing a team is never blocked here and a user owner stays the last
+ * one even beside owner teams. The server also discounts owners whose
+ * account cannot use the role (deactivated, viewer accounts, guests off
+ * Shareable boards); this guard cannot see that and leaves it to the
+ * server's refusal.
  */
 export function lastOwnerReason(resource, member) {
   if (resource.kind === "note" || member.role !== "owner") return null;
-  const owners = resource.members.filter((entry) => entry.role === "owner");
-  return owners.length <= 1 ? "Every item needs at least one owner" : null;
+  if (member.kind !== "user") return null;
+  const owners = resource.members.filter(
+    (entry) => entry.kind === "user" && entry.role === "owner",
+  );
+  if (owners.length > 1) return null;
+  return `This ${resource.kind} needs at least one owner. Make someone else an owner first.`;
+}
+
+/**
+ * The confirmation shown before a board changes kind, the same from the
+ * board header and the share dialog: what the new kind means, which guests
+ * lose access (only Shareable boards keep guest grants) and, for a Main
+ * board, that the workspace stops seeing it. `board` is
+ * `{ name, kind, members }` (normalized members); returns the options of
+ * `ctx.dialog.confirm`.
+ */
+export function boardKindConfirmation(board, kind) {
+  const guests = board.members.filter(
+    (member) => member.kind === "user" && member.accountRole === "guest",
+  );
+  const losing =
+    board.kind === "share" && kind !== "share" && guests.length > 0;
+  const lines = [boardKind(kind).description];
+  if (losing) {
+    const names = guests.map((guest) => guest.name).join(", ");
+    lines.push(
+      `Guests lose access to boards that are not Shareable: ${names}.`,
+    );
+  }
+  if (board.kind === "public") {
+    lines.push("People who aren’t members of the board will no longer see it.");
+  }
+  return {
+    title: `Make “${board.name}” ${boardKind(kind).label}?`,
+    message: lines.join(" "),
+    confirmButton: "Change board type",
+    danger: losing,
+  };
 }
 
 /** Whether a subject may be invited to `resource`: `{ ok, reason? }`. */

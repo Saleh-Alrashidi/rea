@@ -14,11 +14,13 @@ import {
   byId,
   commit,
   deepFreeze,
+  failure,
   forBoard,
   nextId,
   nextPosition,
   onBoard,
   push,
+  readChoice,
   removeWhere,
   replace,
   requireText,
@@ -172,9 +174,7 @@ function boardMutators(ctx) {
     } = {}) {
       requireText(name, "name");
       requireText(description, "description", true);
-      if (!BOARD_KINDS.includes(boardKind)) {
-        throw new TypeError(`Unknown board kind ${String(boardKind)}`);
-      }
+      readChoice(boardKind, BOARD_KINDS, "board_kind");
       const known = creatorId === null || byId(state.users, creatorId);
       const workspace = targetWorkspace(state, workspaceId);
       if (!known || !workspace) return null;
@@ -245,10 +245,19 @@ function groupMutators(ctx) {
       }
       return commit(ctx, groupEvent("group_updated", next), next);
     },
-    /** Deletes the group and its items; forms aimed at it fall back. */
+    /**
+     * Deletes the group and its items; forms aimed at it fall back. A
+     * board keeps at least one group (`last_group`), so new items and
+     * form responses always have somewhere to go.
+     */
     deleteGroup(boardId, groupId, opts = {}) {
       const group = onBoard(state.groups, boardId, groupId);
       if (!group) return null;
+      if (forBoard(state.groups, boardId).length === 1) {
+        return failure("last_group", {
+          message: "A board keeps at least one group",
+        });
+      }
       const inGroup = (r) => r.board_id === boardId && r.group_id === groupId;
       removeItems(state, inGroup);
       removeWhere(state.groups, (record) => record === group);

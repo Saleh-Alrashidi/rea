@@ -7,14 +7,15 @@
  */
 import { boardAccess, requireBoard, requireCapability } from "../access.js";
 import {
-  allBoards,
+  accessibleBoards,
   badInput,
   isPlainObject,
+  lookupUser,
   memberRecords,
   notFound,
+  pick,
   read,
   readDescription,
-  readIds,
   readLimit,
   readName,
   storeResult,
@@ -22,7 +23,7 @@ import {
   wrapAll,
   write,
 } from "./common.js";
-import { targetWorkspace } from "./workspaces.js";
+import { requireTargetWorkspace } from "./workspaces.js";
 
 const DEFAULT_GROUP_COLOR = "#579bfc";
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
@@ -39,7 +40,6 @@ export const groupOf = (store, boardId, id) =>
   store.getGroup(boardId, id) ?? notFound("Group", id);
 export const columnOf = (store, boardId, id) =>
   store.getColumn(boardId, id) ?? notFound("Column", id);
-const userOf = (store, id) => (id ? store.getUser(id) : null);
 const actor = (ctx) => ({ actorId: viewerOf(ctx).id });
 
 // ------------------------------------------------------------- pagination
@@ -78,21 +78,11 @@ function itemsPage(store, { boardId, groupId, args }) {
 
 // -------------------------------------------------------------- resolvers
 
-const pickBy = (records, ids, key = "id") => {
-  const wanted = readIds(ids);
-  if (wanted === null) return records;
-  const set = new Set(wanted);
-  return records.filter((record) => set.has(record[key]));
-};
-
 const Query = wrapAll(read, {
   boards(_p, { ids, limit, page }, ctx) {
     if (page < 1) badInput("page must be a positive integer");
     const size = readLimit(limit);
-    const viewer = viewerOf(ctx);
-    const visible = pickBy(allBoards(ctx.store), ids).filter(
-      (board) => boardAccess(ctx.store, viewer, board) !== null,
-    );
+    const visible = pick(accessibleBoards(ctx), ids);
     return visible.slice((page - 1) * size, page * size);
   },
 });
@@ -121,7 +111,7 @@ function updateGroup(_p, args, ctx) {
 const Mutation = wrapAll(write, {
   create_board(_p, args, ctx) {
     const creator = requireCapability(ctx, "create_content");
-    const workspace = targetWorkspace(ctx, args.workspace_id ?? null);
+    const workspace = requireTargetWorkspace(ctx, args.workspace_id ?? null);
     const board = ctx.store.createBoard({
       name: readName(args.board_name, "Board name"),
       description: readDescription(args.description) ?? null,
@@ -153,7 +143,8 @@ const Mutation = wrapAll(write, {
   delete_group(_p, args, ctx) {
     const board = requireBoard(ctx, args.board_id, "editor");
     const group = groupOf(ctx.store, board.id, args.group_id);
-    return ctx.store.deleteGroup(board.id, group.id, actor(ctx));
+    const result = ctx.store.deleteGroup(board.id, group.id, actor(ctx));
+    return storeResult(result, () => notFound("Group", group.id));
   },
   create_column(_p, args, ctx) {
     const board = requireBoard(ctx, args.board_id, "owner");
@@ -174,9 +165,9 @@ function appUrl(view, _args, { store, appsOrigin }) {
 
 const Board = {
   url: (board, _a, { hostOrigin }) => `${hostOrigin}/#/boards/${board.id}`,
-  creator: (board, _a, { store }) => userOf(store, board.creator_id),
-  columns: (board, a, { store }) => pickBy(store.listColumns(board.id), a.ids),
-  groups: (board, a, { store }) => pickBy(store.listGroups(board.id), a.ids),
+  creator: (board, _a, ctx) => lookupUser(ctx, board.creator_id),
+  columns: (board, a, { store }) => pick(store.listColumns(board.id), a.ids),
+  groups: (board, a, { store }) => pick(store.listGroups(board.id), a.ids),
   items_page: (board, args, { store }) =>
     itemsPage(store, { boardId: board.id, groupId: null, args }),
   items: (board, { limit }, { store }) =>

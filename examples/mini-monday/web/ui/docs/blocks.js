@@ -44,9 +44,6 @@ export function blockTypeInfo(type) {
   return BLOCK_TYPES.find((entry) => entry.type === type) ?? BLOCK_TYPES[0];
 }
 
-/** True for block types the editor can hold. */
-export const isBlockType = (type) => TYPES.has(type);
-
 /** True when `type` holds editable text (everything but dividers). */
 export const hasText = (type) => type !== "divider";
 

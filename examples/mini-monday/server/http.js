@@ -179,7 +179,8 @@ const SERVERS = [
  * Starts the host and apps servers. Port 0 picks a free port; an origin
  * that is not given is derived from the actual port. `demoLogin` (default
  * true) turns on demo sign-in (`server/routes/auth.js`). `close()` ends
- * SSE streams and closes both servers.
+ * SSE streams, stops the services' store listeners and closes both
+ * servers.
  * @returns {Promise<{ hostOrigin, appsOrigin, hostServer, appsServer, auth,
  *   close(): Promise<void> }>}
  */
@@ -208,13 +209,18 @@ export async function startServers({
     ["web", "apps"].map((name) => realpath(path.join(ROOT, name))),
   );
   const auth = createAuth({ store });
-  const events = createEventHub({ store });
+  const { sessionActive } = auth;
+  const events = createEventHub({ store, sessionActive });
+  // Streams opened with a browser session end with it (SPEC-2 §4 logout).
+  const stopSessions = auth.onSessionEnded((id) => events.endSession(id));
   const cfg = { ready: false, store, auth, events, log, webRoot, appsRoot };
   Object.assign(cfg, { schema: createSchema(), sdl: new Map(), demoLogin });
   cfg.formLimiter = createRateLimiter();
   const servers = SERVERS.map((kind) => createServer(createHandler(cfg, kind)));
   const close = async () => {
+    stopSessions();
     events.close();
+    auth.close();
     await Promise.all(servers.map(closeServer));
   };
   try {

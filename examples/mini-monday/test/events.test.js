@@ -5,7 +5,7 @@
  * disconnects, stalled readers) and the servers' close() lifecycle.
  */
 import assert from "node:assert/strict";
-import { EventEmitter, once } from "node:events";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
 import { createEventHub } from "../server/events.js";
@@ -13,7 +13,9 @@ import { createStore } from "../server/store.js";
 import {
   SEED_USERS,
   browserSession,
+  fakeResponse,
   gql,
+  openStream,
   seedKeys,
   seedRole,
   startTestServers,
@@ -22,57 +24,6 @@ import {
 
 const CHANGE = /event: change\ndata: (.*)\n\n/;
 const NOTIFICATION = /event: notification\ndata: (.*)\n\n/;
-
-/**
- * Opens an SSE stream with fetch. `next(pattern)` reads until `pattern`
- * matches the unread text, consumes through the match and returns it;
- * `ends()` reads until the server ends the stream and returns the text
- * that was still unread. Both fail after `timeoutMs`.
- */
-async function openStream(url, headers = {}) {
-  const controller = new AbortController();
-  const response = await fetch(url, { headers, signal: controller.signal });
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-  let unread = "";
-  let ended = false;
-  // A read that lost a race against the timeout is kept for the next call.
-  let pending = null;
-  /** Reads one chunk into `unread` (or notes the end) before `deadline`. */
-  const read = async (deadline, waitingFor) => {
-    const left = deadline - Date.now();
-    if (left <= 0) throw new Error(`timed out waiting for ${waitingFor}`);
-    let timer;
-    const timeout = new Promise((resolve) => {
-      timer = setTimeout(resolve, left, null);
-    });
-    pending ??= reader.read();
-    const chunk = await Promise.race([pending, timeout]);
-    clearTimeout(timer);
-    if (chunk === null) return;
-    pending = null;
-    if (chunk.done) ended = true;
-    else unread += decoder.decode(chunk.value, { stream: true });
-  };
-  const next = async (pattern, timeoutMs = 5000) => {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const match = pattern.exec(unread);
-      if (match) {
-        unread = unread.slice(match.index + match[0].length);
-        return match;
-      }
-      if (ended) throw new Error(`stream ended before ${pattern}`);
-      await read(deadline, pattern);
-    }
-  };
-  const ends = async (timeoutMs = 5000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (!ended) await read(deadline, "the end of the stream");
-    return unread;
-  };
-  return { response, next, ends, close: () => controller.abort() };
-}
 
 async function setup(t) {
   const store = await createStore({ file: null });
@@ -242,9 +193,12 @@ test("stream=me delivers the user's own notification events only", async (t) => 
   const [, data] = await samStream.next(NOTIFICATION);
   const event = JSON.parse(data);
   assert.deepEqual(Object.keys(event).sort(), [
+    "kind",
     "resource_id",
     "resource_kind",
+    "text",
     "type",
+    "url",
     "user_ids",
   ]);
   assert.equal(event.type, "notification_created");
@@ -252,6 +206,16 @@ test("stream=me delivers the user's own notification events only", async (t) => 
   const record = store.getNotification(event.resource_id);
   assert.equal(record.user_id, sam);
   assert.equal(record.kind, "share");
+  // The visible notification itself, so clients can show it at once.
+  const { kind, text, url } = record;
+  assert.deepEqual(
+    { kind: event.kind, text: event.text, url: event.url },
+    {
+      kind,
+      text,
+      url,
+    },
+  );
   await as(sam).data("mutation { mark_notifications_read(all: true) }");
   const [, read] = await samStream.next(NOTIFICATION);
   assert.deepEqual(JSON.parse(read), {
@@ -343,19 +307,6 @@ test("the hub drops disconnected clients and refuses streams once closed", async
   const body = await late.json();
   assert.equal(body.errors[0].extensions.code, "SERVICE_UNAVAILABLE");
 });
-
-/** A minimal response double that records writes. */
-function fakeResponse() {
-  const res = new EventEmitter();
-  Object.assign(res, { writableLength: 0, writes: [], destroyed: false });
-  res.writableEnded = false;
-  res.writeHead = (status, headers) => Object.assign(res, { status, headers });
-  res.flushHeaders = () => {};
-  res.write = (text) => res.writes.push(text);
-  res.end = () => (res.writableEnded = true);
-  res.destroy = () => (res.destroyed = true);
-  return res;
-}
 
 test("a stalled reader is disconnected instead of buffering forever", async () => {
   const store = await createStore({ file: null });

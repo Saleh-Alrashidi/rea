@@ -21,6 +21,7 @@ import { badge } from "../ui/components/badge.js";
 import { button } from "../ui/components/button.js";
 import { emptyState } from "../ui/components/empty-state.js";
 import { icon } from "../ui/components/icon.js";
+import { guardUnsaved } from "../ui/components/leave-guard.js";
 import { menuButton } from "../ui/components/menu.js";
 import { pageHeader, setDocumentTitle } from "../ui/components/page-header.js";
 import { REASONS, hasRole } from "../ui/components/permissions.js";
@@ -448,14 +449,14 @@ export async function mount(container, ctx, params) {
   renderSaveState(b);
   renderPreview(b);
   const unwatch = watch(b);
-  const beforeUnload = (event) => {
-    if (b.autosave.snapshot().unsaved) event.preventDefault();
-  };
-  globalThis.addEventListener("beforeunload", beforeUnload);
+  const unguard = guardUnsaved({
+    unsaved: () => b.autosave.snapshot().unsaved,
+    flush: () => b.autosave.flush(),
+  });
   return () => {
     b.active = false;
     unwatch();
-    globalThis.removeEventListener("beforeunload", beforeUnload);
+    unguard();
     globalThis.clearTimeout(b.previewTimer);
     globalThis.clearTimeout(b.countTimer);
     // Edits made just before leaving still reach the server.

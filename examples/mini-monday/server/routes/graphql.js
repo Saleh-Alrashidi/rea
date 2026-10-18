@@ -15,6 +15,7 @@ import {
   fail,
   isPlainObject,
   readJsonObject,
+  readSessionCookie,
   requestPrincipal,
   requireJsonType,
   sendBody,
@@ -114,10 +115,14 @@ export function getEvents(req, res, cfg, { search }) {
   if (!principal.scopes.has("boards:read"))
     fail(403, "Missing scope boards:read");
   const { userId } = principal;
+  // The stream ends with the browser session that opened it.
+  const sessionId =
+    principal.kind === "session" ? readSessionCookie(req) : null;
   const stream = search.get("stream");
   if (stream !== null) {
     if (stream !== "me") fail(400, 'stream must be "me"');
-    return void cfg.events.handle(req, res, { stream: "me", userId });
+    const options = { stream: "me", userId, sessionId };
+    return void cfg.events.handle(req, res, options);
   }
   const boardId = search.get("board_id") ?? "";
   if (!ID_PATTERN.test(boardId)) fail(400, "board_id must be a board ID");
@@ -128,5 +133,5 @@ export function getEvents(req, res, cfg, { search }) {
     store.getBoard(boardId),
   );
   if (access === null) fail(404, "Unknown board");
-  cfg.events.handle(req, res, { boardId, userId });
+  cfg.events.handle(req, res, { boardId, userId, sessionId });
 }

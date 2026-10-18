@@ -5,13 +5,14 @@
  * unique case-insensitively. At least one active admin always remains:
  * demoting or deactivating the last one fails with `last_admin`. Role
  * changes notify the user (kind `role`) unless they made the change.
- * Teams keep at least one owner once they have one; deleting a team
- * removes its grants everywhere.
+ * Teams keep at least one active owner once they have one; deleting a
+ * team removes its grants everywhere.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
-import { ACCOUNT_ROLES, isActive } from "../access.js";
+import { ACCOUNT_ROLES, isActive, teamManagers } from "../access.js";
 import {
   LIMITS,
+  TEAM_ROLES,
   byId,
   commit,
   failure,
@@ -28,6 +29,7 @@ import {
   withChanges,
 } from "../store-state.js";
 import { notify } from "./activity.js";
+import { dropSubjectGrants } from "./grants.js";
 
 /** Avatar colors, assigned in turn to new users and workspaces. */
 export const PALETTE = Object.freeze([
@@ -181,23 +183,12 @@ function readMemberIds(state, userIds) {
   return ids;
 }
 
-function removeTeamGrants(state, teamId) {
-  const keep = (grant) => !(grant.kind === "team" && grant.id === teamId);
-  const collections = [
-    ["workspaces", "members"],
-    ["boards", "members"],
-    ["docs", "members"],
-    ["notes", "shares"],
-  ];
-  for (const [name, field] of collections) {
-    for (const record of state[name]) {
-      if (record[field].every(keep)) continue;
-      replace(state[name], record, {
-        ...record,
-        [field]: record[field].filter(keep),
-      });
-    }
-  }
+/** A `last_owner` failure when `members` drop the team's last manager. */
+function keepsManager(ctx, team, members) {
+  const managed = teamManagers(ctx.reader, team).length > 0;
+  const after = teamManagers(ctx.reader, { ...team, members });
+  if (!managed || after.length > 0) return null;
+  return failure("last_owner", { message: "A team keeps at least one owner" });
 }
 
 function teamApi(ctx) {
@@ -262,7 +253,29 @@ function teamApi(ctx) {
       }
       return save(team, { ...team, members });
     },
-    /** Removes members; a team that has owners keeps at least one. */
+    /**
+     * Makes a member an owner or a plain member in one change (a demotion
+     * keeps the team's last active owner). Not a member → `not_member`.
+     */
+    setTeamMemberRole(id, userId, role) {
+      const team = byId(state.teams, id);
+      if (!team) return null;
+      readChoice(role, TEAM_ROLES, "role");
+      const member = team.members.find((m) => m.user_id === userId);
+      if (!member) {
+        return failure("not_member", {
+          message: "That user is not a member of this team",
+        });
+      }
+      if (member.role === role) return team;
+      const members = team.members.map((m) =>
+        m === member ? { ...m, role } : m,
+      );
+      return (
+        keepsManager(ctx, team, members) ?? save(team, { ...team, members })
+      );
+    },
+    /** Removes members; a team with an active owner keeps one. */
     removeTeamMembers(id, userIds) {
       const team = byId(state.teams, id);
       if (!team) return null;
@@ -270,19 +283,18 @@ function teamApi(ctx) {
         throw new TypeError("user IDs must be an array");
       const gone = new Set(userIds);
       const members = team.members.filter((m) => !gone.has(m.user_id));
-      const hadOwner = team.members.some((m) => m.role === "owner");
-      if (hadOwner && !members.some((m) => m.role === "owner")) {
-        return failure("last_owner", {
-          message: "A team keeps at least one owner",
-        });
-      }
-      return save(team, { ...team, members });
+      return (
+        keepsManager(ctx, team, members) ?? save(team, { ...team, members })
+      );
     },
-    /** Deletes the team and every grant it held. */
-    deleteTeam(id) {
+    /**
+     * Deletes the team and every grant it held; boards log the removals
+     * and each changed resource emits `members_changed`.
+     */
+    deleteTeam(id, { actorId = null } = {}) {
       const team = byId(state.teams, id);
       if (!team) return null;
-      removeTeamGrants(state, id);
+      dropSubjectGrants(ctx, { kind: "team", id }, { actorId });
       removeWhere(state.teams, (record) => record === team);
       return commit(ctx, event("team_deleted", team), team);
     },

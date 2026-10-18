@@ -12,9 +12,13 @@
  * - each column is asked at most once, and people columns never;
  * - at most 50 questions, labels 1–200 characters, help up to 500.
  *
- * Question IDs are generated here (`q<n>`, the lowest free number) rather
- * than by the server, so the builder's copy and the saved form always use
- * the same IDs and an autosave never has to merge server-made IDs back.
+ * Question IDs are generated here rather than by the server, so the
+ * builder's copy and the saved form always use the same IDs and an autosave
+ * never has to merge server-made IDs back. The public form files answers by
+ * question ID alone, and a respondent may still hold the definition from
+ * before an edit, so an ID is never handed out twice: a new question gets a
+ * random `q_<suffix>`, never the ID of a question removed earlier (which a
+ * stale page would otherwise fill into the new question's column).
  */
 
 import { parseStatusSettings } from "../board/values.js";
@@ -69,12 +73,22 @@ export function parseQuestions(json) {
   return { ok: true, value: questions };
 }
 
-/** The lowest free `q<n>` ID. */
-export function nextQuestionId(questions) {
+/** 64 random bits in base 36 (at most 26 characters). */
+function randomSuffix() {
+  const words = globalThis.crypto.getRandomValues(new Uint32Array(2));
+  return Array.from(words, (word) => word.toString(36)).join("");
+}
+
+/**
+ * A new question ID, `q_<suffix>`, unused by `questions`. Random rather
+ * than counted, so an ID a removed question had (and a stale public page
+ * may still send) is not given to a later question. `suffix` is for tests.
+ */
+export function nextQuestionId(questions, suffix = randomSuffix) {
   const taken = new Set(questions.map((question) => question.id));
-  let counter = 1;
-  while (taken.has(`q${counter}`)) counter += 1;
-  return `q${counter}`;
+  let id = `q_${suffix()}`;
+  while (taken.has(id)) id = `q_${suffix()}`;
+  return id;
 }
 
 /** True for the fixed first question (the item name). */
