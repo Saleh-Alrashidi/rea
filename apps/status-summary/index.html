@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Status summary</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="card summary">
+        <div class="summary-text">
+          <p class="eyebrow">Status summary</p>
+          <h1 id="board-name">Loading board…</h1>
+          <p id="item-total" class="muted"></p>
+        </div>
+        <p id="live" class="live" hidden>
+          <span class="live-dot" aria-hidden="true"></span>
+          <span id="live-text">Live</span>
+        </p>
+      </header>
+
+      <section class="card" id="breakdown" aria-labelledby="breakdown-title">
+        <div class="card-head">
+          <h2 id="breakdown-title">Status breakdown</h2>
+          <span id="column-name" class="muted"></span>
+        </div>
+        <ul id="bars" class="bars"></ul>
+        <p id="bars-empty" class="muted" hidden></p>
+        <p class="hint muted">Select a status to open its first item.</p>
+      </section>
+
+      <section class="card" aria-labelledby="note-title">
+        <div class="card-head">
+          <h2 id="note-title">Board note</h2>
+          <span id="note-version" class="badge">Not saved yet</span>
+        </div>
+        <label class="visually-hidden" for="note">Note for this view</label>
+        <textarea
+          id="note"
+          rows="4"
+          maxlength="65536"
+          placeholder="Write a note for everyone who uses this view"
+        ></textarea>
+        <div class="row">
+          <button id="save-note" class="primary" type="button">
+            Save note
+          </button>
+          <button id="reload-note" type="button" hidden>Load latest</button>
+          <p id="note-status" class="status" role="status"></p>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="platform-title">
+        <h2 id="platform-title">Platform</h2>
+        <div class="row">
+          <button id="send-notice" type="button">Send notice</button>
+          <button id="verify-token" type="button">Verify session token</button>
+        </div>
+        <p id="platform-status" class="status" role="status"></p>
+        <dl id="claims" class="claims" hidden></dl>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+    </main>
+  </body>
+</html>
