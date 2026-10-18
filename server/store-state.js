@@ -19,6 +19,7 @@
  * apart. Arguments of the wrong JavaScript type still throw a TypeError.
  */
 import { randomBytes } from "node:crypto";
+import { LIMITS, isColor, nameRule, validName } from "./input.js";
 
 export const COLUMN_TYPES = Object.freeze([
   "text",
@@ -61,25 +62,6 @@ export const NOTIFICATION_KINDS = Object.freeze([
   "role",
 ]);
 
-/** SPEC-2 §2 limits (characters unless stated). */
-export const LIMITS = Object.freeze({
-  name: 255,
-  description: 2000,
-  blocks: 2000,
-  blockText: 10_000,
-  noteBody: 20_000,
-  questions: 50,
-  label: 200,
-  help: 500,
-  // Unspecified: emails share the name limit.
-  email: 255,
-});
-
-export const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
-export const ID_PATTERN = /^[1-9]\d{0,15}$/;
-
-export const isObject = (v) =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 // Record IDs are strings, so lookups with any other type find nothing.
 export const byId = (list, id) => list.find((r) => r.id === id) ?? null;
 export const forBoard = (list, boardId) =>
@@ -170,14 +152,10 @@ function requireString(value, label) {
   }
 }
 
-/** A trimmed name or title of 1-255 characters. */
+/** A trimmed name or title of 1-255 characters (`input.js` name rule). */
 export function readName(value, label) {
   requireString(value, label);
-  const name = value.trim();
-  if (name === "" || name.length > LIMITS.name) {
-    invalid(`${label} must be 1-${LIMITS.name} characters`);
-  }
-  return name;
+  return validName(value) ?? invalid(nameRule(label));
 }
 
 /** Optional text: null or undefined become null; at most `max` chars. */
@@ -198,7 +176,7 @@ export function readTitle(value, label) {
 /** A `#rrggbb` color, stored in lower case. */
 export function readColor(value, label) {
   requireString(value, label);
-  if (!COLOR_PATTERN.test(value)) invalid(`${label} must look like #rrggbb`);
+  if (!isColor(value)) invalid(`${label} must look like #rrggbb`);
   return value.toLowerCase();
 }
 

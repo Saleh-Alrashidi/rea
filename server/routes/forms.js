@@ -21,12 +21,12 @@ import path from "node:path";
 import { isActive, isGuest } from "../access.js";
 import { parseSimpleColumnValue, statusOptions } from "../column-values.js";
 import { SUBMIT_MESSAGE } from "../store/forms.js";
+import { isPlainObject } from "../input.js";
 import {
   CONTENT_TYPES,
   HttpError,
   fail,
   fromHostApp,
-  isPlainObject,
   readJsonObject,
   readSessionCookie,
   requireJsonType,

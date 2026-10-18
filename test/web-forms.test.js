@@ -7,10 +7,10 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { capabilitiesOf } from "../server/access.js";
 import { parse } from "../server/graphql/parse.js";
 import * as AD from "../web/ui/admin/admin-data.js";
-import { legendRows } from "../web/ui/admin/overview.js";
-import { can } from "../web/ui/components/permissions.js";
+import { LEGEND_ROWS } from "../web/ui/admin/overview.js";
 import * as A from "../web/ui/forms/answers.js";
 import * as B from "../web/ui/forms/builder-data.js";
 import * as P from "../web/ui/forms/public-api.js";
@@ -279,13 +279,15 @@ test("builder: the preview is the public definition; patches send their fields",
 });
 
 test("admin rules: never deactivate yourself, keep an admin, metadata-only directory", async (t) => {
-  const me = { id: "1", role: "admin", status: "active" };
-  const member = { id: "2", role: "member", status: "active" };
+  // Signed-in users carry the server's capability list, as `me` does.
+  const asMe = (user) => ({ ...user, capabilities: capabilitiesOf(user) });
+  const me = asMe({ id: "1", role: "admin", status: "active" });
+  const member = asMe({ id: "2", role: "member", status: "active" });
   const users = [me, member, { id: "3", role: "admin", status: "deactivated" }];
   assert.match(AD.userActions(me, me, users).roleReason, /active admin/);
   assert.match(AD.userActions(me, me, users).statusReason, /yourself/);
   assert.equal(AD.userActions(me, member, users).roleReason, null);
-  const other = { id: "4", role: "admin", status: "active" };
+  const other = asMe({ id: "4", role: "admin", status: "active" });
   const twoAdmins = [...users, other];
   // The server lets an admin change their own role while another admin stays.
   assert.equal(AD.userActions(me, me, twoAdmins).roleReason, null);
@@ -297,14 +299,16 @@ test("admin rules: never deactivate yourself, keep an admin, metadata-only direc
   assert.equal(AD.parseRoleCounts("{").admin, 0);
   const people = [{ name: "Sam", title: "Designer" }];
   assert.equal(AD.filterUsers(people, "DESIGN").length, 1);
-  for (const row of legendRows().slice(0, 5)) {
-    for (const role of AD.ROLE_ORDER) {
-      assert.equal(typeof row.cells[role], "boolean", row.label);
-    }
+  // The legend is documentation; it must say what the server applies.
+  const documented =
+    "manage_users admin_directory create_workspace,create_team create_content create_note";
+  for (const role of AD.ROLE_ORDER) {
+    const granted = capabilitiesOf({ role, status: "active" });
+    documented.split(" ").forEach((names, index) => {
+      const want = names.split(",").every((n) => granted.includes(n));
+      assert.equal(LEGEND_ROWS[index].cells[role], want, `${index}${role}`);
+    });
   }
-  const admin = { id: "9", role: "admin", status: "active" };
-  assert.equal(legendRows()[0].cells.admin, can(admin, "manage_users"));
-  assert.equal(legendRows()[0].cells.member, false);
 
   const { ids, as } = await servers(t);
   const directory = await as(ids.users.alex).data(AD.ADMIN_CONTENT_QUERY);
@@ -346,9 +350,13 @@ test("teams: owner rules and one-step role changes", async (t) => {
   });
   const [owner, kai, morgan, noa] = team.members;
   assert.deepEqual(pluck(team.members), ["1", "8", "7", "3"], "owners first");
-  // A deactivated owner cannot manage the team, so Alex is the last owner.
-  assert.match(T.memberActions(team, owner).remove, /active owner/);
-  assert.match(T.memberActions(team, owner).demote, /active owner/);
+  // Who counts as the owner a team keeps is the server's rule
+  // (access.teamManagers, refused below); the client only reads can_manage.
+  assert.deepEqual(T.memberActions(team, owner), {
+    remove: null,
+    promote: "Already an owner",
+    demote: null,
+  });
   assert.equal(T.memberActions(team, kai).demote, null);
   assert.equal(T.memberActions(team, noa).promote, null);
   assert.equal(T.memberActions(team, morgan).promote, null);

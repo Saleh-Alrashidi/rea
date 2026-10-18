@@ -82,9 +82,15 @@ test("search, shared_with_me, my_work and the directory never reveal hidden reco
     [],
     "a guest cannot find people outside their content",
   );
-  // Items on hidden boards stay out of my_work even when assigned.
+  // Items on hidden boards stay out of my_work even when assigned (Sam
+  // was assigned while a member and kept the assignment after unsharing).
   const [hidden] = store.listItems({ boardId: ids.boards.hiring }).items;
+  const grant = { resourceKind: "board", resourceId: ids.boards.hiring };
+  const sam = { ...grant, subjectKind: "user" };
+  store.share({ ...sam, subjectIds: [ids.users.sam], role: "editor" });
   store.setColumnValue(hidden.id, "person", [ids.users.sam]);
+  store.unshare({ ...sam, subjectId: ids.users.sam });
+  assert.deepEqual(store.getItem(hidden.id).values.person, [ids.users.sam]);
   const work = await clients.sam.data("{ my_work { id } }");
   assert.ok(work.my_work.every((item) => item.id !== hidden.id));
 });
@@ -173,27 +179,79 @@ test("deactivated users: tokens and sessions stop working at once", async (t) =>
   );
 });
 
-test("a guest's directory includes people assigned on boards they can open", async (t) => {
+test("a guest's directory is self, co-members and teammates; assignees outside it read Someone", async (t) => {
   const { clients, ids, store } = await setup(t);
   const names = async () =>
     (await clients.chris.data("{ users { id } }")).users.map((u) => u.id);
-  assert.ok(!(await names()).includes(ids.users.noa));
-  const [item] = store.listItems({ boardId: ids.boards.marketing }).items;
-  store.setColumnValue(item.id, "person", [ids.users.noa]);
-  assert.ok((await names()).includes(ids.users.noa));
-  // Re-saving an existing assignee works; unseen people stay unknown.
+  const board = ids.boards.marketing;
+  const grant = {
+    resourceKind: "board",
+    resourceId: board,
+    subjectKind: "user",
+  };
+  // Noa is assigned while a member, then removed: she stays assigned.
+  store.share({ ...grant, subjectIds: [ids.users.noa], role: "editor" });
+  assert.ok((await names()).includes(ids.users.noa), "a co-member");
+  const [item] = store.listItems({ boardId: board }).items;
+  const people = [ids.users.noa, ids.users.chris];
+  store.setColumnValue(item.id, "person", people, { actorId: ids.users.priya });
+  store.unshare({ ...grant, subjectId: ids.users.noa });
+  assert.ok(!(await names()).includes(ids.users.noa), "no longer visible");
+  const cell = `query C($b: ID!) { boards(ids: [$b]) { items_page(limit: 100) {
+    items { id column_values(ids: ["person"]) { text value } } } } }`;
+  const read = async (client) => {
+    const [view] = (await client.data(cell, { b: board })).boards;
+    const entry = view.items_page.items.find((each) => each.id === item.id);
+    return entry.column_values[0];
+  };
+  const only = (...users) =>
+    JSON.stringify({
+      personsAndTeams: users.map((id) => ({ id: Number(id), kind: "person" })),
+    });
+  assert.deepEqual(await read(clients.chris), {
+    text: "Someone, Chris Taylor",
+    value: only(ids.users.chris),
+  });
+  assert.deepEqual(await read(clients.priya), {
+    text: "Noa Cohen, Chris Taylor",
+    value: only(ids.users.noa, ids.users.chris),
+  });
+  // Rewriting the cell keeps the people the guest cannot see; unseen
+  // people cannot be named.
   const set = `mutation P($b: ID!, $i: ID!, $v: String) {
     change_simple_column_value(board_id: $b, item_id: $i, column_id: "person",
       value: $v) { column_values(ids: ["person"]) { text } } }`;
-  const vars = { b: ids.boards.marketing, i: item.id };
-  const both = `${ids.users.noa},${ids.users.chris}`;
-  const saved = await clients.chris.data(set, { ...vars, v: both });
+  const vars = { b: board, i: item.id };
+  const saved = await clients.chris.data(set, {
+    ...vars,
+    v: `${ids.users.priya}`,
+  });
   assert.deepEqual(saved.change_simple_column_value.column_values, [
-    { text: "Noa Cohen, Chris Taylor" },
+    { text: "Priya Nair, Someone" },
   ]);
-  const hidden = await clients.chris.code(set, {
+  assert.deepEqual(store.getItem(item.id).values.person, [
+    ids.users.priya,
+    ids.users.noa,
+  ]);
+  const hidden = await clients.chris.error(set, {
     ...vars,
     v: ids.users.jordan,
   });
-  assert.equal(hidden, "BAD_USER_INPUT");
+  assert.equal(hidden.extensions.code, "BAD_USER_INPUT");
+  assert.match(hidden.message, /Unknown user ID/);
+  // The activity of these changes names Noa only as "Someone".
+  const log = `query L($b: ID!) { boards(ids: [$b]) {
+    activity_logs(limit: 10) { kind actor_label from_text to_text } } }`;
+  const [view] = (await clients.chris.data(log, { b: board })).boards;
+  const texts = view.activity_logs.flatMap((entry) => [
+    entry.actor_label,
+    entry.from_text,
+    entry.to_text,
+  ]);
+  assert.ok(texts.includes("Someone (editor)"), "the member removal");
+  assert.ok(texts.includes("Someone, Chris Taylor"), "the assignment");
+  assert.ok(
+    texts.every((text) => !/Noa/.test(text ?? "")),
+    texts.join("|"),
+  );
 });

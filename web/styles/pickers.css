@@ -112,6 +112,13 @@
   font-size: var(--text-sm);
 }
 
+.share-member-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 @media (max-width: 520px) {
   .share-invite-row {
     flex-wrap: wrap;
@@ -121,8 +128,20 @@
     flex-basis: 100%;
   }
 
+  /* Name, email and note get the first line; badge, role and remove
+     button a second one, under the text. */
   .share-member {
     flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .share-member-text {
+    flex: 1 1 calc(100% - 48px);
+  }
+
+  .share-member-controls {
+    flex: 1 1 100%;
+    justify-content: flex-end;
   }
 }
 
@@ -194,7 +213,8 @@
   background: transparent;
 }
 
-.picker-input:focus-visible {
+.picker-input:focus-visible,
+.slash-input:focus-visible {
   outline: none;
   box-shadow: none;
 }
@@ -223,12 +243,25 @@
   cursor: pointer;
 }
 
-.picker-option.active {
+.picker-option.active,
+.slash-option.active {
   background: var(--color-selected);
 }
 
+/* An ineligible row fades its avatar and name only: the reason it can't
+   be added (the server's verdict) keeps the full muted text contrast. */
 .picker-option.disabled {
   cursor: not-allowed;
+}
+
+.picker-option.disabled > .avatar,
+.picker-option.disabled .picker-option-name {
+  opacity: 0.55;
+}
+
+/* Rows of the previous query while the current one is pending: inert. */
+.picker-option.stale {
+  cursor: progress;
   opacity: 0.55;
 }
 
@@ -441,4 +474,56 @@
 
 .user-menu .menu-item .badge {
   margin-left: auto;
+}
+
+/* ------------------------------------------------ doc "/" block menu */
+
+.slash-menu {
+  width: 260px;
+  padding: 6px;
+}
+
+.slash-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+}
+
+.slash-filter:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-focus);
+}
+
+.slash-prefix {
+  color: var(--color-text-muted);
+  font-weight: var(--weight-semibold);
+}
+
+.slash-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.slash-list {
+  display: grid;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+  cursor: pointer;
+}
+
+.slash-empty {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }

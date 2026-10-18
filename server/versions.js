@@ -2,6 +2,7 @@
  * API version table and `API-Version` header resolution.
  */
 import { GraphQLError } from "./graphql/errors.js";
+import { describe } from "./input.js";
 
 /** Supported API versions, oldest first. */
 export const API_VERSIONS = Object.freeze([
@@ -13,16 +14,8 @@ export const API_VERSIONS = Object.freeze([
 /** Version used when a request has no `API-Version` header. */
 export const CURRENT_API_VERSION = "2026-01";
 
-const MAX_SHOWN_LENGTH = 40;
-
-function describe(headerValue) {
-  if (typeof headerValue !== "string") return "(not a single string)";
-  const shown =
-    headerValue.length > MAX_SHOWN_LENGTH
-      ? `${headerValue.slice(0, MAX_SHOWN_LENGTH)}…`
-      : headerValue;
-  return JSON.stringify(shown);
-}
+const describeHeader = (value) =>
+  typeof value === "string" ? describe(value) : "(not a single string)";
 
 /**
  * Resolves an `API-Version` header value. Missing or blank values select the
@@ -44,7 +37,7 @@ export function resolveApiVersion(headerValue) {
   return {
     ok: false,
     error: new GraphQLError(
-      `Unsupported API version ${describe(headerValue)}. Supported versions: ${supported}`,
+      `Unsupported API version ${describeHeader(headerValue)}. Supported versions: ${supported}`,
       { code: "UNSUPPORTED_API_VERSION" },
     ),
   };

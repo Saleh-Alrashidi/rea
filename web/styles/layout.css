@@ -1,13 +1,16 @@
 /* Worklane layout: the shell grid, top bar, sidebar (drawer under 900 px,
    collapsible above), the page outlet and page headers. */
 
+/* The "live" row holds the "Live updates paused" banner; it is empty
+   (zero height) while every stream is live. */
 .app-shell {
   display: grid;
   grid-template-areas:
     "topbar topbar"
+    "live live"
     "sidebar page";
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  grid-template-rows: var(--topbar-height) minmax(0, 1fr);
+  grid-template-rows: var(--topbar-height) auto minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
 }
@@ -339,6 +342,7 @@
   .app-shell.sidebar-collapsed {
     grid-template-areas:
       "topbar"
+      "live"
       "page";
     grid-template-columns: minmax(0, 1fr);
   }
@@ -413,4 +417,44 @@
   .topbar-end {
     margin-left: 0;
   }
+}
+
+/* ------------------------------------------------ live updates paused */
+
+/* In the page flow under the top bar: it covers nothing, comes early in
+   the Tab order and stays below the mobile drawer. */
+.live-status-row {
+  grid-area: live;
+  min-width: 0;
+}
+
+.live-status-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-2) var(--space-2);
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+}
+
+.live-status-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.live-status-reload {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-raised);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+.live-status-reload:hover {
+  background: var(--color-hover);
 }

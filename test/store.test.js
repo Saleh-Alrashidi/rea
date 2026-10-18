@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createStore } from "../server/store.js";
+import { plainEntry } from "./helpers.js";
 
 // Store API tests for the part-1 board model: mutators, change events,
 // activity entries, ordering, app storage, tokens and listeners. Seed, ID
@@ -302,7 +303,7 @@ test("item mutators emit one event each and ignore unknown IDs", async () => {
     ["item_deleted", "2", "Renamed", null, null],
   ]);
   const [latest] = store.listActivity(roadmap.id);
-  assert.equal(latest.actor_label, "Sam Lee");
+  assert.equal(plainEntry(store, latest).actor_label, "Sam Lee");
   assert.equal(store.listActivity(roadmap.id)[1].column_id, null);
   const base = { board_id: roadmap.id, item_id: item.id };
   assert.deepEqual(events, [

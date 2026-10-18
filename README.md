@@ -85,8 +85,13 @@ Configuration (environment variables):
 | `MM_APPS_ORIGIN` | `http://127.0.0.1:<apps port>` | Public apps origin (a different site on purpose) |
 | `MM_DEMO_LOGIN`  | on                             | `0` turns off auto sign-in and the user switcher |
 
-The data file format is `mini-monday-store/2`. A part-1 file is refused
-with a message; move it away and the server reseeds.
+The data file format is `mini-monday-store/3`. A part-1 file is refused
+with a message; move it away and the server reseeds. A
+`mini-monday-store/2` file (which wrote people's names into notification
+and activity texts) is upgraded once at start-up: names become mentions
+rendered per viewer, a name that matches no single user becomes "Someone",
+the old file is kept as `<file>.v2.bak` (private, like the data file) and
+the result is saved as `/3`, which older versions refuse as unsupported.
 
 ## Feature tour
 
@@ -122,10 +127,23 @@ visibility setting (board kind Main / Private / Shareable; doc Workspace /
 Private; workspace Open / Closed; notes stay private until shared), the
 current members with role menus, and a people-and-teams picker that
 explains why someone is not eligible (guests only on Shareable boards,
-docs and notes; deactivated users never). The last owner cannot be removed
-or demoted; only owner grants that give owner access count (not those of
-deactivated users, viewer accounts or guests on boards that exclude them),
-and teams likewise keep an active owner. Turning a Shareable board into
+docs and notes; deactivated users never) and lists those who can be added
+first. The server computes every one of these verdicts and explanations
+(`share_candidates` with `eligible`, `reason`, `role_options` and a `note`
+such as "Viewer accounts can only view, whatever role they get.";
+`Member.can_remove`, `Member.can_change_role`, `Member.role_options`, the
+role the grant really gives in `Member.effective_role` and the row's
+explanation in `Member.reason`), so the dialog never re-derives a rule or
+writes its own reason. A role changes only when picked from its menu
+(making someone an owner asks first); after any change focus returns to
+the control that made it and a status line announces the result. In the
+picker, Enter pressed before a search answers adds the first eligible
+match of that search, never a row of the previous one. The last owner
+cannot be removed or demoted; only owner
+grants that give owner access count (not those of deactivated users,
+viewer accounts or guests on boards that exclude them), and teams likewise
+keep an owner who can manage them (a viewer account that owns a team
+cannot manage it). Turning a Shareable board into
 Main or Private asks first, then removes its guests. Granting a team covers
 its current and future members, and the share notification names the role
 each person really gets (a viewer account is told "viewer"). Deleting a
@@ -146,6 +164,13 @@ team logs the removal on every board it was a member of.
   member avatars, Share, an **Activity** timeline (who changed what, with
   from → to chips) and a **Forms** view. Viewers get read-only cells and a
   "View only" badge; controls you cannot use are disabled with a reason.
+- **People columns** accept only people who can open the board
+  (`Board.assignable_users` lists them); someone who later loses access
+  stays assigned until removed. A toggle the server refuses is undone in
+  the picker, so later toggles do not resend it.
+- **Live updates paused**: when a live-update stream is refused (too many
+  open streams) or ends for good, a banner under the top bar (in the page
+  flow and the Tab order, so it covers nothing) offers "Reload".
 - **Notifications** for shares, assignments, updates on your items, form
   responses on your boards and role changes arrive live over SSE.
 
@@ -154,7 +179,9 @@ team logs the removal on every board it was a member of.
 - **Docs**: block documents (headings, paragraphs, lists, to-dos, quotes,
   code, callouts, dividers). Each block is a `contenteditable` element
   holding plain text; Enter splits, Backspace merges, "/" opens the block
-  menu, Markdown-style shortcuts work. Changes autosave after 800 ms with
+  menu (type to filter by name or by the shortcut it shows, such as `>` or
+  `1.`; Escape or Tab gives the block back what was typed), Markdown-style
+  shortcuts work. Changes autosave after 800 ms with
   the doc's version; if someone else saved first, a banner offers to
   reload instead of overwriting.
 - **Notes**: personal colored notes in a grid, pinned first, with an
@@ -220,6 +247,7 @@ server/
   auth.js          API tokens, browser sessions, app principals, JWTs
   events.js        server-sent events hub
   column-values.js parse and format column values
+  input.js         limits, ID and color formats, the name rule
   versions.js      API version table
 web/               the host app (plain ES modules, no build)
   main.js router.js api.js dom.js host-bridge.js form-page.js
@@ -238,13 +266,38 @@ test/              node:test suites
 interprets account roles, user status, grants and team membership
 (`workspaceAccess`, `boardAccess`, `docAccess`, `noteAccess`,
 `formAccess`, `installAccess`, `can`, `canGrant`, `notificationVisible`,
-and the people directory: `visibleUserIds`, `teamVisible`). The store
-records facts and never decides authority; resolvers, HTTP routes, the
-SSE hub and the app/session-token code all ask `access.js`. Every
-User-valued field (authors, actors, owners, members) resolves through the
-caller's directory, so a guest sees `null` for people outside it. The web
-client reads only the server's verdicts (`my_access`, `can_manage`,
-`can_open`, `can_delete`, `role`) to decide which controls to show.
+`canManageTeam`, `canBeAssigned`, the member and share verdicts
+`memberVerdicts` and `shareVerdict` with their explanations, and the
+people directory:
+`visibleUserIds`, `teamVisible`, `directoryName`). The store records facts
+and keeps data rules (it asks `access.js` too); resolvers, HTTP routes, the
+SSE hub and the app/session-token code all ask `access.js`. The web client
+reads only the server's verdicts (`my_access`, `can_manage`, `can_open`,
+`can_delete`, `role`, `me.capabilities`, `Board.assignable_users`, the
+Member verdicts and `share_candidates`) to decide which controls to show
+and whom to offer, and shows the server's reasons as they come. A
+resource's effective owners are computed once per request
+(`effectiveOwnerIds`), so member verdicts stay linear in the number of
+members.
+
+**Directory privacy.** A guest's directory is themselves, the members of
+what is shared with them (user grants, the members of team grants, note
+owners) and their teams' members; everyone else sees every user. People
+outside the directory are absent from user lists, search, member lists,
+team members and `assignable_users`, resolve to `null` in User-valued
+fields (authors, actors, owners), and read "Someone" in texts. Texts that
+name people (notification texts, activity `from_text`/`to_text`) are
+stored as rich text with user IDs (`server/store/activity.js`) and
+rendered per viewer at read time, over GraphQL and SSE alike; activity
+actors are stored by ID. Data files from before this rule are converted
+when loaded (`server/store/legacy-texts.js`, see Quick start). A people column shows hidden people as
+"Someone" and leaves them out of `value`, and a guest rewriting the cell
+keeps them assigned.
+
+**Input rules.** `server/input.js` owns the limits (names 1–255,
+descriptions ≤ 2,000, …), the record ID and `#rrggbb` color formats and the
+name rule; the store, the GraphQL schema, column values and the HTTP
+routes import them instead of keeping their own copies.
 
 **GraphQL subset.** `server/graphql/` is a small, dependency-free engine:
 queries and mutations (no subscriptions), variables with defaults,
@@ -271,14 +324,20 @@ types the app listens to. Methods: `get`, `set`, `listen`, `unlisten`,
 
 **Server-sent events.** `GET /v2/events?board_id=<id>` streams a board's
 change events (`event: change`) after an access check, re-checks access on
-every change and ends the stream when access is lost. `GET
-/v2/events?stream=me` streams the signed-in user's notification events
-(`event: notification`, with the notification's `kind`, `text` and
-`url`) and ends when the user is deactivated. A stream opened with a
-browser session ends with that session (sign-out, user switching, idle
-expiry). The hub accepts 1,000 streams, at most 32 per user (more → 429).
-The web app refreshes boards, the activity view, form response counts and
-the notification bell from these streams.
+every change that can move it and ends the stream when access is lost.
+`GET /v2/events?stream=me` streams the signed-in user's notification
+events (`event: notification`, with the notification's `kind`, `url` and
+`text` rendered for that user) and ends when the user is deactivated. A
+stream opened with a browser session ends with that session (sign-out,
+user switching, idle expiry at the next delivery or heartbeat). Streams
+are indexed by board, user and session: a board change reaches only its
+board's streams, with one access check per user; a user change only that
+user's streams; a workspace change the streams of its boards; a team
+change every board stream; doc and note changes none, so streams on
+other boards cost a change nothing. The hub accepts
+1,000 streams, at most 32 per user (more → 429). The web app refreshes
+boards, the activity view, form response counts and the notification bell
+from these streams.
 
 ## Security model
 
@@ -287,6 +346,8 @@ the notification bell from these streams.
   lists, search, counts, notifications, activity, SSE, form definitions or
   share pickers. `FORBIDDEN` is only for accessible resources where your
   role is too low.
+- **Guests see their directory only**: people outside it never appear in
+  lists or User fields and are named "Someone" in every text.
 - **Sessions resolve the user on every request**: role changes apply at
   once, and deactivation ends sessions, API tokens and streams
   immediately.
@@ -337,7 +398,11 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
   for the main pages). Its interaction steps (`e2e-roles-ux.mjs`,
   `e2e-roles-ux2.mjs`) cover keyboard focus (item card, drawer, popovers,
   status picker, skip link), unsaved-work guards, doc undo, number-cell
-  typos, dark-mode contrast and live access changes. Both fail on console
+  typos, dark-mode contrast and live access changes; `e2e-roles-verdicts.mjs`
+  and `e2e-roles-ux3.mjs` cover the server's verdicts and explanations in
+  the share dialog and people pickers, refused assignees, the share dialog
+  by keyboard and at 360 px, the "/" menu next to its block and the "Live
+  updates paused" banner. Both fail on console
   errors, page errors, CSP violations, failed requests and unexpected HTTP
   errors, and save screenshots to `e2e-output/`.
 - The browser tests need `playwright` or `playwright-core` and a Chromium;

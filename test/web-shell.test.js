@@ -17,12 +17,10 @@ import {
   isViewOnly,
 } from "../web/ui/components/permissions.js";
 import {
+  SHARE_CANDIDATES_QUERY,
   SHARE_MUTATIONS,
   SHARE_QUERIES,
-  lastOwnerReason,
   normalizeResource,
-  roleOptions,
-  subjectEligibility,
 } from "../web/ui/components/share-model.js";
 import { BUS_EVENTS, createBus } from "../web/ui/shell/bus.js";
 import {
@@ -53,6 +51,7 @@ const DOCUMENTS = {
   HOME_QUERY,
   SHARED_QUERY,
   SHARED_DETAILS_QUERY,
+  SHARE_CANDIDATES_QUERY,
   ...Object.fromEntries(
     Object.entries(SHARE_QUERIES).map(([k, v]) => [`share query ${k}`, v]),
   ),
@@ -151,29 +150,20 @@ test("every document validates against the SPEC-2 schema", async () => {
   }
 });
 
-test("account capabilities follow the SPEC-2 role table", () => {
-  const user = (role, status = "active") => ({ id: "9", role, status });
-  assert.equal(can(user("admin"), "manage_users"), true);
-  assert.equal(can(user("member"), "manage_users"), false);
-  assert.equal(can(user("member"), "create_workspace"), true);
-  assert.equal(can(user("viewer"), "create_content"), false);
-  assert.equal(can(user("viewer"), "create_note"), true);
-  assert.equal(can(user("guest"), "create_team"), false);
-  assert.equal(can(user("guest"), "create_note"), true);
-  assert.equal(can(user("admin", "deactivated"), "create_note"), false);
-  assert.equal(can(null, "create_note"), false);
-  assert.equal(can(user("superuser"), "create_note"), false);
+test("controls read the caller's access and the server's capability list", () => {
+  const me = (capabilities) => ({ id: "9", role: "member", capabilities });
+  const creator = me(["create_workspace", "create_content", "create_note"]);
+  assert.equal(can(creator, "create_content"), true);
+  assert.equal(can(creator, "manage_users"), false);
+  assert.equal(can(me([]), "create_note"), false);
   assert.equal(hasRole("owner", "editor"), true);
   assert.equal(hasRole("viewer", "editor"), false);
   assert.equal(hasRole(null, "viewer"), false);
   assert.equal(hasRole("owner", "nonsense"), false);
   assert.equal(isViewOnly("viewer"), true);
-  assert.equal(canCreateIn(user("member"), { my_access: "editor" }).ok, true);
-  assert.equal(canCreateIn(user("member"), { my_access: "viewer" }).ok, false);
-  assert.match(
-    canCreateIn(user("viewer"), { my_access: "owner" }).reason,
-    /role/,
-  );
+  assert.equal(canCreateIn(creator, { my_access: "editor" }).ok, true);
+  assert.equal(canCreateIn(creator, { my_access: "viewer" }).ok, false);
+  assert.match(canCreateIn(me([]), { my_access: "owner" }).reason, /role/);
 });
 
 function member(kind, id, role, accountRole = null) {
@@ -187,11 +177,7 @@ function member(kind, id, role, accountRole = null) {
   };
 }
 
-test("share rules: roles per kind, last owner, guests", () => {
-  assert.deepEqual(roleOptions("note"), ["editor", "viewer"]);
-  assert.deepEqual(roleOptions("workspace"), ["owner", "editor"]);
-  assert.deepEqual(roleOptions("board"), ["owner", "editor", "viewer"]);
-
+test("share resources normalize members with their verdicts", () => {
   const data = {
     boards: [
       {
@@ -200,8 +186,12 @@ test("share rules: roles per kind, last owner, guests", () => {
         board_kind: "private",
         my_access: "owner",
         members: [
-          member("user", 1, "owner"),
-          member("user", 3, "editor"),
+          {
+            ...member("user", 1, "owner"),
+            can_remove: false,
+            can_change_role: false,
+            role_options: ["owner"],
+          },
           member("team", 2, "viewer"),
         ],
       },
@@ -212,25 +202,16 @@ test("share rules: roles per kind, last owner, guests", () => {
   assert.equal(board.canManage, true);
   assert.equal(board.hash, "#/boards/4");
   assert.equal(board.setting, "private");
-  const [owner, editor, team] = board.members;
-  assert.match(lastOwnerReason(board, owner), /^This board needs/);
-  assert.equal(lastOwnerReason(board, editor), null);
-  // Team owner grants never count as the owner a resource keeps.
-  const withTeam = { ...board, members: [owner, { ...team, role: "owner" }] };
-  assert.match(lastOwnerReason(withTeam, owner), /at least one owner/);
-  assert.equal(lastOwnerReason(withTeam, withTeam.members[1]), null);
-  board.members.push({ ...editor, id: "8", role: "owner" });
-  assert.equal(lastOwnerReason(board, owner), null);
-
-  const guest = { kind: "user", id: "6", role: "guest" };
-  assert.equal(subjectEligibility(board, guest).ok, false);
-  assert.equal(
-    subjectEligibility({ ...board, setting: "share" }, guest).ok,
-    true,
+  const [owner, team] = board.members;
+  assert.deepEqual(
+    [owner.canRemove, owner.canChangeRole, owner.roleOptions],
+    [false, false, ["owner"]],
   );
-  assert.equal(subjectEligibility({ kind: "workspace" }, guest).ok, false);
-  assert.equal(subjectEligibility({ kind: "doc" }, guest).ok, true);
-  assert.equal(subjectEligibility(board, { kind: "team", id: "2" }).ok, true);
+  // Missing verdicts allow nothing.
+  assert.deepEqual(
+    [team.canRemove, team.canChangeRole, team.roleOptions],
+    [false, false, []],
+  );
 
   const note = normalizeResource(
     "note",
@@ -249,8 +230,6 @@ test("share rules: roles per kind, last owner, guests", () => {
   );
   assert.equal(note.canManage, false);
   assert.equal(note.owner.id, "1");
-  // Notes keep their owner outside shares, so no share is "the last owner".
-  assert.equal(lastOwnerReason(note, note.members[0]), null);
 });
 
 test("the people picker never offers deactivated users", () => {

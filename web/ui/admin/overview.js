@@ -2,39 +2,47 @@
  * Admin overview pieces: the account stats tiles and the role legend that
  * explains what each account role can do (SPEC-2 §1.1).
  *
- * The account-level rows of the legend are read from `permissions.can()`,
- * the client's one table of account capabilities, so the legend can never
- * disagree with the controls the app offers. The access rows describe the
- * resource rules the server applies (`server/access.js`).
+ * The legend is documentation of SPEC-2 §1.1 for people reading it: the
+ * server (`server/access.js`) applies the rules, and no control is enabled
+ * or disabled from this table (the app reads `me.capabilities` instead).
  */
 
 import { h } from "../../dom.js";
 import { roleBadge } from "../components/badge.js";
 import { icon } from "../components/icon.js";
 import { ACCOUNT_ROLES } from "../components/labels.js";
-import { can } from "../components/permissions.js";
 import { ROLE_ORDER } from "./admin-data.js";
 
-const CAPABILITY_ROWS = Object.freeze([
-  ["manage_users", "Manage users and account roles"],
-  ["admin_directory", "See the content directory (titles and owners only)"],
-  ["create_workspace", "Create workspaces and teams"],
-  ["create_content", "Create boards, docs and forms where they can edit"],
-  ["create_note", "Write personal notes"],
-]);
+const yes = (...roles) =>
+  Object.fromEntries(ROLE_ORDER.map((role) => [role, roles.includes(role)]));
 
-const ACCESS_ROWS = Object.freeze([
+/** The legend's rows: `{ label, cells: { [role]: true | false | string } }`. */
+export const LEGEND_ROWS = Object.freeze([
+  { label: "Manage users and account roles", cells: yes("admin") },
+  {
+    label: "See the content directory (titles and owners only)",
+    cells: yes("admin"),
+  },
+  { label: "Create workspaces and teams", cells: yes("admin", "member") },
+  {
+    label: "Create boards, docs and forms where they can edit",
+    cells: yes("admin", "member"),
+  },
+  {
+    label: "Write personal notes",
+    cells: yes("admin", "member", "viewer", "guest"),
+  },
   {
     label: "Main boards and workspace docs in their workspaces",
     cells: { admin: "Edit", member: "Edit", viewer: "View", guest: false },
   },
   {
     label: "Can be added to private boards",
-    cells: { admin: true, member: true, viewer: true, guest: false },
+    cells: yes("admin", "member", "viewer"),
   },
   {
     label: "Can be added to shareable boards, docs and notes",
-    cells: { admin: true, member: true, viewer: true, guest: true },
+    cells: yes("admin", "member", "viewer", "guest"),
   },
   {
     label: "Edits what they can open",
@@ -46,23 +54,6 @@ const ACCESS_ROWS = Object.freeze([
     },
   },
 ]);
-
-/**
- * The legend's rows: `{ label, cells: { [role]: true | false | string } }`,
- * account capabilities first (from `can()`), then access rules.
- */
-export function legendRows() {
-  const capabilityRows = CAPABILITY_ROWS.map(([capability, label]) => ({
-    label,
-    cells: Object.fromEntries(
-      ROLE_ORDER.map((role) => [
-        role,
-        can({ id: "0", role, status: "active" }, capability),
-      ]),
-    ),
-  }));
-  return [...capabilityRows, ...ACCESS_ROWS];
-}
 
 function cell(value) {
   if (value === true) {
@@ -140,7 +131,7 @@ export function roleLegend() {
           h(
             "tbody",
             null,
-            legendRows().map((row) =>
+            LEGEND_ROWS.map((row) =>
               h(
                 "tr",
                 null,

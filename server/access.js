@@ -19,10 +19,16 @@
  * - Last-owner protection counts user owner grants that make their user
  *   an owner (active, not a viewer account, guests only where admitted);
  *   team owner grants are extra, so deleting a team never leaves a
- *   resource without an owner. Teams likewise keep an active owner.
+ *   resource without an owner. Teams likewise keep an owner who can
+ *   manage them (capRole applies to team management too).
+ *
+ * The verdicts the browser shows for subjects other than the caller
+ * (SPEC-2 §6: capabilities, assignable people, member and share candidate
+ * verdicts) and the guest directory with its "Someone" placeholder are
+ * computed here as well, so no resolver re-derives a rule.
  */
-import { peopleIds } from "./column-values.js";
 import { GraphQLError } from "./graphql/errors.js";
+import { describe } from "./input.js";
 
 export const ROLE_RANK = Object.freeze({ viewer: 1, editor: 2, owner: 3 });
 export const ACCESS_ROLES = Object.freeze(["owner", "editor", "viewer"]);
@@ -112,10 +118,19 @@ export function can(user, capability) {
   return isActive(user) && CAPABILITIES[capability].includes(user.role);
 }
 
-/** Admins and team owners (active) manage a team's name and members. */
+/** Every capability `can` grants `user`, in a fixed order (`User.capabilities`). */
+export function capabilitiesOf(user) {
+  return Object.keys(CAPABILITIES).filter((name) => can(user, name));
+}
+
+/**
+ * Admins and team owners (active) manage a team's name and members.
+ * capRole applies (SPEC-2 §6): a viewer account that owns a team cannot.
+ */
 export function canManageTeam(user, team) {
   if (!isActive(user) || !team) return false;
-  return isAdmin(user) || teamRole(team, user) === "owner";
+  const owner = isAdmin(user) || teamRole(team, user) === "owner";
+  return capRole(owner ? "owner" : null, user) === "owner";
 }
 
 /** The field of a resource that holds its grants. */
@@ -239,21 +254,12 @@ export function notificationVisible(store, user, notification) {
 
 // -------------------------------------------------------------- directory
 
+/** Shown instead of the name of a user outside the viewer's directory. */
+export const HIDDEN_USER_NAME = "Someone";
+
 function addSubjects(store, ids, kind, resource) {
   for (const grant of membersOf(kind, resource)) {
     for (const id of subjectUserIds(store, grant)) ids.add(id);
-  }
-}
-
-/** Adds the people assigned to items of `board` (people columns). */
-function addAssignees(store, ids, board) {
-  const people = store.listColumns(board.id).filter((c) => c.type === "people");
-  if (people.length === 0) return;
-  const limit = Number.MAX_SAFE_INTEGER;
-  for (const item of store.listItems({ boardId: board.id, limit }).items) {
-    for (const column of people) {
-      for (const id of peopleIds(column, item.values[column.id])) ids.add(id);
-    }
   }
 }
 
@@ -264,36 +270,47 @@ function guestDirectory(store, guest) {
     for (const member of team.members) ids.add(member.user_id);
   }
   for (const board of store.listBoards({ limit: Number.MAX_SAFE_INTEGER })) {
-    if (boardAccess(store, guest, board) === null) continue;
-    addSubjects(store, ids, "board", board);
-    addAssignees(store, ids, board);
-    if (board.creator_id) ids.add(board.creator_id);
+    if (boardAccess(store, guest, board) !== null) {
+      addSubjects(store, ids, "board", board);
+    }
   }
   for (const doc of store.listDocs()) {
-    if (docAccess(store, guest, doc) === null) continue;
-    addSubjects(store, ids, "doc", doc);
-    for (const id of [doc.created_by, doc.updated_by]) if (id) ids.add(id);
+    if (docAccess(store, guest, doc) !== null)
+      addSubjects(store, ids, "doc", doc);
   }
   for (const note of store.listNotes()) {
     if (noteAccess(store, guest, note) === null) continue;
     addSubjects(store, ids, "note", note);
+    // The owner holds the note itself rather than a grant on it.
     ids.add(note.owner_id);
   }
   return ids;
 }
 
 /**
- * The users `viewer` may see, as a Set of IDs, or null for everyone
- * (unspecified in SPEC-2, recorded with the builder report). Active
- * non-guests see every user. Guests see themselves, the members of their
- * teams and the people on the content they can access (grants, note
- * owners, board and doc authors, people assigned to items); everyone else
- * is reported like an unknown ID wherever a user would appear. Needs a
- * full store (`list*` methods).
+ * The users `viewer` may see, as a Set of IDs, or null for everyone.
+ * Active non-guests see every user. Guests see their directory (SPEC-2
+ * §6): themselves, the members of the resources shared with them (user
+ * grants, the members of team grants, note owners) and the members of
+ * their teams. Everyone else is reported like an unknown ID wherever a
+ * user would appear, and named HIDDEN_USER_NAME in texts. Needs a full
+ * store (`list*` methods).
  */
 export function visibleUserIds(store, viewer) {
   if (!isActive(viewer)) return new Set();
   return isGuest(viewer) ? guestDirectory(store, viewer) : null;
+}
+
+/** User `id` when it is in `directory` (from visibleUserIds), else null. */
+export function directoryUser(store, directory, id) {
+  if (id === null || id === undefined) return null;
+  const visible = directory === null || directory.has(id);
+  return visible ? store.getUser(id) : null;
+}
+
+/** The name a viewer with `directory` sees for user `id` ("Someone" outside it). */
+export function directoryName(store, directory, id) {
+  return directoryUser(store, directory, id)?.name ?? HIDDEN_USER_NAME;
 }
 
 /** Guests see only the teams they belong to; others see every team. */
@@ -326,30 +343,61 @@ export function explicitOwners(store, resourceKind, resource) {
 /**
  * True when `grant` is a user owner grant that makes its user an owner of
  * `resource`: the user is active, not a viewer account (capped) and, for
- * guests, on a resource that admits them.
+ * guests, on a resource that admits them. An owner grant is the highest
+ * role its user can hold there, so what the grant gives (`grantEffect`)
+ * is the user's access: one lookup per grant, not a scan of the others.
  */
 function ownsThrough(store, { resourceKind, resource }, grant) {
   if (grant.kind !== "user" || grant.role !== "owner") return false;
-  const user = store.getUser(grant.id);
-  return resourceAccess(store, user, resourceKind, resource) === "owner";
+  return grantEffect(store, { resourceKind, resource, grant }) === "owner";
 }
 
-/** Whether a resource still has an effective user owner after the change. */
-function keepsAnOwner(store, { resourceKind, resource, subject, role }) {
-  if (subject.kind !== "user" || role === "owner") return true;
+/**
+ * IDs of the users whose own owner grant makes them owners of `resource`
+ * (a Set): the owners last-owner protection keeps. Callers asking about
+ * many grants of one resource (member verdicts) compute it once and pass
+ * it to `canGrant` as `owners`.
+ */
+export function effectiveOwnerIds(store, resourceKind, resource) {
   const target = { resourceKind, resource };
-  const owners = membersOf(resourceKind, resource).filter((grant) =>
-    ownsThrough(store, target, grant),
-  );
-  return !owners.some((grant) => grant.id === subject.id) || owners.length > 1;
+  const ids = new Set();
+  for (const grant of membersOf(resourceKind, resource)) {
+    if (ownsThrough(store, target, grant)) ids.add(grant.id);
+  }
+  return ids;
 }
 
-/** Active owners of `team`: the users who manage it, besides admins. */
+const holdsOwnerGrant = (resourceKind, resource, userId) =>
+  membersOf(resourceKind, resource).some(
+    (grant) =>
+      grant.kind === "user" && grant.id === userId && grant.role === "owner",
+  );
+
+/**
+ * Whether a resource still has an effective user owner after the change.
+ * Only a user's own owner grant can make them an effective owner, so the
+ * owner scan runs only for such a subject (or uses `owners`).
+ */
+function keepsAnOwner(store, change) {
+  const { resourceKind, resource, subject, role } = change;
+  if (subject.kind !== "user" || role === "owner") return true;
+  let { owners } = change;
+  if (owners === undefined) {
+    if (!holdsOwnerGrant(resourceKind, resource, subject.id)) return true;
+    owners = effectiveOwnerIds(store, resourceKind, resource);
+  }
+  return !owners.has(subject.id) || owners.size > 1;
+}
+
+/**
+ * Owners of `team` who can manage it (active, not capped as a viewer
+ * account): the managers besides admins, kept by last-owner protection.
+ */
 export function teamManagers(store, team) {
   const owners = (team?.members ?? []).filter((m) => m.role === "owner");
   return owners
     .map((member) => member.user_id)
-    .filter((id) => isActive(store.getUser(id)));
+    .filter((id) => canManageTeam(store.getUser(id), team));
 }
 
 function guestAllowed(resourceKind, resource) {
@@ -365,12 +413,20 @@ function subjectOf(store, subject) {
 
 /**
  * Checks granting `role` to `subject` (`{ kind: "user" | "team", id }`) on
- * `resource`; `role: null` checks removing the subject's grant.
+ * `resource`; `role: null` checks removing the subject's grant. `owners`
+ * (optional) is the resource's `effectiveOwnerIds`, when already known.
  * @returns {{ ok: true } | { ok: false, reason: "invalid_kind" |
  *   "not_found" | "invalid_role" | "unknown_subject" | "deactivated" |
  *   "guest_not_allowed" | "note_owner" | "last_owner" }}
  */
-export function canGrant({ resourceKind, resource, subject, role, store }) {
+export function canGrant({
+  resourceKind,
+  resource,
+  subject,
+  role,
+  store,
+  owners,
+}) {
   const reject = (reason) => ({ ok: false, reason });
   if (!Object.hasOwn(GRANT_ROLES, resourceKind)) return reject("invalid_kind");
   if (!resource) return reject("not_found");
@@ -388,17 +444,162 @@ export function canGrant({ resourceKind, resource, subject, role, store }) {
       return reject("note_owner");
     }
   }
-  const change = { resourceKind, resource, subject, role };
+  const change = { resourceKind, resource, subject, role, owners };
   return keepsAnOwner(store, change) ? { ok: true } : reject("last_owner");
 }
 
-// ------------------------------------------------- NOT_FOUND vs FORBIDDEN
+/** Human-readable `canGrant` refusals (store failures, share candidates). */
+export const GRANT_REFUSALS = Object.freeze({
+  invalid_kind: "Only workspaces, boards, docs and notes can be shared",
+  not_found: "Unknown resource",
+  invalid_role: "That role is not available for this resource",
+  unknown_subject: "Unknown user or team",
+  deactivated: "Deactivated users cannot be given access",
+  guest_not_allowed: "Guests can only join shareable boards, docs and notes",
+  note_owner: "The note owner already has access",
+  last_owner: "A resource always keeps at least one owner",
+});
 
-/** A short JSON rendering of a caller-supplied value for messages. */
-export const describe = (value) => {
-  const text = String(value);
-  return JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}…` : text);
-};
+/** Whether `user` manages the members of `resource` (owner access). */
+export function canManageMembers(store, user, resourceKind, resource) {
+  return resourceAccess(store, user, resourceKind, resource) === "owner";
+}
+
+/** Shown for viewer accounts given (or offered) more than viewer. */
+export const CAPPED_NOTE =
+  "Viewer accounts can only view, whatever role they get.";
+
+/**
+ * The roles `canGrant` accepts for `subject` on `resource` (GRANT_ROLES
+ * order) and the first refusal reason, if any.
+ */
+function grantableRoles(store, target) {
+  const roles = [];
+  let refusal = null;
+  for (const role of GRANT_ROLES[target.resourceKind]) {
+    const verdict = canGrant({ ...target, role, store });
+    if (verdict.ok) roles.push(role);
+    else refusal ??= verdict.reason;
+  }
+  return { roles, refusal };
+}
+
+/**
+ * The role a grant gives its subject on `resource` after account limits:
+ * null for deactivated users and guests the resource does not admit,
+ * capped for viewer accounts. Team grants are limited per member, so they
+ * report their own role.
+ */
+function grantEffect(store, { resourceKind, resource, grant }) {
+  // Note shares are viewer or editor; anything else gives nothing.
+  if (resourceKind === "note" && grant.role === "owner") return null;
+  if (grant.kind !== "user") return knownRole(grant.role);
+  const user = store.getUser(grant.id);
+  if (!isActive(user)) return null;
+  if (isGuest(user) && !guestAllowed(resourceKind, resource)) return null;
+  return capRole(grant.role, user);
+}
+
+/** Why a member row's controls are off or its role is limited, or null. */
+function memberReason(store, target, verdicts) {
+  const { resourceKind, grant } = target;
+  const user = grant.kind === "user" ? store.getUser(grant.id) : null;
+  if (user && !isActive(user)) {
+    return "Deactivated account: it can only be removed.";
+  }
+  if (verdicts.effectiveRole === null) {
+    return `${GRANT_REFUSALS.guest_not_allowed}; this grant gives no access.`;
+  }
+  if (verdicts.removal === "last_owner") {
+    const noun = (LABELS[resourceKind] ?? resourceKind).toLowerCase();
+    return `This ${noun} needs at least one owner who can manage it. Make someone else an owner first.`;
+  }
+  return verdicts.effectiveRole === knownRole(grant.role) ? null : CAPPED_NOTE;
+}
+
+/**
+ * Verdicts on an existing grant for `viewer` (SPEC-2 §6 Member fields):
+ * nothing unless the viewer manages the resource; otherwise whether the
+ * grant can be removed and which roles it can take (its current role
+ * included when allowed), both under `canGrant`'s last-owner rule. Also
+ * the role the grant really gives (`effectiveRole`, see grantEffect) and
+ * a human-readable `reason` for whatever limits the row. `owners` (the
+ * resource's `effectiveOwnerIds`) and `manages` (`canManageMembers` for
+ * the viewer) are computed when not given.
+ * @returns {{ canRemove: boolean, canChangeRole: boolean,
+ *   roleOptions: string[], effectiveRole: string | null,
+ *   reason: string | null }}
+ */
+export function memberVerdicts(store, target) {
+  const { viewer, resourceKind, resource, grant } = target;
+  const effectiveRole = grantEffect(store, target);
+  const manages =
+    target.manages ?? canManageMembers(store, viewer, resourceKind, resource);
+  if (!manages) {
+    const none = { canRemove: false, canChangeRole: false, roleOptions: [] };
+    return { ...none, effectiveRole, reason: null };
+  }
+  const owners =
+    target.owners ?? effectiveOwnerIds(store, resourceKind, resource);
+  const subject = { kind: grant.kind, id: grant.id };
+  const change = { resourceKind, resource, subject, owners };
+  const { roles } = grantableRoles(store, change);
+  const removal = canGrant({ ...change, role: null, store });
+  const verdicts = { effectiveRole, removal: removal.reason ?? null };
+  return {
+    canRemove: removal.ok,
+    canChangeRole: roles.some((role) => role !== grant.role),
+    roleOptions: roles,
+    effectiveRole,
+    reason: memberReason(store, { resourceKind, grant }, verdicts),
+  };
+}
+
+/**
+ * The `canGrant` verdict on adding `subject` (no current grant) to
+ * `resource` (SPEC-2 §6 share candidates), with `note` explaining a limit
+ * that would apply (viewer accounts offered more than viewer).
+ * @returns {{ eligible: boolean, reason: string | null,
+ *   roleOptions: string[], note: string | null }}
+ */
+export function shareVerdict(store, { resourceKind, resource, subject }) {
+  const target = { resourceKind, resource, subject };
+  const { roles, refusal } = grantableRoles(store, target);
+  const eligible = roles.length > 0;
+  const reason = eligible ? null : (GRANT_REFUSALS[refusal] ?? refusal);
+  const user = subject.kind === "user" ? store.getUser(subject.id) : null;
+  const capped = roles.some((role) => capRole(role, user) !== role);
+  return {
+    eligible,
+    reason,
+    roleOptions: roles,
+    note: capped ? CAPPED_NOTE : null,
+  };
+}
+
+/** True when `subject` holds a grant on `resource` or, for notes, owns it. */
+export function isCurrentMember(resourceKind, resource, subject) {
+  const owner =
+    resourceKind === "note" &&
+    subject.kind === "user" &&
+    resource.owner_id === subject.id;
+  return (
+    owner ||
+    membersOf(resourceKind, resource).some(
+      (grant) => grant.kind === subject.kind && grant.id === subject.id,
+    )
+  );
+}
+
+/**
+ * Whether a people value on `board` may name `user` (SPEC-2 §6): only
+ * users who can open the board can be assigned.
+ */
+export function canBeAssigned(store, user, board) {
+  return boardAccess(store, user, board) !== null;
+}
+
+// ------------------------------------------------- NOT_FOUND vs FORBIDDEN
 
 /** The error for a missing or inaccessible record; the two look the same. */
 export function notFoundError(what, id) {

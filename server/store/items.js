@@ -1,22 +1,30 @@
 /**
  * Items and updates (part-1 API) with SPEC-2 activity entries and
  * notifications: item create/rename/move/delete and column value changes
- * are logged with `from_text`/`to_text` from `formatColumnValue`; users
- * newly added to a people column get an `assign` notification and users
- * assigned to an item get an `update` notification for its updates.
+ * are logged with `from_text`/`to_text` from `formatColumnValue` (people
+ * values as rich text naming each user); users newly added to a people
+ * column get an `assign` notification and users assigned to an item get
+ * an `update` notification for its updates.
+ *
+ * People values may only add users who can open the board (SPEC-2 §6,
+ * `access.canBeAssigned`), on every write path: item creation (also by
+ * form submissions) and value changes. People already in a value stay
+ * when they lose access; nothing rewrites existing values.
  *
  * Mutators without a creator take a trailing `{ actorId }` option.
  */
+import { canBeAssigned } from "../access.js";
 import {
   formatColumnValue,
   isValidStoredValue,
   peopleIds,
 } from "../column-values.js";
+import { isPlainObject } from "../input.js";
 import {
   byId,
   commit,
   forBoard,
-  isObject,
+  invalid,
   nextId,
   nextPosition,
   onBoard,
@@ -25,10 +33,19 @@ import {
   requireCount,
   requireText,
 } from "../store-state.js";
-import { notify, quoted, recordActivity, resourceUrl } from "./activity.js";
+import {
+  byActor,
+  notify,
+  peopleText,
+  quoted,
+  recordActivity,
+  resourceUrl,
+} from "./activity.js";
 import { removeItems, sortedGroups } from "./boards.js";
 
 const knownUser = (state, id) => id === null || byId(state.users, id) !== null;
+/** Every board's name column: its value is the item name. */
+const NAME_COLUMN = Object.freeze({ id: "name", type: "name" });
 
 /** Appends a new item at the end of its group. */
 export function insertItem(ctx, { boardId, groupId, name, values, creatorId }) {
@@ -72,33 +89,55 @@ function boardItems(state, boardId, groupId) {
   return forBoard(state.items, boardId).filter(wanted).sort(order);
 }
 
-/** Validates and copies a stored value for an existing non-name column. */
-function storedValue(state, column, value) {
+/**
+ * Fails (InputError) when `value` adds people to `column` who cannot open
+ * the board; people already in `before` may stay.
+ */
+function checkAssignees(ctx, { column, before, value }) {
+  if (column.type !== "people") return;
+  const board = byId(ctx.state.boards, column.board_id);
+  const had = new Set(peopleIds(column, before));
+  for (const id of peopleIds(column, value)) {
+    const user = byId(ctx.state.users, id);
+    if (had.has(id) || canBeAssigned(ctx.reader, user, board)) continue;
+    invalid(`${user?.name ?? id} cannot access this board`);
+  }
+}
+
+/**
+ * Validates and copies a stored value for an existing non-name column
+ * that held `before`.
+ */
+function storedValue(ctx, { column, before, value }) {
   if (!column || column.type === "name") {
     throw new TypeError("Values can only be set on existing non-name columns");
   }
-  const getUser = (id) => byId(state.users, id);
+  const getUser = (id) => byId(ctx.state.users, id);
   if (!isValidStoredValue(column, value, { getUser })) {
     throw new TypeError(`Invalid stored value for column ${column.id}`);
   }
+  checkAssignees(ctx, { column, before, value });
   return structuredClone(value);
 }
 
-/** Validates a `{ [columnId]: storedValue }` map; empty values are dropped. */
-export function storedValues(state, boardId, values) {
-  if (!isObject(values)) throw new TypeError("values must be an object");
+/** Validates a new item's `{ [columnId]: storedValue }`; empty values are dropped. */
+export function storedValues(ctx, boardId, values) {
+  if (!isPlainObject(values)) throw new TypeError("values must be an object");
   const stored = {};
   for (const [columnId, value] of Object.entries(values)) {
-    const column = onBoard(state.columns, boardId, columnId);
+    const column = onBoard(ctx.state.columns, boardId, columnId);
     const empty = value === null || value === undefined;
-    if (!empty || !column) stored[columnId] = storedValue(state, column, value);
+    if (empty && column) continue;
+    stored[columnId] = storedValue(ctx, { column, before: null, value });
   }
   return stored;
 }
 
-const textOf = (state, column, stored) =>
-  formatColumnValue(column, stored, { getUser: (id) => byId(state.users, id) })
-    .text;
+/** The activity text of a stored value (people as rich text). */
+function textOf(column, stored) {
+  if (column.type === "people") return peopleText(peopleIds(column, stored));
+  return formatColumnValue(column, stored).text;
+}
 
 /** Notifies users newly present in people columns (`before` → `after`). */
 export function notifyAssigned(ctx, { item, before, after, actorId }) {
@@ -112,12 +151,11 @@ export function notifyAssigned(ctx, { item, before, after, actorId }) {
     );
   }
   if (added.length === 0 || !board) return;
-  const who = byId(state.users, actorId)?.name ?? "Someone";
   notify(ctx, {
     userIds: added,
     actorId,
     kind: "assign",
-    text: `${who} assigned you to ${quoted(item.name)}`,
+    text: byActor(actorId, ` assigned you to ${quoted(item.name)}`),
     url: resourceUrl("board", board.id, item.id),
     resource: { kind: "board", id: board.id, record: board },
   });
@@ -127,7 +165,7 @@ export function notifyAssigned(ctx, { item, before, after, actorId }) {
 export function addItem(ctx, fields, activity) {
   const { state } = ctx;
   const { boardId, groupId, name, values, creatorId } = fields;
-  const stored = storedValues(state, boardId, values);
+  const stored = storedValues(ctx, boardId, values);
   const item = insertItem(ctx, {
     boardId,
     groupId,
@@ -167,26 +205,83 @@ function itemReads(state) {
   };
 }
 
-function valueChange(ctx, { item, column, value, actorId }) {
-  const { state } = ctx;
+/** The item's values with `value` (validated) in `column`; null clears. */
+function withValue(ctx, { item, column, value }) {
   const values = { ...item.values };
+  const before = item.values[column.id];
   if (value === null || value === undefined) delete values[column.id];
-  else values[column.id] = storedValue(state, column, value);
-  const fromText = textOf(state, column, item.values[column.id]);
-  const toText = textOf(state, column, values[column.id]);
-  if (
-    JSON.stringify(item.values[column.id]) !== JSON.stringify(values[column.id])
-  ) {
-    const entry = { boardId: item.board_id, actorId, itemId: item.id };
-    const texts = { columnId: column.id, fromText, toText };
-    recordActivity(ctx, {
-      ...entry,
-      kind: "column_value_changed",
-      itemName: item.name,
-      ...texts,
-    });
-  }
+  else values[column.id] = storedValue(ctx, { column, before, value });
   return values;
+}
+
+/** Logs the change of `column` from `before` to `after` values. */
+function logValueChange(ctx, { item, column, before, after, actorId }) {
+  const from = before[column.id];
+  const to = after[column.id];
+  if (JSON.stringify(from) === JSON.stringify(to)) return;
+  recordActivity(ctx, {
+    boardId: item.board_id,
+    actorId,
+    itemId: item.id,
+    kind: "column_value_changed",
+    itemName: item.name,
+    columnId: column.id,
+    fromText: textOf(column, from),
+    toText: textOf(column, to),
+  });
+}
+
+/** Logs a rename of `item` (now `next`). */
+const logRename = (ctx, { item, next, actorId }) =>
+  recordActivity(ctx, {
+    boardId: next.board_id,
+    itemId: next.id,
+    itemName: next.name,
+    kind: "item_renamed",
+    actorId,
+    fromText: item.name,
+    toText: next.name,
+  });
+
+/**
+ * Applies `changes` (`[{ column, value }]`, distinct columns) to `item` in
+ * one commit: the name column renames, other columns take stored values
+ * (null clears). Everything is validated before anything changes; each
+ * change is logged and emits its own event, newly assigned people are
+ * notified.
+ */
+function setValues(ctx, { item, changes, actorId }) {
+  let values = item.values;
+  let name = item.name;
+  for (const { column, value } of changes) {
+    if (column.type !== "name") {
+      values = withValue(ctx, { item: { ...item, values }, column, value });
+      continue;
+    }
+    requireText(value, "name");
+    name = value;
+  }
+  const at = ctx.now();
+  const next = { ...item, name, values, updated_at: at };
+  replace(ctx.state.items, item, next);
+  const events = changes.map(({ column }) => {
+    if (column.type === "name") {
+      logRename(ctx, { item, next, actorId });
+      return itemEvent("item_renamed", next);
+    }
+    const before = item.values;
+    logValueChange(ctx, { item: next, column, before, after: values, actorId });
+    return itemEvent("column_value_changed", next, { column_id: column.id });
+  });
+  notifyAssigned(ctx, {
+    item: next,
+    before: item.values,
+    after: values,
+    actorId,
+  });
+  const [first, ...rest] = events;
+  ctx.pending.unshift(...rest);
+  return commit(ctx, first, next);
 }
 
 /** Adds an update; users assigned to the item are notified. */
@@ -199,12 +294,11 @@ function createUpdate(ctx, { itemId, body, creatorId = null }) {
   const board = byId(state.boards, item.board_id);
   const columns = forBoard(state.columns, item.board_id);
   const assigned = columns.flatMap((c) => peopleIds(c, item.values[c.id]));
-  const who = byId(state.users, creatorId)?.name ?? "Someone";
   notify(ctx, {
     userIds: assigned,
     actorId: creatorId,
     kind: "update",
-    text: `${who} posted an update on ${quoted(item.name)}`,
+    text: byActor(creatorId, ` posted an update on ${quoted(item.name)}`),
     url: resourceUrl("board", board.id, item.id),
     resource: { kind: "board", id: board.id, record: board },
   });
@@ -226,11 +320,21 @@ export function itemApi(ctx) {
       kind,
       ...extra,
     });
-  const rename = (item, name, actorId) => {
-    requireText(name, "name");
-    const next = change(item, { name });
-    log(next, "item_renamed", { actorId, fromText: item.name, toText: name });
-    return commit(ctx, itemEvent("item_renamed", next), next);
+  /** The `[{ column, value }]` changes of a values map, or null. */
+  const changesOf = (item, values) => {
+    if (!isPlainObject(values)) throw new TypeError("values must be an object");
+    const changes = Object.entries(values).map(([columnId, value]) => ({
+      column: onBoard(state.columns, item.board_id, columnId),
+      value,
+    }));
+    return changes.some((entry) => !entry.column) ? null : changes;
+  };
+  const setAll = (id, values, actorId) => {
+    const item = byId(state.items, id);
+    const changes = item && changesOf(item, values);
+    if (!changes) return null;
+    if (changes.length === 0) return item;
+    return setValues(ctx, { item, changes, actorId });
   };
   const move = (item, group, actorId) => {
     const inTarget = (r) =>
@@ -268,20 +372,20 @@ export function itemApi(ctx) {
     },
     renameItem(id, name, { actorId = null } = {}) {
       const item = byId(state.items, id);
-      return item ? rename(item, name, actorId) : null;
+      const changes = [{ column: NAME_COLUMN, value: name }];
+      return item ? setValues(ctx, { item, changes, actorId }) : null;
     },
     /** Sets a stored value; null clears it. The name column renames. */
     setColumnValue(id, columnId, value, { actorId = null } = {}) {
-      const item = byId(state.items, id);
-      const column = item && onBoard(state.columns, item.board_id, columnId);
-      if (!column) return null;
-      if (column.type === "name") return rename(item, value, actorId);
-      const values = valueChange(ctx, { item, column, value, actorId });
-      const next = change(item, { values });
-      const before = item.values;
-      notifyAssigned(ctx, { item: next, before, after: values, actorId });
-      const extra = { column_id: columnId };
-      return commit(ctx, itemEvent("column_value_changed", next, extra), next);
+      return setAll(id, { [columnId]: value }, actorId);
+    },
+    /**
+     * Sets several values (`{ [columnId]: storedValue }`, the name column
+     * renames) in one change: all are validated before any is written.
+     * Unknown item or column → null.
+     */
+    setColumnValues(id, values, { actorId = null } = {}) {
+      return setAll(id, values, actorId);
     },
     /** Moves the item to the end of another group of its board. */
     moveItem(id, groupId, { actorId = null } = {}) {

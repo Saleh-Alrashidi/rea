@@ -13,6 +13,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { installAccess, isActive, isAdmin } from "./access.js";
+import { isPlainObject } from "./input.js";
 
 /** Every scope a principal can hold. */
 export const ALL_SCOPES = Object.freeze([
@@ -34,9 +35,6 @@ const SESSION_ID_PATTERN = /^[\w-]{43}$/;
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
 const MAX_SESSIONS = 10_000;
 const MAX_SESSION_TOKEN_TTL_SECONDS = 3600;
-
-const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function encodeJson(value) {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");

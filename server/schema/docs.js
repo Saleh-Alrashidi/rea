@@ -82,7 +82,7 @@ const Mutation = wrapAll(write, {
 
 const Doc = {
   workspace: (doc, _a, { store }) => store.getWorkspace(doc.workspace_id),
-  members: (doc, _a, { store }) => memberRecords(store, "doc", doc),
+  members: (doc, _a, ctx) => memberRecords(ctx, "doc", doc),
   my_access: (doc, _a, ctx) => docAccess(ctx.store, viewerOf(ctx), doc),
   blocks_json: (doc) => JSON.stringify(doc.blocks),
   created_by: (doc, _a, ctx) => lookupUser(ctx, doc.created_by),

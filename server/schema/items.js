@@ -2,10 +2,17 @@
  * Items, column values and updates (part-1 API) plus `my_work`. Items are
  * reachable only through boards the caller can access; item, value and
  * update writes need editor access (SPEC-2 §1.2). `column-values.js` owns
- * every column value format; people values may name only users the caller
- * may see.
+ * every column value format. People values may name only users the caller
+ * may see, and show the others as "Someone" (left out of `value`); a write
+ * keeps the people the caller cannot see, and the store refuses to add
+ * anyone who cannot open the board (SPEC-2 §6).
  */
-import { boardAccess, describe, requireBoard, requireItem } from "../access.js";
+import {
+  HIDDEN_USER_NAME,
+  boardAccess,
+  requireBoard,
+  requireItem,
+} from "../access.js";
 import {
   formatColumnValue,
   parseColumnValue,
@@ -13,10 +20,10 @@ import {
   peopleIds,
 } from "../column-values.js";
 import { columnOf, groupOf } from "./boards.js";
+import { LIMITS, describe, isPlainObject } from "../input.js";
 import {
   accessibleBoards,
   badInput,
-  isPlainObject,
   lookupUser,
   notFound,
   parseJson,
@@ -26,15 +33,29 @@ import {
   readIds,
   readLimit,
   readName,
+  storeResult,
   viewerOf,
   wrapAll,
   write,
 } from "./common.js";
 
-const MAX_UPDATE_LENGTH = 10_000;
 const actor = (ctx) => ({ actorId: viewerOf(ctx).id });
 /** People values may only name (and show) users the caller may see. */
-const userOptions = (ctx) => ({ getUser: (id) => lookupUser(ctx, id) });
+const userOptions = (ctx) => ({
+  getUser: (id) => lookupUser(ctx, id),
+  hiddenName: HIDDEN_USER_NAME,
+});
+
+/**
+ * `value` for `column` plus the people of `before` the caller cannot see:
+ * they were never shown to the caller, so rewriting a value keeps them.
+ */
+function withHiddenPeople(ctx, { column, before, value }) {
+  if (column.type !== "people") return value;
+  const hidden = peopleIds(column, before).filter((id) => !lookupUser(ctx, id));
+  if (hidden.length === 0) return value;
+  return [...new Set([...(value ?? []), ...hidden])];
+}
 
 /** Turns a column-values parse result into a stored value or an error. */
 function parsed(column, result) {
@@ -48,7 +69,7 @@ function parsed(column, result) {
  * pairs. Entries use the change_column_value formats; strings use the simple
  * format. Every entry is validated before the caller writes anything.
  */
-function parseValueMap(ctx, { boardId, text, allowName }) {
+function parseValueMap(ctx, { boardId, text, allowName, before = {} }) {
   const data = parseJson(text, "column_values");
   if (!isPlainObject(data)) badInput("column_values must be a JSON object");
   const options = userOptions(ctx);
@@ -60,7 +81,13 @@ function parseValueMap(ctx, { boardId, text, allowName }) {
     }
     const simple = typeof raw === "string" || column.type === "name";
     const parse = simple ? parseSimpleColumnValue : parseColumnValue;
-    return [column.id, parsed(column, parse(column, raw, options))];
+    const value = parsed(column, parse(column, raw, options));
+    const kept = withHiddenPeople(ctx, {
+      column,
+      before: before[column.id],
+      value,
+    });
+    return [column.id, kept];
   });
 }
 
@@ -86,8 +113,18 @@ const changeValue = (parse) => (_parent, args, ctx) => {
   const item = boardItem(ctx, args);
   const column = columnOf(ctx.store, item.board_id, args.column_id);
   const options = userOptions(ctx);
-  const value = parsed(column, parse(column, args.value ?? null, options));
-  return ctx.store.setColumnValue(item.id, column.id, value, actor(ctx));
+  const value = withHiddenPeople(ctx, {
+    column,
+    before: item.values[column.id],
+    value: parsed(column, parse(column, args.value ?? null, options)),
+  });
+  const result = ctx.store.setColumnValue(
+    item.id,
+    column.id,
+    value,
+    actor(ctx),
+  );
+  return storeResult(result, () => notFound("Item", item.id));
 };
 
 function createItem(_p, args, ctx) {
@@ -101,17 +138,20 @@ function createItem(_p, args, ctx) {
   const values = Object.fromEntries(pairs);
   const fields = { boardId: board.id, groupId, name, values };
   const item = ctx.store.createItem({ ...fields, creatorId: viewerOf(ctx).id });
-  return item ?? badInput("The board has no group for new items");
+  return storeResult(item, () =>
+    badInput("The board has no group for new items"),
+  );
 }
 
+/** Sets every value in one store change (all validated first). */
 function changeMultipleValues(_p, args, ctx) {
   const item = boardItem(ctx, args);
   const request = { boardId: item.board_id, text: args.column_values };
-  const pairs = parseValueMap(ctx, { ...request, allowName: true });
-  for (const [columnId, value] of pairs) {
-    ctx.store.setColumnValue(item.id, columnId, value, actor(ctx));
-  }
-  return ctx.store.getItem(item.id);
+  const before = item.values;
+  const pairs = parseValueMap(ctx, { ...request, allowName: true, before });
+  const values = Object.fromEntries(pairs);
+  const result = ctx.store.setColumnValues(item.id, values, actor(ctx));
+  return storeResult(result, () => notFound("Item", item.id));
 }
 
 // ---------------------------------------------------------------- my work
@@ -180,8 +220,8 @@ const Mutation = wrapAll(write, {
   create_update(_p, args, ctx) {
     const item = requireItem(ctx, args.item_id, "editor");
     const body = args.body.trim();
-    if (body.length === 0 || body.length > MAX_UPDATE_LENGTH) {
-      badInput(`Update bodies must be 1-${MAX_UPDATE_LENGTH} characters`);
+    if (body.length === 0 || body.length > LIMITS.updateBody) {
+      badInput(`Update bodies must be 1-${LIMITS.updateBody} characters`);
     }
     const creatorId = viewerOf(ctx).id;
     return ctx.store.createUpdate({ itemId: item.id, body, creatorId });

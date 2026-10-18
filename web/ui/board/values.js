@@ -8,6 +8,8 @@
  * raw column JSON.
  */
 
+import { SOMEONE } from "../components/labels.js";
+
 /** Column types that can be added from the UI (`name` is built in). */
 export const ADDABLE_COLUMN_TYPES = Object.freeze([
   { type: "status", label: "Status" },
@@ -254,6 +256,14 @@ export function statusOption(column, index) {
 }
 
 /**
+ * The user record for `id` in `users` (a Map of directory users), or a
+ * placeholder named "Someone" when the viewer has no record of them.
+ */
+export function personOf(users, id) {
+  return users?.get(id) ?? { id, name: SOMEONE, initials: "?" };
+}
+
+/**
  * Display text for an optimistic update, matching the server `text` formats
  * (`users` maps user IDs to `{ name }`).
  */
@@ -263,7 +273,7 @@ export function displayText(column, value, users) {
     return statusOption(column, value)?.label || null;
   }
   if (column.type === "people") {
-    return value.map((id) => users.get(id)?.name ?? id).join(", ");
+    return value.map((id) => personOf(users, id).name).join(", ");
   }
   return String(value);
 }

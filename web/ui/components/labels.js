@@ -5,6 +5,12 @@
  * or a role the same way. Unknown values get neutral fallbacks.
  */
 
+/**
+ * The name shown for a person the viewer may not see or whose record is
+ * not loaded: the same word the server uses when it redacts a name.
+ */
+export const SOMEONE = "Someone";
+
 /** Board kinds: "public" is shown as "Main", "share" as "Shareable". */
 export const BOARD_KINDS = Object.freeze({
   public: {

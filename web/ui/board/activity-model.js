@@ -10,6 +10,7 @@
  */
 
 import { formatDay, todayString } from "../components/format.js";
+import { SOMEONE } from "../components/labels.js";
 
 /**
  * A sentence part: plain `text`, an emphasised `strong` name, or an
@@ -164,10 +165,12 @@ export function describeActivity(entry, board) {
 }
 
 /**
- * The actor of an entry for display: the user (with avatar data), or a
- * labelled non-user actor such as "Form: Feature request".
+ * The actor of an entry for display: the user (with avatar data), a form
+ * (`form_submitted`, labelled "Form: Feature request"), or a person the
+ * viewer may not see, whom the server labels "Someone" and gives no
+ * `actor` record.
  * @returns {{ kind: "user", user: object, name: string } |
- *   { kind: "label", name: string }}
+ *   { kind: "form" | "hidden", name: string }}
  */
 export function activityActor(entry) {
   if (entry.actor) {
@@ -177,7 +180,10 @@ export function activityActor(entry) {
       name: entry.actor.name,
     };
   }
-  return { kind: "label", name: entry.actor_label || "Someone" };
+  return {
+    kind: entry.kind === "form_submitted" ? "form" : "hidden",
+    name: entry.actor_label || SOMEONE,
+  };
 }
 
 /** The local calendar day ("YYYY-MM-DD") of an ISO timestamp, or null. */

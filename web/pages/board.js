@@ -344,6 +344,12 @@ function onBoardReady(page) {
   }
 }
 
+/** Reports whether this board's live updates are paused (the banner). */
+function setLive(page, paused) {
+  const key = `board:${page.state.boardId}`;
+  page.ctx.bus.emit(BUS_EVENTS.live, { key, paused });
+}
+
 // ---------------------------------------------------------- lifecycle
 
 function createState(ctx, boardId) {
@@ -406,6 +412,7 @@ function wire(page) {
     watchBoard: (boardId, listener, onEnd) =>
       ctx.bus.watchBoard(boardId, listener, onEnd),
     refreshShell: () => ctx.refreshShell(),
+    onLivePaused: () => setLive(page, true),
   });
   page.actions = createActions({
     state,
@@ -456,6 +463,8 @@ export async function mount(container, ctx, params) {
       globalThis.console?.error?.("Directory unavailable", error),
     );
   return () => {
+    // This board's stream no longer matters once the page is gone.
+    setLive(page, false);
     page.sync.destroy();
     page.slot.unmount();
     page.itemCard.hide();

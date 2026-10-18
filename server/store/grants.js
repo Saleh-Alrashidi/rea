@@ -8,6 +8,7 @@
  * takeovers are announced to the resource's owners.
  */
 import {
+  GRANT_REFUSALS,
   boardAccess,
   can,
   canGrant,
@@ -28,7 +29,8 @@ import {
   replace,
 } from "../store-state.js";
 import {
-  actorName,
+  byActor,
+  mention,
   notify,
   quoted,
   recordActivity,
@@ -40,14 +42,6 @@ const COLLECTIONS = Object.freeze({
   board: "boards",
   doc: "docs",
   note: "notes",
-});
-const REASONS = Object.freeze({
-  invalid_role: "That role is not available for this resource",
-  unknown_subject: "Unknown user or team",
-  deactivated: "Deactivated users cannot be given access",
-  guest_not_allowed: "Guests can only join shareable boards, docs and notes",
-  note_owner: "The note owner already has access",
-  last_owner: "A resource always keeps at least one owner",
 });
 
 function collectionOf(resourceKind) {
@@ -70,12 +64,19 @@ function withGrant(members, subject, role) {
 }
 
 const titleOf = (resource) => resource.name ?? resource.title;
-const nameOf = (ctx, subject) => {
-  const list = subject.kind === "user" ? ctx.state.users : ctx.state.teams;
-  return byId(list, subject.id)?.name ?? subject.id;
-};
-const roleText = (ctx, subject, role) =>
-  role === null ? null : `${nameOf(ctx, subject)} (${role})`;
+
+/**
+ * "<subject> (<role>)" for member activity: users as mentions (rendered
+ * per viewer), teams by their name at the time (the entry outlives a deleted team).
+ */
+function roleText(ctx, subject, role) {
+  if (role === null) return null;
+  if (subject.kind === "user") {
+    return [mention(subject.id), { text: ` (${role})` }];
+  }
+  const team = byId(ctx.state.teams, subject.id);
+  return `${team?.name ?? subject.id} (${role})`;
+}
 
 function membersEvent(resourceKind, resource) {
   const event = {
@@ -120,7 +121,6 @@ function byEffectiveRole(ctx, { resourceKind, resource, subject }) {
 }
 
 function announce(ctx, { resourceKind, resource, changes, actorId }) {
-  const who = actorName(ctx, actorId) ?? "Someone";
   const title = quoted(titleOf(resource));
   for (const { subject, to } of changes) {
     if (to === null) continue;
@@ -130,7 +130,10 @@ function announce(ctx, { resourceKind, resource, changes, actorId }) {
         userIds,
         actorId,
         kind: "share",
-        text: `${who} shared the ${resourceKind} ${title} with you (${role})`,
+        text: byActor(
+          actorId,
+          ` shared the ${resourceKind} ${title} with you (${role})`,
+        ),
         url: resourceUrl(resourceKind, resource.id),
         resource: { kind: resourceKind, id: resource.id, record: resource },
       });
@@ -168,7 +171,7 @@ function draftChanges(ctx, { resourceKind, resource, requests }) {
       store,
     });
     if (!verdict.ok) {
-      const message = REASONS[verdict.reason] ?? verdict.reason;
+      const message = GRANT_REFUSALS[verdict.reason] ?? verdict.reason;
       return failure(verdict.reason, { subject_id: subject.id, message });
     }
     const from =
@@ -305,12 +308,16 @@ function takeOwnership(ctx, { resourceKind, resource, actorId }) {
     const kind = "ownership_taken";
     recordActivity(ctx, { boardId: next.id, actorId, kind, toText });
   }
-  const who = actorName(ctx, actorId) ?? "An admin";
+  const title = quoted(titleOf(next));
   notify(ctx, {
     userIds: owners,
     actorId,
     kind: "share",
-    text: `${who} (admin) took ownership of the ${resourceKind} ${quoted(titleOf(next))}`,
+    text: byActor(
+      actorId,
+      ` (admin) took ownership of the ${resourceKind} ${title}`,
+      "An admin",
+    ),
     url: resourceUrl(resourceKind, next.id),
     resource: { kind: resourceKind, id: next.id, record: next },
   });

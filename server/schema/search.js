@@ -15,14 +15,16 @@ import {
   workspaceAccess,
 } from "../access.js";
 import { BOARD_KIND_LABELS } from "../store-state.js";
+import { LIMITS } from "../input.js";
 import {
-  MAX_NAME_LENGTH,
   accessibleBoards,
   allBoards,
   badInput,
   byTitle,
   lookupUser,
+  namesFor,
   perRequest,
+  plural,
   read,
   readLimit,
   viewerOf,
@@ -41,7 +43,6 @@ const result = (kind, record, { title, subtitle = null, url }) => ({
   url,
 });
 const order = (a, b) => a.kind.localeCompare(b.kind) || byTitle(a, b);
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
  * Boards, docs and notes the caller can open, with their access role
@@ -75,9 +76,9 @@ const docResult = (doc) =>
     url: `#/docs/${doc.id}`,
   });
 function noteResult(ctx, note) {
-  const owner = lookupUser(ctx, note.owner_id);
   const mine = note.owner_id === viewerOf(ctx).id;
-  const subtitle = mine ? "Your note" : `Shared by ${owner?.name ?? "someone"}`;
+  const owner = namesFor(ctx)(note.owner_id);
+  const subtitle = mine ? "Your note" : `Shared by ${owner}`;
   return result("note", note, { subtitle, url: `#/notes/${note.id}` });
 }
 
@@ -159,8 +160,8 @@ const candidates = (ctx) =>
 function search(_p, args, ctx) {
   const limit = readLimit(args.limit, MAX_SEARCH_RESULTS);
   const term = args.query.trim().toLowerCase();
-  if (term.length > MAX_NAME_LENGTH) {
-    badInput(`query must be at most ${MAX_NAME_LENGTH} characters`);
+  if (term.length > LIMITS.name) {
+    badInput(`query must be at most ${LIMITS.name} characters`);
   }
   if (term === "") return [];
   const results = [];

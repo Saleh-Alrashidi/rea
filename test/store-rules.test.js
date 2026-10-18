@@ -12,6 +12,7 @@ import path from "node:path";
 import test from "node:test";
 import { createStore } from "../server/store.js";
 import { MAX_LIVE_KEYS, MAX_TOMBSTONES } from "../server/store/storage.js";
+import { plainText } from "./helpers.js";
 
 async function seeded() {
   const store = await createStore();
@@ -36,12 +37,12 @@ test("share notifications state the role the recipient really gets", async () =>
   });
   const [jordan] = store.listNotifications(users.jordan.id);
   assert.match(
-    jordan.text,
+    plainText(store, jordan.text),
     /with you \(viewer\)$/,
     "viewer accounts are capped",
   );
   const [noa] = store.listNotifications(users.noa.id);
-  assert.match(noa.text, /with you \(editor\)$/);
+  assert.match(plainText(store, noa.text), /with you \(editor\)$/);
 });
 
 test("deleting a team logs its board removals and announces member changes", async () => {
@@ -61,7 +62,12 @@ test("deleting a team logs its board removals and announces member changes", asy
   store.deleteTeam(product.id, { actorId: users.alex.id });
   const [entry] = store.listActivity(marketing.id, { limit: 1 });
   assert.deepEqual(
-    [entry.kind, entry.actor_id, entry.from_text, entry.to_text],
+    [
+      entry.kind,
+      entry.actor_id,
+      plainText(store, entry.from_text),
+      plainText(store, entry.to_text),
+    ],
     ["member_removed", users.alex.id, "Product (editor)", null],
   );
   assert.equal(events[0].type, "team_deleted");

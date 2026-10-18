@@ -1,6 +1,13 @@
 /**
  * Board activity logs and per-user notifications (SPEC-2 §2).
  *
+ * Texts that name users (notification texts, activity `from_text` and
+ * `to_text`) are stored as "rich text": a plain string, or an array of
+ * parts `{ text }` and `{ user_id }` that `renderText` turns into a string
+ * for one viewer at read time, so a guest sees "Someone" for people
+ * outside their directory (SPEC-2 §6). Activity actors are their
+ * `actor_id`; `actor_label` is stored only for non-user actors (forms).
+ *
  * Domain mutators call `recordActivity` and `notify` while they change
  * state; neither emits on its own. `notify` queues one
  * `notification_created` event per recipient on `ctx.pending`, which the
@@ -12,7 +19,7 @@
  * Retention is bounded: each board keeps its newest MAX_ACTIVITY entries
  * and each user their newest MAX_NOTIFICATIONS notifications.
  */
-import { isActive, resourceAccess } from "../access.js";
+import { HIDDEN_USER_NAME, isActive, resourceAccess } from "../access.js";
 import {
   byId,
   commit,
@@ -40,9 +47,44 @@ export function resourceUrl(kind, id, itemId = null) {
   return itemId === null ? base : `${base}/items/${itemId}`;
 }
 
-/** The display name of a user for activity labels and texts. */
-export function actorName(ctx, actorId) {
-  return byId(ctx.state.users, actorId)?.name ?? null;
+// ------------------------------------------------------------- rich text
+
+/** A rich-text part naming user `userId`. */
+export const mention = (userId) => ({ user_id: userId });
+
+/**
+ * "<actor><rest>": the actor as a mention, or `fallback` when the change
+ * has no acting user.
+ */
+export function byActor(actorId, rest, fallback = HIDDEN_USER_NAME) {
+  if (actorId === null || actorId === undefined) return `${fallback}${rest}`;
+  return [mention(actorId), { text: rest }];
+}
+
+/** "A, B": the users of a people value, or null when it is empty. */
+export function peopleText(userIds) {
+  if (userIds.length === 0) return null;
+  return userIds.flatMap((id, index) =>
+    index === 0 ? [mention(id)] : [{ text: ", " }, mention(id)],
+  );
+}
+
+/**
+ * Renders rich text for one viewer: `nameOf(userId)` is the name that
+ * viewer sees. Plain strings and null are returned as they are.
+ */
+export function renderText(text, nameOf) {
+  if (!Array.isArray(text)) return text ?? null;
+  return text
+    .map((part) =>
+      part.user_id === undefined ? part.text : nameOf(part.user_id),
+    )
+    .join("");
+}
+
+/** The name of an activity entry's actor for one viewer (`nameOf`). */
+export function actorLabel(entry, nameOf) {
+  return entry.actor_id === null ? entry.actor_label : nameOf(entry.actor_id);
 }
 
 function trim(list, keep, max) {
@@ -54,7 +96,8 @@ function trim(list, keep, max) {
 
 /**
  * Appends an activity entry for `boardId`. `actorId` null with an
- * `actorLabel` marks non-user actors (form submissions).
+ * `actorLabel` marks non-user actors (form submissions); `fromText` and
+ * `toText` are rich text.
  */
 export function recordActivity(ctx, entry) {
   const { state } = ctx;
@@ -63,7 +106,7 @@ export function recordActivity(ctx, entry) {
     id: nextId(state),
     board_id: entry.boardId,
     actor_id: actorId,
-    actor_label: entry.actorLabel ?? actorName(ctx, actorId),
+    actor_label: actorId === null ? (entry.actorLabel ?? null) : null,
     kind: entry.kind,
     item_id: entry.itemId ?? null,
     item_name: entry.itemName ?? null,
@@ -76,7 +119,7 @@ export function recordActivity(ctx, entry) {
   return record;
 }
 
-/** Inserts one notification record (seed and `notify`). */
+/** Inserts one notification record (seed and `notify`); `text` is rich text. */
 export function insertNotification(ctx, fields) {
   const { state } = ctx;
   const record = push(state.notifications, {
@@ -99,7 +142,8 @@ export function insertNotification(ctx, fields) {
 /**
  * Notifies each of `userIds` (deduplicated) except the actor, inactive
  * users and, when `resource` (`{ kind, id, record }`) is given, users
- * without access to it. Returns the created notifications.
+ * without access to it. `text` is rich text (see `byActor`). Returns the
+ * created notifications.
  */
 export function notify(
   ctx,

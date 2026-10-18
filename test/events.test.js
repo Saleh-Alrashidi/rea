@@ -16,6 +16,7 @@ import {
   fakeResponse,
   gql,
   openStream,
+  plainText,
   seedKeys,
   seedRole,
   startTestServers,
@@ -206,16 +207,18 @@ test("stream=me delivers the user's own notification events only", async (t) => 
   const record = store.getNotification(event.resource_id);
   assert.equal(record.user_id, sam);
   assert.equal(record.kind, "share");
-  // The visible notification itself, so clients can show it at once.
-  const { kind, text, url } = record;
+  // The visible notification itself, so clients can show it at once, with
+  // its text as Sam reads it.
+  const { kind, url } = record;
   assert.deepEqual(
     { kind: event.kind, text: event.text, url: event.url },
     {
       kind,
-      text,
+      text: "Priya Nair shared the board “Marketing launch” with you (viewer)",
       url,
     },
   );
+  assert.equal(event.text, plainText(store, record.text));
   await as(sam).data("mutation { mark_notifications_read(all: true) }");
   const [, read] = await samStream.next(NOTIFICATION);
   assert.deepEqual(JSON.parse(read), {

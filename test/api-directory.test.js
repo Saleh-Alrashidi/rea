@@ -1,8 +1,9 @@
 /**
  * The people a caller may see, everywhere a user appears (SPEC-2 §3 lists
- * only accessible records; directory rule in `server/access.js`): authors,
- * actors, members and member teams resolve through the caller's directory,
- * so a guest never learns about people outside it. Also checks that the
+ * only accessible records; SPEC-2 §6 directory privacy, decided in
+ * `server/access.js`): authors, actors, members and member teams resolve
+ * through the caller's directory, and texts naming people outside it say
+ * "Someone", so a guest never learns about them. Also checks that the
  * lists that scan everything a caller can access do so once per request,
  * however often a query aliases them.
  */
@@ -20,6 +21,7 @@ const BOARD = `query B($b: ID!) { boards(ids: [$b]) {
   items_page(limit: 100) { items { name creator { id email }
     updates { creator { id email } } } }
   activity_logs(limit: 100) { actor { id } actor_label } } }`;
+const HIDDEN_NAMES = /Alex Rivera|Noa Cohen/;
 
 test("guests never see hidden people through authors, actors or member teams", async (t) => {
   const servers = await startTestServers();
@@ -60,9 +62,10 @@ test("guests never see hidden people through authors, actors or member teams", a
   const mine = view.items_page.items.find((entry) => entry.name === "From Noa");
   assert.equal(mine.creator, null);
   assert.equal(mine.updates[0].creator, null);
-  assert.ok(
-    view.activity_logs.some((entry) => entry.actor_label === "Noa Cohen"),
-  );
+  // Activity names Noa and Alex only as "Someone" for the guest.
+  const labels = view.activity_logs.map((entry) => entry.actor_label);
+  assert.ok(labels.includes("Someone"));
+  assert.ok(labels.every((label) => !HIDDEN_NAMES.test(label ?? "")));
   // Members keep their names; a team the guest is not in stays hidden.
   const docs = await chris.data(
     `query D($d: [ID!]) { docs(ids: $d) { members { kind name user { id } team { id } } } }`,
@@ -98,7 +101,8 @@ test("a guest's role notifications do not reveal the admin behind them", async (
   const changes = inbox.notifications.filter((entry) => entry.kind === "role");
   assert.equal(changes.length, 2);
   assert.ok(changes.every((entry) => entry.actor === null));
-  assert.match(changes[0].text, /Alex Rivera changed your account role/);
+  assert.equal(changes[0].text, "Someone changed your account role to guest");
+  assert.equal(changes[1].text, "Someone changed your account role to member");
 });
 
 /** A store view that counts calls of `listItems` and `listTeams`. */

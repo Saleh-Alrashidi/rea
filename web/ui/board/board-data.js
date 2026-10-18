@@ -29,11 +29,13 @@ const ITEM_FIELDS = `fragment BoardItem on Item {
 }`;
 
 // A board can be shared with someone outside its workspace: the server's
-// `can_open` says whether its link is shown.
+// `can_open` says whether its link is shown. `assignable_users` is the
+// server's verdict on who people columns may name (SPEC-2 §6).
 const BOARD_QUERY = `query HostBoard($ids: [ID!]) {
   boards(ids: $ids, limit: 1) {
     id name description items_count board_kind my_access
     workspace { id name can_open }
+    assignable_users { id name initials color title }
     members {
       kind id name role
       user { id name initials color role }
@@ -117,6 +119,10 @@ export async function loadBoard(boardId) {
       : null,
     workspaceAccessible: raw.workspace?.can_open === true,
     members: (raw.members ?? []).map(normalizeMember),
+    assignableUsers: (raw.assignable_users ?? []).map((user) => ({
+      ...user,
+      id: String(user.id),
+    })),
     itemsCount: raw.items_count,
     columns,
     groups: sortGroups(raw.groups),

@@ -131,6 +131,7 @@ function itemRow(ctx, item, columns) {
           column,
           value: item.values[column.id] ?? null,
           users: ctx.users,
+          assignable: ctx.board.assignableUsers,
           itemName: item.name,
           focusKey: `cell:${item.id}:${column.id}`,
           readOnly: !ctx.caps.edit,

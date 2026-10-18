@@ -6,10 +6,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyJwt } from "../auth.js";
+import { isPlainObject } from "../input.js";
 import {
   CONTENT_TYPES,
   fail,
-  isPlainObject,
   readIdValue,
   readJsonObject,
   requireJsonType,

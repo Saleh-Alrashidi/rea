@@ -6,11 +6,14 @@
  * replaced the anchor after a re-render, found by `data-focus-key`).
  * In the tab order it sits right after its anchor. `update()` keeps focus
  * on the control with the same `data-focus-key`, else the first control.
+ * `reposition()` places it again after its content changed size (it stays
+ * on the same side of the anchor while that side fits).
  *
  * ```js
  * const popover = openPopover({ anchor, label: "Choose status",
  *   content: () => list, placement: "bottom-end" });
  * popover.update();   // re-runs content()
+ * popover.reposition(); // after the content changed size
  * popover.close();
  * ```
  */
@@ -42,17 +45,28 @@ export function closePopover() {
   current?.close();
 }
 
-function position(element, anchor, placement) {
+/**
+ * Places `element` below `anchor`, or above it when only that fits, and
+ * returns the side used. `side` (from the last placement) is kept while it
+ * still fits, so content that shrinks or grows (a filtered list) stays
+ * against its anchor instead of jumping across it.
+ */
+function position(element, anchor, { placement, side = null }) {
   const doc = globalThis.document;
   const viewWidth = doc.documentElement.clientWidth;
   const viewHeight = doc.documentElement.clientHeight;
   const box = anchor.getBoundingClientRect();
   const width = element.offsetWidth;
   const height = element.offsetHeight;
-  let top = box.bottom + GAP;
-  if (top + height > viewHeight - MARGIN && box.top - height - GAP > MARGIN) {
-    top = box.top - height - GAP;
-  }
+  const below = box.bottom + GAP;
+  const above = box.top - height - GAP;
+  const fitsBelow = below + height <= viewHeight - MARGIN;
+  const fitsAbove = above > MARGIN;
+  let chosen = side;
+  if ((chosen === "above" && !fitsAbove) || (chosen === "below" && !fitsBelow))
+    chosen = null;
+  chosen ??= !fitsBelow && fitsAbove ? "above" : "below";
+  const top = chosen === "above" ? above : below;
   const preferred = placement === "bottom-end" ? box.right - width : box.left;
   const left = Math.min(
     Math.max(MARGIN, preferred),
@@ -60,6 +74,7 @@ function position(element, anchor, placement) {
   );
   element.style.top = `${Math.max(MARGIN, top)}px`;
   element.style.left = `${left}px`;
+  return chosen;
 }
 
 function firstFocusable(element) {
@@ -124,7 +139,7 @@ function restoreFocus(anchor, focusKey) {
  *   role?: string, placement?: "bottom-start" | "bottom-end",
  *   className?: string, onClose?: () => void }} options
  * @returns {{ element: HTMLElement, anchor: HTMLElement, close(): void,
- *   update(): void } | null}
+ *   update(): void, reposition(): void } | null}
  */
 export function openPopover(options) {
   const {
@@ -152,7 +167,7 @@ export function openPopover(options) {
   // Inside a modal <dialog>, the rest of the page is inert.
   const host = anchor.closest("dialog[open]") ?? doc.body;
   host.append(element);
-  position(element, anchor, placement);
+  let side = position(element, anchor, { placement });
   const focusKey = anchor.dataset?.focusKey;
   anchor.setAttribute("aria-expanded", "true");
 
@@ -185,7 +200,11 @@ export function openPopover(options) {
     anchor,
     update() {
       rerender(element, render);
-      position(element, anchor, placement);
+      side = position(element, anchor, { placement, side });
+    },
+    reposition() {
+      if (current === handle)
+        side = position(element, anchor, { placement, side });
     },
     close() {
       if (current !== handle) return;

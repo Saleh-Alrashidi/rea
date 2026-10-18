@@ -30,6 +30,7 @@ import { peopleApi } from "./store/people.js";
 import {
   createPersistence,
   emptyState,
+  keepLegacyCopy,
   loadState,
   removeStaleTemps,
 } from "./store/persistence.js";
@@ -53,8 +54,9 @@ const DOMAINS = [
 /**
  * Creates the store. Removes temp files that interrupted saves of `file`
  * left, then loads `file` when it exists (an invalid file is an error and
- * is never overwritten); otherwise seeds when `seed` is true and saves the
- * result. `file: null` (or `":memory:"`) keeps data in memory.
+ * is never overwritten; a version-2 file is upgraded, copied to
+ * `<file>.v2.bak` and saved in the current format); otherwise seeds when
+ * `seed` is true and saves the result. `file: null` (or `":memory:"`) keeps data in memory.
  * Writes are debounced (50 ms) and atomic; `flush()` awaits them. `now`
  * returns a Date; `log.error` receives background save and listener errors.
  */
@@ -68,7 +70,8 @@ export async function createStore({
   const target = memory ? null : path.resolve(file);
   if (target) await removeStaleTemps(target);
   const loaded = target ? await loadState(target) : null;
-  const state = loaded ?? emptyState();
+  if (loaded?.upgraded) await keepLegacyCopy(target);
+  const state = loaded?.state ?? emptyState();
   const listeners = new Set();
   const ctx = {
     state,
@@ -81,7 +84,8 @@ export async function createStore({
   };
   if (!loaded && seed) seedState(ctx);
   ctx.persist = createPersistence({ file: target, state, log });
-  if (!loaded) ctx.persist.schedule();
+  // New and upgraded state is saved right away (in the current format).
+  if (!loaded || loaded.upgraded) ctx.persist.schedule();
   const on = (listener) => {
     if (typeof listener !== "function") {
       throw new TypeError("listener must be a function");

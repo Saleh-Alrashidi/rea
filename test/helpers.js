@@ -11,6 +11,25 @@ import { request as httpRequest } from "node:http";
 import { ALL_SCOPES } from "../server/auth.js";
 import { startServers } from "../server/http.js";
 import { createStore } from "../server/store.js";
+import { renderText } from "../server/store/activity.js";
+
+/**
+ * A stored rich text (notification `text`, activity `from_text`/`to_text`)
+ * as a viewer who sees everyone reads it.
+ */
+export const plainText = (store, text) =>
+  renderText(text, (id) => store.getUser(id)?.name ?? "Someone");
+
+/** A stored activity entry with its texts rendered (`plainText`). */
+export const plainEntry = (store, entry) => ({
+  ...entry,
+  actor_label:
+    entry.actor_id === null
+      ? entry.actor_label
+      : plainText(store, [{ user_id: entry.actor_id }]),
+  from_text: plainText(store, entry.from_text),
+  to_text: plainText(store, entry.to_text),
+});
 
 /** A logger that records instead of printing. */
 export function recordingLog() {

@@ -18,7 +18,9 @@ import { icon } from "./icon.js";
  * @param {{ name: string, value?: string, labelledBy?: string,
  *   options: { value: string, label: string, description?: string, icon?: string }[],
  *   onChange?: (value: string) => void, disabled?: boolean,
- *   disabledReason?: string, autofocus?: boolean, className?: string }} options
+ *   disabledReason?: string, autofocus?: boolean, className?: string,
+ *   focusKey?: string }} options
+ *   With `focusKey`, each radio carries `data-focus-key="<focusKey>:<value>"`.
  * @returns {HTMLElement}
  */
 export function choiceCards(options) {
@@ -42,6 +44,11 @@ export function choiceCards(options) {
           disabled: options.disabled ?? false,
           autofocus: Boolean(options.autofocus) && index === 0,
           checked: option.value === selected,
+          dataset: {
+            focusKey: options.focusKey
+              ? `${options.focusKey}:${option.value}`
+              : null,
+          },
           on: { change: () => options.onChange?.(option.value) },
         }),
         h(

@@ -2,9 +2,10 @@
  * GraphQL documents and pure helpers of the Teams pages (`#/teams`,
  * `#/teams/<id>`). `teams` lists only the teams the user may see (guests:
  * their own teams), so an unknown and a hidden team read the same.
- * Managing a team needs `can_manage` (team owners and admins); the server
- * checks it again (`access.canManageTeam`) and keeps at least one active
- * owner. Role changes are one `set_team_member_role` each.
+ * Managing a team needs `can_manage` (the server's `access.canManageTeam`
+ * verdict); the server also keeps an owner who can manage the team and
+ * refuses changes that would remove the last one. Role changes are one
+ * `set_team_member_role` each.
  */
 
 import { REASONS } from "../components/permissions.js";
@@ -74,28 +75,22 @@ export function sortTeams(teams) {
   });
 }
 
-const isActiveOwner = (entry) =>
-  entry.role === "owner" && entry.status !== "deactivated";
-
 /**
  * What the user may do to `member` of `team`, as reasons for disabled
- * controls (null when allowed): `{ remove, promote, demote }`. A team keeps
- * an active owner (deactivated owners cannot manage it), as the server's
- * `store.keepsManager` requires.
+ * controls (null when allowed): `{ remove, promote, demote }`. Only the
+ * team's `can_manage` verdict gates them; who counts as the owner a team
+ * keeps is the server's rule (`access.teamManagers`), so removing or
+ * demoting the last one is refused there and the refusal is shown.
  */
 export function memberActions(team, member) {
   if (!team.canManage) {
     const reason = "Only team owners and admins can change members";
     return { remove: reason, promote: reason, demote: reason };
   }
-  const activeOwners = team.members.filter(isActiveOwner);
-  const lastOwner = isActiveOwner(member) && activeOwners.length <= 1;
-  const keep = "A team keeps at least one active owner";
   return {
-    remove: lastOwner ? keep : null,
+    remove: null,
     promote: member.role === "owner" ? "Already an owner" : null,
-    demote:
-      member.role !== "owner" ? "Already a member" : lastOwner ? keep : null,
+    demote: member.role !== "owner" ? "Already a member" : null,
   };
 }
 
