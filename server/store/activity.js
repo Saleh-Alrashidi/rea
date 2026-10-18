@@ -6,7 +6,9 @@
  * parts `{ text }` and `{ user_id }` that `renderText` turns into a string
  * for one viewer at read time, so a guest sees "Someone" for people
  * outside their directory (SPEC-2 §6). Activity actors are their
- * `actor_id`; `actor_label` is stored only for non-user actors (forms).
+ * `actor_id`; `actor_label` is stored for non-user actors (forms) and for
+ * changes a user made through a tool that names itself (imports: actor
+ * the importing admin, label "Import from monday.com", SPEC-4 §1).
  *
  * Domain mutators call `recordActivity` and `notify` while they change
  * state; neither emits on its own. `notify` queues one
@@ -82,9 +84,13 @@ export function renderText(text, nameOf) {
     .join("");
 }
 
-/** The name of an activity entry's actor for one viewer (`nameOf`). */
+/**
+ * The name of an activity entry's actor for one viewer (`nameOf`): the
+ * stored label when there is one, else the acting user's name.
+ */
 export function actorLabel(entry, nameOf) {
-  return entry.actor_id === null ? entry.actor_label : nameOf(entry.actor_id);
+  if (entry.actor_label !== null) return entry.actor_label;
+  return entry.actor_id === null ? null : nameOf(entry.actor_id);
 }
 
 function trim(list, keep, max) {
@@ -96,8 +102,8 @@ function trim(list, keep, max) {
 
 /**
  * Appends an activity entry for `boardId`. `actorId` null with an
- * `actorLabel` marks non-user actors (form submissions); `fromText` and
- * `toText` are rich text.
+ * `actorLabel` marks non-user actors (form submissions); both name a user
+ * acting through a tool (imports). `fromText` and `toText` are rich text.
  */
 export function recordActivity(ctx, entry) {
   const { state } = ctx;
@@ -106,7 +112,7 @@ export function recordActivity(ctx, entry) {
     id: nextId(state),
     board_id: entry.boardId,
     actor_id: actorId,
-    actor_label: actorId === null ? (entry.actorLabel ?? null) : null,
+    actor_label: entry.actorLabel ?? null,
     kind: entry.kind,
     item_id: entry.itemId ?? null,
     item_name: entry.itemName ?? null,

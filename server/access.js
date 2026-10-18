@@ -60,6 +60,8 @@ const CAPABILITIES = Object.freeze({
   create_team: CREATORS,
   create_content: CREATORS,
   create_note: ACCOUNT_ROLES,
+  // SPEC-4 §1: bringing in a monday.com / ClickUp setup or export files.
+  import_data: ["admin"],
 });
 const LABELS = Object.freeze({
   workspace: "Workspace",
@@ -121,6 +123,17 @@ export function can(user, capability) {
 /** Every capability `can` grants `user`, in a fixed order (`User.capabilities`). */
 export function capabilitiesOf(user) {
   return Object.keys(CAPABILITIES).filter((name) => can(user, name));
+}
+
+/**
+ * Whether `user` may import into the existing `workspace` (SPEC-4 §4
+ * targets): an importer (`import_data`) who manages it (owner access).
+ */
+export function canImportInto(store, user, workspace) {
+  return (
+    can(user, "import_data") &&
+    workspaceAccess(store, user, workspace) === "owner"
+  );
 }
 
 /**

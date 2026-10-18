@@ -41,6 +41,7 @@ const CAPABILITIES = {
     "create_team",
     "create_content",
     "create_note",
+    "import_data",
   ],
   member: ["create_workspace", "create_team", "create_content", "create_note"],
   viewer: ["create_note"],

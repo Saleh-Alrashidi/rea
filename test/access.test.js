@@ -300,6 +300,7 @@ test("account capabilities follow the role table", () => {
     create_team: ["admin", "member"],
     create_content: ["admin", "member"],
     create_note: ["admin", "member", "viewer", "guest"],
+    import_data: ["admin"],
   };
   for (const [capability, allowed] of Object.entries(table)) {
     for (const user of USERS) {

@@ -60,6 +60,14 @@ export const NOTIFICATION_KINDS = Object.freeze([
   "update",
   "form_response",
   "role",
+  "import_finished",
+]);
+/** Where imported boards come from (SPEC-4 §2 `Snapshot.source`). */
+export const IMPORT_SOURCES = Object.freeze([
+  "monday",
+  "clickup",
+  "csv",
+  "xlsx",
 ]);
 
 // Record IDs are strings, so lookups with any other type find nothing.

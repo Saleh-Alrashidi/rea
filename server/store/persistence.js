@@ -36,6 +36,7 @@ import {
   COLUMN_TYPES,
   DOC_VISIBILITIES,
   FORM_ACCESS,
+  IMPORT_SOURCES,
   NOTIFICATION_KINDS,
   SCOPE_KEY,
   TEAM_ROLES,
@@ -61,6 +62,8 @@ const isId = (v) => typeof v === "string" && ID_PATTERN.test(v);
 const isStr = (v) => typeof v === "string";
 const isSlug = (v) => typeof v === "string" && /^[a-z0-9_]{1,64}$/.test(v);
 const isKey = (v) => typeof v === "string" && /^[\w-]{1,64}$/.test(v);
+const isWebUrl = (v) =>
+  typeof v === "string" && v.length <= 2048 && /^https?:\/\/[^\s]+$/i.test(v);
 const grant = (roles) =>
   exact(
     ["kind", "id", "role"],
@@ -123,6 +126,16 @@ const CHECKS = {
           : b.checked === undefined),
     ),
   ),
+  // `Board.import` (SPEC-4 §4): where an imported board came from.
+  importMeta: exact(
+    ["source", "source_id", "source_url", "imported_at", "imported_by"],
+    (m) =>
+      IMPORT_SOURCES.includes(m.source) &&
+      isStr(m.source_id) &&
+      (m.source_url === null || isWebUrl(m.source_url)) &&
+      isStr(m.imported_at) &&
+      (m.imported_by === null || isId(m.imported_by)),
+  ),
   questions: listOf(
     exact(
       ["id", "column_id", "label", "help", "required"],
@@ -136,7 +149,8 @@ const CHECKS = {
   ),
 };
 
-// Persisted fields per collection as "field:check"; "?" also allows null.
+// Persisted fields per collection as "field:check"; "?" also allows null,
+// "~" marks a field that only some records have (absent stays absent).
 // Collections starting with "id:id" take IDs from the shared counter.
 const SHAPES = {
   users:
@@ -145,7 +159,7 @@ const SHAPES = {
   workspaces:
     "id:id name:str description:str? kind:workspaceKind color:color members:grants created_by:id? created_at:str",
   boards:
-    "id:id name:str description:str? state:active creator_id:id? workspace_id:id board_kind:boardKind members:grants",
+    "id:id name:str description:str? state:active creator_id:id? workspace_id:id board_kind:boardKind members:grants import:importMeta~",
   groups: "id:slug board_id:id title:str color:str position:int",
   columns: "id:slug board_id:id title:str type:type settings:obj",
   apps: "id:id name:str client_id:str client_secret:str path:str scopes:scopes",
@@ -175,10 +189,12 @@ const SHAPES = {
   storage: "scope:scope key:str value:str? version:int",
 };
 
+/** `[field, check]` per "field:check" spec of `shape`. */
 function fieldChecks(shape) {
   return shape.split(" ").map((spec) => {
     const [field, name] = spec.split(":");
-    const check = CHECKS[name.replace("?", "")];
+    const check = CHECKS[name.replace(/[?~]$/, "")];
+    if (name.endsWith("~")) return [field, (v) => v === undefined || check(v)];
     return [field, name.endsWith("?") ? (v) => v === null || check(v) : check];
   });
 }
@@ -264,7 +280,9 @@ function readCollections(doc, fail) {
     state[name] = doc[name].map((record, index) => {
       if (!isPlainObject(record) || !checks.every(([f, ok]) => ok(record[f])))
         fail(`${name}[${index}] is malformed`);
-      const fields = checks.map(([field]) => [field, record[field]]);
+      const fields = checks
+        .map(([field]) => [field, record[field]])
+        .filter(([, value]) => value !== undefined);
       return deepFreeze(Object.fromEntries(fields));
     });
   }

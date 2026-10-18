@@ -19,6 +19,7 @@ import { definition as boards } from "./schema/boards.js";
 import { definition as common } from "./schema/common.js";
 import { definition as docs } from "./schema/docs.js";
 import { definition as forms } from "./schema/forms.js";
+import { definition as imports } from "./schema/imports.js";
 import { definition as inbox } from "./schema/inbox.js";
 import { definition as items } from "./schema/items.js";
 import { definition as notes } from "./schema/notes.js";
@@ -41,6 +42,7 @@ const MODULES = [
   forms,
   inbox,
   search,
+  imports,
 ];
 
 const FIELD_SPEC = /^(\w+)(?:\(([^)]*)\))?:(\S+)$/;
@@ -102,7 +104,7 @@ function mergeModules(modules) {
  * Builds the API schema: part-1 boards API (snake_case as in monday.com's
  * API, cursor pagination, the version-gated `Board.items` and `Item.url`)
  * plus the SPEC-2 workspace product (people, workspaces, sharing, docs,
- * notes, forms, inbox, search).
+ * notes, forms, inbox, search) and SPEC-4 `Board.import`.
  */
 export function createSchema() {
   const { enums, types } = mergeModules(MODULES);
