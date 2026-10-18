@@ -6,8 +6,10 @@
  *   `scan({ token | file, options, signal, onProgress })` → Snapshot),
  *   validates the result and keeps the normalized snapshot with its
  *   preview. The source token is passed to the connector and nothing else:
- *   it is never stored in a job, and it is redacted from everything a job
- *   keeps (the snapshot, progress messages, error messages).
+ *   it is never stored in a job, and every form of it (`upstream.js`
+ *   `secretForms`) is redacted from everything a job keeps (the snapshot,
+ *   progress messages, error messages). Validation runs in time slices
+ *   and stops when the job is cancelled.
  * - An import job runs a plan over a finished scan's snapshot
  *   (`engine.run`).
  *
@@ -21,7 +23,8 @@
 import { randomBytes } from "node:crypto";
 import { ImportError, preview, run } from "./engine.js";
 import { checkPlan } from "./plan.js";
-import { validateSnapshot } from "./snapshot.js";
+import { validateSnapshotSliced } from "./snapshot.js";
+import { secretForms } from "./upstream.js";
 
 export const MAX_RUNNING = 2;
 export const MAX_RUNNING_PER_USER = 1;
@@ -46,12 +49,16 @@ export const CONNECTOR_NAMES = Object.freeze({
 /** Loads `connectors/<name>.js` (names from CONNECTOR_NAMES only). */
 const loadConnector = (name) => import(`./connectors/${name}.js`);
 
-/** `value` with every occurrence of `secret` in its strings replaced. */
+/** `value` with every form of token `secret` in its strings replaced. */
 export function redactDeep(value, secret) {
-  if (typeof secret !== "string" || secret.length < MIN_REDACTED_LENGTH)
-    return value;
+  const forms = secretForms(secret).filter(
+    (form) => form.length >= MIN_REDACTED_LENGTH,
+  );
+  if (forms.length === 0) return value;
+  const replace = (text) =>
+    forms.reduce((out, form) => out.replaceAll(form, REDACTED), text);
   const walk = (node) => {
-    if (typeof node === "string") return node.replaceAll(secret, REDACTED);
+    if (typeof node === "string") return replace(node);
     if (Array.isArray(node)) return node.map(walk);
     if (node === null || typeof node !== "object") return node;
     return Object.fromEntries(
@@ -66,21 +73,26 @@ const shortText = (value, max, secret) =>
 const count = (value) =>
   Number.isSafeInteger(value) && value >= 0 ? value : null;
 
-/** A connector's or the engine's progress report, bounded and redacted. */
+/**
+ * A connector's or the engine's progress report, bounded and redacted;
+ * `wait_seconds` is set while the connector waits for the source.
+ */
 function readProgress(raw, secret) {
   return {
     phase: shortText(raw?.phase, MAX_PHASE, secret) ?? "working",
     done: count(raw?.done),
     total: count(raw?.total),
     message: shortText(raw?.message, MAX_MESSAGE, secret),
+    wait_seconds: count(raw?.wait_seconds),
   };
 }
 
-/** The job as its creator reads it. */
-function viewOf(job) {
-  const view = {
+/** The job as its creator lists it (no preview, report or error). */
+function summaryOf(job) {
+  return {
     id: job.id,
     kind: job.kind,
+    source: job.source,
     state: job.state,
     progress: job.progress,
     created_at: new Date(job.createdAt).toISOString(),
@@ -91,6 +103,11 @@ function viewOf(job) {
         ? null
         : new Date(job.finishedAt + JOB_TTL_MS).toISOString(),
   };
+}
+
+/** The job as its creator reads it. */
+function viewOf(job) {
+  const view = summaryOf(job);
   if (job.preview) view.preview = job.preview;
   if (job.report) view.report = job.report;
   if (job.error) view.error = job.error;
@@ -176,10 +193,11 @@ function createTable({ publish, log, now }) {
       if (active.some((job) => job.userId === userId)) return "busy_user";
       return active.length >= MAX_RUNNING ? "busy_server" : null;
     },
-    add(kind, userId) {
+    add(kind, { userId, source }) {
       const job = {
         id: randomBytes(16).toString("base64url"),
         kind,
+        source,
         userId,
         state: "running",
         progress: readProgress({ phase: "starting" }),
@@ -226,7 +244,9 @@ async function runScan(env, job, { source, secret, input, options }) {
     const module = await connectorFor(env, source);
     const raw = await module.scan({ ...input, options, signal, onProgress });
     if (job.state !== "running") return;
-    const checked = validateSnapshot(redactDeep(raw, secret));
+    const checked = await validateSnapshotSliced(redactDeep(raw, secret), {
+      signal,
+    });
     if (!checked.ok) {
       const message = "The importer returned data Worklane cannot read";
       const { errors } = checked;
@@ -302,7 +322,7 @@ export function createImportJobs({
     startScan({ userId, source, token = null, file = null, options = {} }) {
       const reason = table.busy(userId);
       if (reason) return { ok: false, reason };
-      const job = table.add("scan", userId);
+      const job = table.add("scan", { userId, source });
       const input = token === null ? { file } : { token };
       void runScan(env, job, { source, secret: token, input, options });
       return { ok: true, job: viewOf(job) };
@@ -322,9 +342,19 @@ export function createImportJobs({
         return { ok: false, reason: "invalid_plan", errors: checked.errors };
       const reason = table.busy(userId);
       if (reason) return { ok: false, reason };
-      const job = table.add("import", userId);
+      const job = table.add("import", { userId, source: scanJob.source });
       void runImport(env, job, { snapshot, plan });
       return { ok: true, job: viewOf(job) };
+    },
+    /**
+     * The jobs of `userId` that still exist (running, or ended within
+     * JOB_TTL_MS), newest first, without previews or reports: a page that
+     * lost track of a job (a reload) finds it here.
+     */
+    list(userId) {
+      table.sweep();
+      const own = [...table.jobs.values()].filter((j) => j.userId === userId);
+      return own.reverse().map(summaryOf);
     },
     /** The job's view for its creator, else null. */
     get(id, userId) {

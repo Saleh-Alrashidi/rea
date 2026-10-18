@@ -203,11 +203,14 @@ test("values follow monday's value formats", async () => {
   assert.equal(checked.values.numbers, 1250.5, "the snapshot parses numbers");
   const bug = itemOf(boardNamed(snapshot, "Roadmap"), "1002");
   assert.deepEqual(bug.values.person, ["1", "900"], "teams are not people");
-  assert.equal(bug.values.date4, "2025-05-02");
+  assert.equal(bug.values.date4, "2025-05-03", "the day the user saw");
   const [teams] = codes(snapshot, "teams_dropped");
   assert.match(teams.message, /column "Owner".*: 1$/);
   const [time] = codes(snapshot, "time_dropped");
-  assert.match(time.message, /column "Due".*: 1$/);
+  assert.match(
+    time.message,
+    /column "Due".* the day shown in the token user's time zone: 1$/,
+  );
   const press = boardNamed(snapshot, "Launch plan").items[0];
   assert.deepEqual(press.values, { color: "Live", person: ["3"] });
 });

@@ -56,6 +56,7 @@ import {
 } from "./routes/gate.js";
 import { getEvents, getSchema, postGraphql } from "./routes/graphql.js";
 import {
+  getImportJobs,
   importJobRoute,
   matchImportJobPath,
   postImportRun,
@@ -106,6 +107,7 @@ const HOST_ROUTES = new Map([
   ["/auth/logout", { POST: postLogout }],
   ["/import/scan", { POST: postImportScan }],
   ["/import/run", { POST: postImportRun }],
+  ["/import/jobs", { GET: getImportJobs }],
 ]);
 /** Hosted mode only (SPEC-3 §2, §4). */
 const HOSTED_ROUTES = [

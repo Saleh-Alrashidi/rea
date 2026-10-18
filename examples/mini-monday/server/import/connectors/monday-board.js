@@ -9,7 +9,15 @@
  */
 import { BOARD_LIMITS } from "../snapshot-board.js";
 import { addColumn, readOther, subitemPlan } from "./monday-columns.js";
-import { idOf, limitHit, listOf, scopeAt, str } from "./common.js";
+import {
+  countValues,
+  idOf,
+  itemRoom,
+  limitHit,
+  listOf,
+  scopeAt,
+  str,
+} from "./common.js";
 import { colorOf, htmlText } from "./monday-common.js";
 
 const BOARD_KINDS = new Set(["public", "private", "share"]);
@@ -139,11 +147,7 @@ function addValues(ctx, state, item, raw) {
 
 function addItem(ctx, state, raw, parent) {
   const id = idOf(raw.id);
-  if (id === null) return;
-  if (ctx.counts.items >= ctx.limits.items) {
-    limitHit(ctx, "items", state.path);
-    return;
-  }
+  if (id === null || !itemRoom(ctx, state.path)) return;
   ctx.counts.items += 1;
   const item = {
     source_id: id,
@@ -156,6 +160,7 @@ function addItem(ctx, state, raw, parent) {
     updates: readUpdates(ctx, state, raw.updates),
   };
   addValues(ctx, state, item, raw);
+  countValues(ctx, item);
   state.board.items.push(item);
   if (parent) return;
   for (const subitem of listOf(raw.subitems))

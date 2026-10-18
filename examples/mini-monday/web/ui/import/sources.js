@@ -76,7 +76,7 @@ export const IMPORT_SOURCES = Object.freeze({
       "One board from a spreadsheet; the first row names the columns.",
     where:
       "Export a sheet as CSV (UTF-8) from Excel, Google Sheets or any other tool.",
-    accept: ".csv,text/csv",
+    accept: ".csv,.txt,text/csv,text/plain",
     extensions: Object.freeze([".csv", ".txt"]),
     options: Object.freeze([]),
   }),
@@ -136,16 +136,48 @@ export function checkFile(file, source) {
   if (file.size === 0) return `${file.name} is empty.`;
   const name = String(file.name ?? "").toLowerCase();
   if (!info.extensions.some((extension) => name.endsWith(extension))) {
-    const list = info.extensions.join(", ");
-    return `Choose a ${list} file for ${info.label}.`;
+    return `Choose a ${orList(info.extensions)} file.`;
   }
   return null;
 }
 
+/** "a", "a or b", "a, b or c". */
+const orList = (parts) =>
+  parts.length <= 1
+    ? parts.join("")
+    : `${parts.slice(0, -1).join(", ")} or ${parts.at(-1)}`;
+
+/** A limit field's text as the limit it asks for: null when empty. */
+const limitValue = (raw) => {
+  const text = typeof raw === "string" ? raw.trim() : raw;
+  return text === "" || text === null || text === undefined
+    ? null
+    : Number(text);
+};
+
+/**
+ * Why each scan limit field cannot be sent, by limit key: an empty field
+ * is the default; anything else must be a whole number from 1 to the
+ * limit's max. `{}` when every field is fine.
+ */
+export function limitProblems(limits = {}) {
+  const problems = {};
+  for (const limit of SCAN_LIMITS) {
+    const value = limitValue(limits[limit.key]);
+    if (value === null) continue;
+    if (!Number.isSafeInteger(value) || value < 1 || value > limit.max) {
+      const max = limit.max.toLocaleString("en-US");
+      problems[limit.key] =
+        `Enter a whole number from 1 to ${max}, or leave it empty for ${max}.`;
+    }
+  }
+  return problems;
+}
+
 /**
  * The connector options of a scan: flags the user turned off (connectors
- * default every flag to on) and limits lowered below the default. Values
- * that are not whole numbers within 1…max are left out (the default).
+ * default every flag to on) and the limits filled in (1…max; check them
+ * with `limitProblems` first: other values are left out, the default).
  *
  * @param {string} source
  * @param {{ flags?: Record<string, boolean>, limits?: Record<string, unknown> }} choices
@@ -160,10 +192,8 @@ export function scanOptions(source, { flags = {}, limits = {} } = {}) {
   }
   const lowered = {};
   for (const limit of SCAN_LIMITS) {
-    const raw = limits[limit.key];
-    const text = typeof raw === "string" ? raw.trim() : raw;
-    const value = text === "" || text === null ? Number.NaN : Number(text);
-    if (Number.isSafeInteger(value) && value >= 1 && value < limit.max) {
+    const value = limitValue(limits[limit.key]);
+    if (Number.isSafeInteger(value) && value >= 1 && value <= limit.max) {
       lowered[limit.key] = value;
     }
   }

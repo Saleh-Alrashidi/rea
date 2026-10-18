@@ -189,25 +189,26 @@ function visionBlocks() {
   const mention = { mention: { id: 1, type: "USER" } };
   const bold = { insert: "calm", attributes: { bold: true } };
   return blocks([
-    ["large_title", delta("Product vision")],
+    ["large title", delta("Product vision")],
     [
-      "normal_text",
+      "normal text",
       { deltaFormat: [{ insert: "We build " }, bold, { insert: " tools.\n" }] },
     ],
-    ["medium_title", delta("Goals")],
-    ["small_title", delta("Details")],
-    ["bulleted_list", delta("Fast")],
-    ["numbered_list", delta("First")],
-    ["check_list", delta("Write brief", { checked: true })],
+    ["medium title", delta("Goals")],
+    ["small title", delta("Details")],
+    ["bulleted list", delta("Fast")],
+    ["numbered list", delta("First")],
+    ["check list", delta("Write brief", { checked: true })],
+    // The underscore names of create_doc_block's input enum read the same.
     ["check_list", delta("Review brief")],
     ["quote", delta("Less is more")],
     ["code", delta("npm start\nnpm test")],
     ["divider", {}],
-    ["notice_box", delta("Heads up")],
+    ["notice box", delta("Heads up")],
     ["image", { url: "https://files.acme.test/hero.png", width: 600 }],
     ["table", { rowsCount: 2, columnsCount: 2 }],
     [
-      "normal_text",
+      "normal text",
       {
         deltaFormat: [
           { insert: "Ask " },
@@ -221,7 +222,7 @@ function visionBlocks() {
 
 function docs() {
   const paragraphs = Array.from({ length: 230 }, (_, n) => [
-    "normal_text",
+    "normal text",
     delta(`Paragraph ${n + 1}`),
   ]);
   const vision = { id: "301", name: "Product vision", object_id: "105" };

@@ -78,13 +78,15 @@ export const PREVIEW = Object.freeze({
 
 /**
  * Starts the servers (see the module comment); the connectors return
- * `sampleSnapshot()` and record the files they were given in `files`.
+ * `sampleSnapshot()` (after `gate(args)`, when given) and record the files
+ * they were given in `files`.
  */
-export async function liveServer(t) {
+export async function liveServer(t, { gate = null } = {}) {
   const files = [];
   const stub = (source) => ({
     scan: async (args) => {
       if (args.file) files.push(args.file);
+      await gate?.(args);
       return { ...sampleSnapshot(), source: args.file?.kind ?? source };
     },
   });

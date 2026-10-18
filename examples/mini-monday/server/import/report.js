@@ -24,7 +24,8 @@ const CREATED = [
 ];
 
 /** "1 board", "3 boards". */
-export const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+export const count = (n, word) =>
+  `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
 
 /** A new report that starts with the snapshot's warnings. */
 export function createReport(snapshot) {

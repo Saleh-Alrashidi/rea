@@ -10,6 +10,13 @@
  */
 
 const PATH = /^workspaces\[(\d+)\](?:\.(boards|docs)\[(\d+)\])?\.?(.*)$/;
+// Warnings that say the scan stopped before it read everything.
+const LIMIT_CODES = new Set([
+  "too_many_items",
+  "too_many_values",
+  "too_many_columns",
+  "read_capped",
+]);
 const USER_PATH = /^users\[(\d+)\]\.?(.*)$/;
 const SEPARATOR = " › ";
 
@@ -21,9 +28,19 @@ export function humanizeCode(code) {
   return text ? text[0].toUpperCase() + text.slice(1) : "Other";
 }
 
+/** Whether warning code `code` says a scan or file limit cut the scan. */
+export const isLimitCode = (code) =>
+  typeof code === "string" &&
+  (code.startsWith("limit_") || LIMIT_CODES.has(code));
+
+/** The warnings of `warnings` that say the scan stopped at a limit. */
+export const limitWarnings = (warnings = []) =>
+  warnings.filter((warning) => isLimitCode(warning?.code));
+
 /**
- * Warnings grouped by code, largest group first (then by code):
- * `[{ code, title, count, items: [{ message, path }] }]`.
+ * Warnings grouped by code: groups of limit warnings (`limit: true`, the
+ * scan stopped early) first, then the largest group first (then by
+ * code): `[{ code, title, count, limit, items: [{ message, path }] }]`.
  */
 export function groupWarnings(warnings = []) {
   const groups = new Map();
@@ -31,7 +48,8 @@ export function groupWarnings(warnings = []) {
     const code = typeof warning?.code === "string" ? warning.code : "other";
     let group = groups.get(code);
     if (!group) {
-      group = { code, title: humanizeCode(code), count: 0, items: [] };
+      const limit = isLimitCode(code);
+      group = { code, title: humanizeCode(code), count: 0, limit, items: [] };
       groups.set(code, group);
     }
     group.count += 1;
@@ -41,7 +59,10 @@ export function groupWarnings(warnings = []) {
     });
   }
   return [...groups.values()].sort(
-    (a, b) => b.count - a.count || a.code.localeCompare(b.code),
+    (a, b) =>
+      Number(b.limit) - Number(a.limit) ||
+      b.count - a.count ||
+      a.code.localeCompare(b.code),
   );
 }
 

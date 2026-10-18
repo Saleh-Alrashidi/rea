@@ -121,6 +121,10 @@
 }
 
 .admin-table-scroll {
+  /* Positioned, so visually hidden labels in cells scroll with the table
+     instead of widening the page (absolute boxes escape unpositioned
+     scrollers). */
+  position: relative;
   overflow-x: auto;
 }
 

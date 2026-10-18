@@ -61,6 +61,15 @@ export async function scanFile({ file, kind, options = null }) {
   return jobIdOf(await requestJson(SCAN_PATH, { raw: file, headers }));
 }
 
+/**
+ * The signed-in admin's running and recent jobs (`{ id, kind, source,
+ * state, progress, created_at, … }`, newest first, no previews).
+ */
+export async function listJobs() {
+  const result = await requestJson("/import/jobs", { method: "GET" });
+  return Array.isArray(result?.jobs) ? result.jobs.filter(isObject) : [];
+}
+
 /** The job view `{ id, kind, state, progress, preview?, report?, error? }`. */
 export const getJob = async (id) => requestJson(jobPath(id), { method: "GET" });
 

@@ -142,12 +142,12 @@ test("files are checked for size first, then emptiness and type", () => {
   );
   assert.equal(
     S.checkFile({ name: "a.pdf", size: 9 }, "csv"),
-    "Choose a .csv, .txt file for CSV file.",
+    "Choose a .csv or .txt file.",
   );
   assert.equal(S.checkFile({ name: "BOARD.XLSX", size: 9 }, "xlsx"), null);
   assert.equal(
     S.checkFile({ name: "a.csv", size: 9 }, "xlsx"),
-    "Choose a .xlsx file for monday Excel export.",
+    "Choose a .xlsx file.",
   );
   assert.equal(S.checkFile(null, "csv"), "Choose a file to import.");
   assert.equal(
@@ -174,7 +174,8 @@ test("scan options carry only turned-off flags and lowered limits", () => {
       },
       limits: { boards: " 10 ", items: "", updates: "5000" },
     }),
-    { include_docs: false, limits: { boards: 10 } },
+    { include_docs: false, limits: { boards: 10, updates: 5000 } },
+    "a limit at its maximum is sent as asked",
   );
   assert.deepEqual(
     S.scanOptions("clickup", {
@@ -186,12 +187,23 @@ test("scan options carry only turned-off flags and lowered limits", () => {
     S.scanOptions("csv", { flags: { include_docs: false } }),
     {},
   );
+  assert.deepEqual(S.limitProblems({ boards: "", items: " 50000 " }), {});
+  const problems = S.limitProblems({
+    boards: "0",
+    items: "999999",
+    updates: "2.5",
+  });
+  assert.deepEqual(Object.keys(problems), ["boards", "items", "updates"]);
+  assert.equal(
+    problems.items,
+    "Enter a whole number from 1 to 50,000, or leave it empty for 50,000.",
+  );
   // The route accepts whatever the form can send.
   for (const source of ["monday", "clickup"]) {
     const flags = Object.fromEntries(
       S.sourceOf(source).options.map((option) => [option.key, false]),
     );
-    const limits = { boards: "1", items: "49999", updates: "4999" };
+    const limits = { boards: "1", items: "50000", updates: "4999" };
     const options = S.scanOptions(source, { flags, limits });
     assert.deepEqual(readOptions(options, { file: false }), options);
     assert.equal(Object.keys(options).length, 4, source);
@@ -212,7 +224,25 @@ test("progress shows a phase, a bar when the total is known and a count", () => 
     message: "Reading list “A”",
     valueText: "Reading items: 2 of 8 lists",
     announcement: "Reading items",
+    waiting: false,
   });
+  const waiting = progressView(
+    {
+      phase: "items",
+      done: 2,
+      total: 8,
+      message: "Waiting 57 s…",
+      wait_seconds: 57,
+    },
+    { kind: "scan", source: "clickup" },
+  );
+  assert.equal(waiting.waiting, true);
+  assert.equal(waiting.message, "Waiting 57 s…");
+  assert.equal(
+    waiting.announcement,
+    "Reading items: waiting 57 seconds for the source",
+    "a wait is announced once",
+  );
   const rows = progressView(
     { phase: "converting", done: 40, total: null },
     { kind: "scan", source: "csv" },
@@ -249,6 +279,16 @@ test("the done step's tiles, safe links and skipped entries", () => {
       ["updates", 0],
       ["docs", 0],
     ],
+  );
+  const labels = R.createdTiles({ workspaces: 1, users: 1, boards: 2 });
+  assert.deepEqual(
+    labels.slice(0, 2).map((tile) => tile.label),
+    ["Workspace", "Boards"],
+    "one is singular",
+  );
+  assert.equal(
+    labels.find((tile) => tile.key === "users").label,
+    "Person invited",
   );
   const sections = R.linkSections([
     { kind: "board", id: "1", url: "#/boards/1", title: "Roadmap" },
@@ -320,10 +360,15 @@ test("the board badge names the source and links only to http(s) URLs", () => {
     source_url: "data:text/html,x",
     imported_at: null,
   });
+  assert.equal(
+    info.name,
+    "Imported from ClickUp, open the original board (new tab)",
+  );
   assert.deepEqual(plain, {
     label: "Imported from a CSV file",
     href: null,
     title: "Imported from a CSV file",
+    name: "Imported from a CSV file",
   });
   assert.equal(
     importBadgeInfo({ source: "zz" }).label,

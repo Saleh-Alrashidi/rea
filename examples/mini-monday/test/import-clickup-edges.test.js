@@ -328,12 +328,37 @@ test("a task's latest 250 comments are read; status labels are capped", async (t
 
 test("a doc cursor that never ends stops at the page bound", async (t) => {
   const { server, run } = await setup(t);
-  const endless = () => ({ docs: [], next_cursor: "more" });
+  let page = 0;
+  const endless = () => ({ docs: [], next_cursor: `more${(page += 1)}` });
   server.fail({ route: "docs", kind: "edit", edit: endless, times: 99 });
   const limits = { docs: 100 };
   const snapshot = await run({ options: { include_comments: false, limits } });
   assert.equal(routed(server, "docs").length, 6, "ceil(100 / 50) + 1 per team");
   assert.deepEqual(docs(snapshot), []);
+});
+
+test("a repeated doc cursor or page adds no doc twice", async (t) => {
+  const { server, run } = await setup(t);
+  const options = { include_comments: false };
+  // An API that ignored `cursor` would answer the first page again.
+  const first = new Map();
+  let page = 0;
+  const ignoring = (body, record) => {
+    const team = record.params.team;
+    if (!first.has(team)) first.set(team, body.docs);
+    return { docs: first.get(team), next_cursor: `fresh${(page += 1)}` };
+  };
+  server.fail({ route: "docs", kind: "edit", edit: ignoring, times: 99 });
+  const snapshot = await run({ options });
+  const ids = docs(snapshot).map((d) => d.source_id);
+  assert.equal(new Set(ids).size, ids.length, "no doc twice");
+  assert.ok(validateSnapshot(snapshot).ok);
+  // The same cursor twice ends the listing.
+  const repeated = await setup(t);
+  const again = (body) => ({ ...body, next_cursor: "again" });
+  repeated.server.fail({ route: "docs", kind: "edit", edit: again, times: 99 });
+  await repeated.run({ options });
+  assert.equal(routed(repeated.server, "docs").length, 4, "two per team");
 });
 
 test("limits above the defaults are lowered to them", async (t) => {

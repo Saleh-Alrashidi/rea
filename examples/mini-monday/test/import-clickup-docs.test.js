@@ -22,7 +22,7 @@ test("docs: v3 pages, placement and visibility", async () => {
       r.query.limit,
       r.query.deleted,
       r.query.archived,
-      !!r.query.next_cursor,
+      !!r.query.cursor,
     ]),
     [
       ["9001", "50", "false", "false", false],

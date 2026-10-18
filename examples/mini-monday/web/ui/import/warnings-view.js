@@ -2,7 +2,8 @@
  * Warnings grouped by code (SPEC-4 §6.3, §6.5): one expandable group per
  * code with its count; each warning shows its message, where it is
  * (workspace › board names from the preview) and its exact snapshot path.
- * Long groups draw MAX_SHOWN warnings until "Show all" is pressed.
+ * Long groups draw MAX_SHOWN warnings until "Show all" is pressed. Groups
+ * that say the scan stopped at a limit come first and start open.
  *
  * `warningsList({ warnings, preview })` → element.
  */
@@ -60,14 +61,19 @@ function groupBlock(group, preview) {
     { class: "import-warning-group" },
     h(
       "details",
-      null,
+      { open: group.limit },
       h(
         "summary",
         { class: "import-warning-summary" },
         icon("chevronRight", { size: 14, className: "import-warning-chevron" }),
         h("span", { class: "import-warning-title" }, group.title),
         h("span", { class: "import-warning-count" }, String(group.count)),
-        h("code", { class: "import-warning-code" }, group.code),
+        // The title says it already; the code is for the download and support.
+        h(
+          "code",
+          { class: "import-warning-code", "aria-hidden": "true" },
+          group.code,
+        ),
       ),
       list,
       more,

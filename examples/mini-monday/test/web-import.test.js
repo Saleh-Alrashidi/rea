@@ -161,7 +161,40 @@ test("failed and cancelled scans go back to the source step with a message", () 
     },
   );
   assert.equal(refused.pending, false);
-  assert.equal(refused.error.message, "You already have an import job running");
+  assert.match(
+    refused.error.message,
+    /^A scan or import of yours is still running/,
+  );
+  assert.equal(
+    refused.error.detail,
+    "You already have an import job running",
+    "the server's own text stays as the detail",
+  );
+  const unreachable = W.transition(scanning(), {
+    type: "job",
+    job: job(SCAN, "scan", "failed", {
+      error: {
+        code: "UPSTREAM_RATE_LIMITED",
+        message: "monday.com was still rate limiting after 5 attempts",
+      },
+    }),
+  });
+  assert.match(
+    unreachable.error.message,
+    /^The source kept limiting requests\. Wait a few minutes/,
+  );
+  assert.equal(
+    unreachable.error.detail,
+    "monday.com was still rate limiting after 5 attempts",
+  );
+  assert.equal(failed.error.detail, "HTTP 401");
+  const plain = W.transition(scanning(), {
+    type: "job",
+    job: job(SCAN, "scan", "failed", {
+      error: { code: "X", message: "Exact" },
+    }),
+  });
+  assert.equal(plain.error.detail, null, "no detail when the text is shown");
 });
 
 test("imports that fail return to the review; stopped ones show their report", () => {
@@ -325,16 +358,21 @@ test("the people table filters, counts and sets everyone not matched", () => {
     invite: 0,
     skip: 2,
   });
-  assert.equal(M.applyToUnmatched(selection, PREVIEW, "invite:member"), 1);
+  const changed = (action) =>
+    M.applyToUnmatched(selection, PREVIEW, action).changed;
+  assert.equal(changed("invite:member"), 1);
   assert.equal(selection.users.get("u3"), "skip", "no email, no invite");
-  assert.equal(M.applyToUnmatched(selection, PREVIEW, "invite:member"), 0);
+  assert.equal(changed("invite:member"), 0);
   assert.equal(selection.users.get("u1"), "match:2", "matches stay");
   selection.users.set("u1", "skip");
-  assert.equal(
-    M.applyToUnmatched(selection, PREVIEW, "invite:guest"),
-    2,
-    "a dropped proposal counts too",
+  assert.equal(changed("invite:guest"), 2, "a dropped proposal counts too");
+  M.chooseAction(selection, "u2", "invite:member");
+  assert.deepEqual(
+    M.applyToUnmatched(selection, PREVIEW, "invite:viewer"),
+    { changed: 1, kept: 1 },
+    "a choice made by hand stays",
   );
+  assert.equal(selection.users.get("u2"), "invite:member");
   selection.users.set("u1", "match:2");
   const names = (options) =>
     M.filterPeople(PREVIEW, selection, options).map((user) => user.name);
@@ -343,7 +381,7 @@ test("the people table filters, counts and sets everyone not matched", () => {
   assert.deepEqual(names({ show: "invite" }), ["Nia"]);
   assert.deepEqual(names({ show: "match" }), ["Sam"]);
   assert.deepEqual(names({ show: "skip" }), ["Anon"]);
-  assert.equal(M.applyToUnmatched(selection, PREVIEW, "skip"), 1);
+  assert.equal(changed("skip"), 0, "Nia's invite was chosen by hand");
 });
 
 test("the summary sentence counts what the plan imports and where", () => {

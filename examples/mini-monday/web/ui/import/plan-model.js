@@ -8,7 +8,7 @@
  * ```
  * selection = { users: Map(source_id → action), targets: Map(workspace
  *   source_id → "new" | workspace id), boards: Set(source_id),
- *   docs: Set(source_id) }
+ *   docs: Set(source_id), manual: Set(user source_id chosen by hand) }
  * ```
  *
  * User actions are the plan's: "match:<user id>", "invite:member",
@@ -51,7 +51,13 @@ export function createSelection(preview) {
   const users = new Map(
     preview.users.map((user) => [user.source_id, user.action ?? SKIP]),
   );
-  return { users, targets, boards, docs };
+  return { users, targets, boards, docs, manual: new Set() };
+}
+
+/** Sets the action the admin chose for one person by hand. */
+export function chooseAction(selection, sourceId, action) {
+  selection.users.set(sourceId, action);
+  selection.manual.add(sourceId);
 }
 
 /**
@@ -129,20 +135,26 @@ export function setEntry(selection, { kind, id, on }) {
 
 /**
  * Sets `action` for every person not matched to a Worklane user right now
- * (matches by email and matches chosen by hand stay); invites skip people
- * without an email. Returns how many changed.
+ * (matches by email or by hand stay) whose action was not chosen by hand
+ * (`chooseAction`); invites skip people without an email. Returns `{
+ * changed, kept }`: how many changed, and how many chosen by hand would
+ * have changed but were kept.
  */
 export function applyToUnmatched(selection, preview, action) {
-  let changed = 0;
+  const result = { changed: 0, kept: 0 };
   for (const user of preview.users) {
     const current = selection.users.get(user.source_id);
     if (actionKind(current) === "match") continue;
     if (actionKind(action) === "invite" && !user.email) continue;
-    if (selection.users.get(user.source_id) === action) continue;
+    if (current === action) continue;
+    if (selection.manual?.has(user.source_id)) {
+      result.kept += 1;
+      continue;
+    }
     selection.users.set(user.source_id, action);
-    changed += 1;
+    result.changed += 1;
   }
-  return changed;
+  return result;
 }
 
 /** `{ match, invite, skip }` counts of the chosen actions. */

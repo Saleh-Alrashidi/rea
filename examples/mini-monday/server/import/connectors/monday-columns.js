@@ -30,6 +30,8 @@ const ALIAS_TYPES = Object.freeze({ color: "status", person: "people" });
 const STRUCTURAL = new Set(["name", "subtasks"]);
 const STATUS_COLOR = "#c4c4c4";
 const SUFFIX = " (subitem)";
+// The day a date column's `text` starts with ("2025-05-03 08:30").
+const SHOWN_DAY = /^(\d{4}-\d{2}-\d{2})(?:\s|$)/;
 
 function addLabel(plan, label, color) {
   const { labels } = plan.column;
@@ -95,13 +97,19 @@ function readPeople(plan, cv) {
   return ids.length > 0 ? ids : undefined;
 }
 
+/**
+ * A date: `value.date`, or for a date with a time (`value` is UTC) the day
+ * `text` shows, which monday formats in the token user's time zone
+ * ("2025-05-03 08:30"); `value.date` when the text has no such day.
+ */
 function readDate(plan, cv) {
   const value = parseJson(cv.value);
-  if (str(value?.date) !== "" && str(value.time) !== "") {
-    const message = `Times of day in column "${plan.column.title}" were dropped (Worklane dates have no time)`;
-    plan.scope.count("time_dropped", message);
-  }
-  return orUndefined(str(value?.date) || str(cv.text));
+  const date = str(value?.date);
+  if (date === "" || str(value.time) === "")
+    return orUndefined(date || str(cv.text));
+  const message = `Times of day in column "${plan.column.title}" were dropped (Worklane dates have no time); dates keep the day shown in the token user's time zone`;
+  plan.scope.count("time_dropped", message);
+  return SHOWN_DAY.exec(str(cv.text).trim())?.[1] ?? date;
 }
 
 /** monday stores numbers as JSON strings ("42.5"); the snapshot parses them. */

@@ -383,7 +383,8 @@ to the fixed hosts `https://api.monday.com/v2` or
 `https://api.clickup.com/api` (v2, and v3 for ClickUp docs). It is never
 stored, persisted, logged, echoed or put in a job: every text a scan keeps (the snapshot, progress messages,
 errors, logged details) has it replaced with `[redacted]`, and upstream
-error texts are redacted before use. Callers cannot supply a URL, no
+error texts are redacted before use, in every form the token can take
+(as pasted, without a `Bearer ` scheme, and URL-encoded). Callers cannot supply a URL, no
 redirect is followed, and unknown scan options are refused. The scan
 result itself (the source data) stays in server memory for 30 minutes
 after the scan ends, visible only to the admin who started it.
@@ -405,7 +406,10 @@ after the scan ends, visible only to the admin who started it.
 monday.com columns: `status`/`color` → Status with their labels and colors,
 `people`/`person` → People, `date` → Date, `numbers` → Numbers, `text` and
 `long_text` → Text, the item name → the item name. ClickUp: Status (the
-list's statuses and colors), Assignees, Due date and Start date (UTC days),
+list's statuses and colors), Assignees, Due date and Start date (the day
+ClickUp shows: a date without a time is stored at 4 am in the time zone
+of whoever set it, so it is read as that instant plus 10 hours, which is
+the right day from UTC−9:30 to UTC+14; `date_only`),
 Priority (Urgent, High, Normal, Low), Time estimate (h), Tags, Description,
 and custom fields (`drop_down` → Status, `number`/`currency`/`emoji` →
 Numbers, `date` → Date, `users` → People, `text`/`short_text`/`email`/
@@ -447,7 +451,9 @@ the review and done steps and downloadable as a `.txt` file.
   `labels` fields become comma-joined text (`labels_as_text`) and other
   unknown field types become text; a status column with more than 200
   labels becomes text.
-- **Dropped detail**: times of day on dates (`time_dropped`), number units
+- **Dropped detail**: times of day on dates (`time_dropped`; monday.com
+  dates with a time keep the day shown in the token user's time zone),
+  ClickUp dates without a time read across zones (`date_only`), number units
   and currencies (`unit_dropped`), teams in people columns
   (`teams_dropped`), embedded mentions in doc blocks (`embeds_dropped`),
   ClickUp checklists (`checklists_dropped`), time estimates rounded to
@@ -464,17 +470,21 @@ the review and done steps and downloadable as a `.txt` file.
   `+`, `-` or `@` stays text (`formula_text`), and an Excel formula cell
   keeps the value Excel last computed, or the formula as text
   (`formula_values`); other sheets of a workbook are not read
-  (`other_sheets`).
+  (`other_sheets`); a quoted CSV value with text after its closing quote
+  is kept as written and reported (`csv_malformed_quote`), since its row
+  may then have fewer columns than the header.
 
 ### Limits
 
-| What                       | Limit                                                                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| One scan (monday, ClickUp) | 200 boards/lists, 50,000 items, 5,000 updates, 200 docs; the Scan limits fields lower them                                                  |
-| Upstream requests          | 10 MiB per answer, 30 s each, at most 5 attempts honoring `Retry-After`, `X-RateLimit-Reset` and monday's `retry_in_seconds` (waits ≤ 60 s) |
-| ClickUp                    | At most 90 requests a minute (a ClickUp limit): large workspaces take minutes                                                               |
-| Files                      | 20 MiB; CSV ≤ 50,000 rows and 200 columns; `.xlsx` ≤ 100 MiB unpacked and 2,000 parts                                                       |
-| Jobs                       | One running job per admin and two per server; results kept 30 minutes, 10 per admin                                                         |
+| What                       | Limit                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| One scan (monday, ClickUp) | 200 boards/lists, 50,000 items, 5,000 updates, 200 docs; the Scan limits fields lower them                                                    |
+| One import (every source)  | 2,000,000 item values (about 50 MiB of data): a scan stops reading items there (`limit_values`, `too_many_values` for files)                  |
+| Stored data                | An import that would grow the data file past 256 MiB is refused per board (`board_failed`): the file is one JSON text that must stay writable |
+| Upstream requests          | 10 MiB per answer, 30 s each, at most 5 attempts honoring `Retry-After`, `X-RateLimit-Reset` and monday's `retry_in_seconds` (waits ≤ 60 s)   |
+| ClickUp                    | At most 90 requests a minute (a ClickUp limit): large workspaces take minutes                                                                 |
+| Files                      | 20 MiB; CSV ≤ 50,000 rows and 200 columns; `.xlsx` ≤ 100 MiB unpacked and 2,000 parts                                                         |
+| Jobs                       | One running job per admin and two per server; results kept 30 minutes, 10 per admin                                                           |
 
 ### Over HTTP
 
@@ -489,8 +499,19 @@ API tokens through to `/v2` only, so there they need a signed-in browser.
 | `GET /import/jobs/<id>`         | The job: `state`, `progress`, and the `preview` of a scan or the `report` of an import                                                                                     |
 | `POST /import/jobs/<id>/cancel` | Cancels it; an import stops before its next board or doc and keeps what it created                                                                                         |
 | `POST /import/run`              | `{ scan_job_id, plan: { users, workspace_map, include } }` → 202 `{ job_id }`; a bad plan is 400 with each path                                                            |
+| `GET /import/jobs`              | Your running and recent jobs (`source`, `state`, `progress`, times; no source data), so a reloaded page can follow, cancel or review them                                  |
 
 Progress also arrives on `GET /v2/events?stream=me` as `event: import`.
+While the source makes a scan wait (ClickUp's 90 requests a minute,
+`Retry-After`, monday.com's complexity budget), the progress says so
+(`wait_seconds` and a message such as "Waiting 57 s: ClickUp allows 90
+requests a minute…"); within a board or list it counts the items read.
+
+In the wizard, **Back** on the review keeps the scan and your choices
+for 30 minutes ("Return to the review"); after a reload the import page
+offers to follow or cancel a scan or import that is still running, or to
+review a finished scan; scan options and limits are kept for a retry
+(never the token), and failures name the next step.
 
 ### Verified against fixtures, not live accounts
 
@@ -505,7 +526,16 @@ oversized answers and timeouts. Details that could not be confirmed
 against the live services (error bodies, doc block content, ClickUp v3
 doc parameters, some field shapes) may differ; the Excel layout parser was
 likewise checked only against workbooks built from the SPEC-4
-description. Try a small scan first (Scan limits) and read the warnings.
+description. Where documentation and the client types disagree with
+first fixtures, the connectors follow the documentation: monday.com doc
+blocks are read with the spaced type names reads return ("normal text",
+"large title"; the underscore names of `create_doc_block` work too) and
+paged by the page size monday answers with; monday.com errors use the
+documented shapes (HTTP 429 `COMPLEXITY_BUDGET_EXHAUSTED`, HTTP 200
+`UserUnauthorizedException`); ClickUp v3 docs page with the documented
+`cursor` parameter, and a 401 "Team not authorized" (`OAUTH_023`…`045`)
+on one list or task is a warning, not a rejected token. Try a small scan
+first (Scan limits) and read the warnings.
 
 ## Architecture
 
@@ -524,8 +554,9 @@ server/
                    plan.js board-spec.js report.js (preview, plan, run),
                    jobs.js (scan and import jobs, token redaction),
                    upstream.js (the bounded HTTP client for the fixed
-                   hosts), csv.js xlsx.js (file readers), connectors/
-                   (monday*, clickup*, files.js, common.js)
+                   hosts), csv.js xlsx.js xml.js (file readers),
+                   slices.js (long work in time slices), connectors/
+                   (monday*, clickup*, files.js file-board.js, common.js)
   access.js        the only interpreter of roles, grants and teams
   store.js         createStore(): records, change events, persistence
   store/           people workspaces boards items docs notes forms grants
@@ -728,7 +759,10 @@ node scripts/e2e-import.mjs    # the importer against fake upstreams
   edge cases, the `.xlsx` reader (workbooks built in the test, a zip bomb,
   unsafe names, 1904 dates), preview, plans, runs, cancellation and
   re-import, the jobs and routes (tokens never in a job, log or error;
-  non-admins refused) and the wizard. `e2e-import.mjs` starts both fake
+  non-admins refused) and the wizard; `import-bounds.test.js` covers the
+  work bounds (linear people parsing, scans and validation in time
+  slices that a cancel stops, the value budget, the data-file capacity
+  and a save that cannot be written). `e2e-import.mjs` starts both fake
   servers itself and, in Chromium, opens the importer from the Admin
   page, checks a member is refused, cancels a monday.com scan midway,
   reviews a scan (tree, people, warnings) with one person invited,
@@ -760,9 +794,13 @@ node scripts/e2e-import.mjs    # the importer against fake upstreams
   accounts, and the Excel layout parser only against generated workbooks
   (see [Verified against fixtures, not live accounts](#verified-against-fixtures-not-live-accounts)).
   Scans and their results live in the server process: a restart loses
-  running jobs and unimported scans. Validating a very large scan (50,000
-  items) or reading the largest `.xlsx` files holds the server for about
-  one to two seconds.
+  running jobs and unimported scans. File scans and validation run in
+  short slices (an 18.7 MiB CSV now holds the server for at most about
+  60 ms at a time, and a cancel stops it); unpacking one large `.xlsx`
+  part still takes a few hundred milliseconds in one go, and writing one
+  imported board is one step (2 million values hold the server for about
+  2.5 s, then each save of a data file that size takes about half a
+  second).
 - **Large boards.** The table draws every item (up to 5,000) and column
   at once, without virtual scrolling: an imported board of 455 items and
   42 columns takes about 3 s to open in Chromium, and its item card about

@@ -26,7 +26,16 @@ import {
   fieldPlan,
   readValues,
 } from "./clickup-fields.js";
-import { idOf, isObject, limitHit, listOf, scopeAt, str } from "./common.js";
+import {
+  countValues,
+  idOf,
+  isObject,
+  itemRoom,
+  limitHit,
+  listOf,
+  scopeAt,
+  str,
+} from "./common.js";
 
 export const GROUPS = Object.freeze([
   Object.freeze({ source_id: "open", title: "Open", color: "#579bfc" }),
@@ -121,10 +130,7 @@ export function addTasks(state, raws) {
   for (const raw of listOf(raws)) {
     const id = idOf(raw.id);
     if (id === null || state.seen.has(id)) continue;
-    if (ctx.counts.items >= ctx.limits.items) {
-      limitHit(ctx, "items", state.path);
-      break;
-    }
+    if (!itemRoom(ctx, state.path)) break;
     ctx.counts.items += 1;
     state.seen.add(id);
     const item = {
@@ -138,6 +144,7 @@ export function addTasks(state, raws) {
       updates: [],
     };
     checklistWarning(state, raw);
+    countValues(ctx, item);
     state.board.items.push(item);
     added.push({ item, taskId: pathId(raw.id) });
   }

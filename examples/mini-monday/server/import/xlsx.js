@@ -11,9 +11,8 @@
  * size and must match that size and its CRC-32. Legacy or
  * password-protected workbooks (OLE files) are UNSUPPORTED_XLSX.
  *
- * XML: a small event reader for SpreadsheetML (namespace prefixes
- * dropped). Only the five XML entities and character references are
- * decoded; a DOCTYPE is refused, so nothing can declare entities.
+ * XML: the small event reader of `xml.js` (no DOCTYPE, so nothing can
+ * declare entities).
  *
  * Workbook: the first visible sheet of `xl/workbook.xml` (found through
  * the package relationships), shared and inline strings (rich text runs
@@ -31,11 +30,15 @@
  * "row:column" to the cell's `{ font, fill }` RGB colors (`#rrggbb`) when
  * it has any; `truncated` says rows past `limits.rows` were not read.
  * Failures are ImportError INVALID_XLSX, UNSUPPORTED_XLSX, XLSX_TOO_LARGE
- * or ABORTED.
+ * or ABORTED. `readXlsxSteps` is the same reader as a generator that
+ * yields every TAGS_PER_STEP tags of the shared strings and the sheet
+ * (`slices.js`); unpacking the ZIP parts is not sliced.
  */
 import { crc32, inflateRawSync } from "node:zlib";
-import { numberText, serialText, throwIfAborted } from "./csv.js";
+import { numberText, serialText } from "./csv.js";
 import { ImportError } from "./engine.js";
+import { drain, throwIfAborted } from "./slices.js";
+import { walkXml, walkXmlSteps } from "./xml.js";
 
 export const XLSX_LIMITS = Object.freeze({
   bytes: 20 * 1024 * 1024,
@@ -63,11 +66,6 @@ const BUILTIN_DATES = new Set([
   58,
 ]);
 const BUILTIN_TIMES = new Set([18, 19, 20, 21, 32, 33, 34, 35, 45, 46, 47]);
-const TAG =
-  /<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/y;
-const ATTRIBUTE = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-const ENTITY = /&(?:#(\d{1,7})|#x([\da-f]{1,6})|(lt|gt|amp|quot|apos));/gi;
-const NAMED = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
 const ESCAPE = /_x([\da-f]{4})_/gi;
 const CELL_REF = /^([A-Z]{1,3})(\d*)$/;
 const HIDDEN = new Set(["hidden", "veryHidden"]);
@@ -212,22 +210,6 @@ export function openZip(bytes, max = XLSX_LIMITS) {
 
 // --------------------------------------------------------------------- xml
 
-const local = (name) => name.slice(name.indexOf(":") + 1);
-
-function charOf(code) {
-  const valid = code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
-  return valid ? String.fromCodePoint(code) : "�";
-}
-
-const decodeEntities = (text) =>
-  text.includes("&")
-    ? text.replace(ENTITY, (_, dec, hex, name) =>
-        name
-          ? NAMED[name.toLowerCase()]
-          : charOf(Number.parseInt(dec ?? hex, dec ? 10 : 16)),
-      )
-    : text;
-
 /** Decodes OOXML `_xHHHH_` escapes (`_x000D_` is a carriage return). */
 const unescapeText = (text) =>
   text.includes("_x")
@@ -235,55 +217,6 @@ const unescapeText = (text) =>
         String.fromCharCode(Number.parseInt(hex, 16)),
       )
     : text;
-
-function attributesOf(source) {
-  const attrs = {};
-  if (source === "") return attrs;
-  ATTRIBUTE.lastIndex = 0;
-  for (let match; (match = ATTRIBUTE.exec(source));)
-    attrs[local(match[1])] = decodeEntities(match[2] ?? match[3]);
-  return attrs;
-}
-
-function skipTo(xml, at, close) {
-  const end = xml.indexOf(close, at);
-  if (end === -1) throw invalid("A workbook part is not well-formed XML");
-  return end + close.length;
-}
-
-/**
- * Walks `xml`, calling `open(name, attrs)` (returning false stops the
- * walk), `close(name)` and `text(decoded)` with local names.
- */
-export function walkXml(
-  xml,
-  { open = () => {}, close = () => {}, text = () => {} },
-) {
-  let at = 0;
-  while (at < xml.length) {
-    const lt = xml.indexOf("<", at);
-    const end = lt === -1 ? xml.length : lt;
-    if (end > at) text(decodeEntities(xml.slice(at, end)));
-    if (lt === -1) return;
-    if (xml.startsWith("<?", lt)) at = skipTo(xml, lt, "?>");
-    else if (xml.startsWith("<!--", lt)) at = skipTo(xml, lt, "-->");
-    else if (xml.startsWith("<![CDATA[", lt)) {
-      at = skipTo(xml, lt, "]]>");
-      text(xml.slice(lt + 9, at - 3));
-    } else if (xml.startsWith("<!", lt)) {
-      throw invalid("Workbooks with a DOCTYPE are not supported");
-    } else {
-      TAG.lastIndex = lt;
-      const match = TAG.exec(xml);
-      if (!match) throw invalid("A workbook part is not well-formed XML");
-      at = TAG.lastIndex;
-      const name = local(match[2]);
-      if (match[1]) close(name);
-      else if (open(name, attributesOf(match[3])) === false) return;
-      else if (match[4]) close(name);
-    }
-  }
-}
 
 // ---------------------------------------------------------------- workbook
 
@@ -371,10 +304,10 @@ function textCollector(container, done) {
   };
 }
 
-function readStrings(xml) {
+function* readStrings(xml) {
   const strings = [];
   const collect = textCollector("si", (text) => strings.push(text));
-  if (xml) walkXml(xml, collect);
+  if (xml) yield* walkXmlSteps(xml, collect);
   return strings;
 }
 
@@ -522,7 +455,7 @@ function createSheetReader({ book, max }) {
 }
 
 /** The sheet's rows (see the module comment). */
-function readSheet(xml, { book, max }) {
+function* readSheet(xml, { book, max }) {
   const { out, state, commit, endRow, startRow } = createSheetReader({
     book,
     max,
@@ -530,7 +463,7 @@ function readSheet(xml, { book, max }) {
   const inline = textCollector("is", (text) => {
     if (state.cell) state.cell.inline = text;
   });
-  walkXml(xml, {
+  yield* walkXmlSteps(xml, {
     open(name, attrs) {
       inline.open(name);
       if (name === "row") return startRow(attrs);
@@ -568,7 +501,7 @@ function readSheet(xml, { book, max }) {
 }
 
 /** Reads the workbook in `bytes` (see the module comment). */
-export function readXlsx(bytes, { limits = {}, signal = null } = {}) {
+export function* readXlsxSteps(bytes, { limits = {}, signal = null } = {}) {
   const max = { ...XLSX_LIMITS };
   for (const [key, value] of Object.entries(limits))
     if (Number.isSafeInteger(value) && value > 0 && value < max[key])
@@ -578,11 +511,15 @@ export function readXlsx(bytes, { limits = {}, signal = null } = {}) {
   const sheet = book.sheets.find((s) => !HIDDEN.has(s.state)) ?? book.sheets[0];
   if (!sheet?.target) throw invalid("The workbook has no sheet");
   throwIfAborted(signal);
-  const strings = readStrings(book.strings && zip.text(book.strings));
+  const strings = yield* readStrings(book.strings && zip.text(book.strings));
   const xfs = readStyles(book.styles && zip.text(book.styles));
   const xml = zip.text(sheet.target);
   if (xml === null) throw invalid("The workbook's first sheet is missing");
   throwIfAborted(signal);
-  const read = readSheet(xml, { book: { ...book, strings, xfs }, max });
+  const read = yield* readSheet(xml, { book: { ...book, strings, xfs }, max });
   return { sheet: sheet.name, sheets: book.sheets.length, ...read };
 }
+
+/** `readXlsxSteps` run to its end. */
+export const readXlsx = (bytes, options) =>
+  drain(readXlsxSteps(bytes, options));

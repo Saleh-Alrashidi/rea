@@ -6,7 +6,9 @@
  *
  * `announcement` is the text of the polite live region: it changes only
  * when the phase changes, so screen readers hear "Reading items" once,
- * not every count update (the bar's `aria-valuetext` carries the count).
+ * not every count update (the bar's `aria-valuetext` carries the count),
+ * and once more when the source makes the scan wait (`wait_seconds`: a
+ * rate limit), so a long pause is never silent.
  */
 
 const SCAN_PHASES = Object.freeze({
@@ -53,10 +55,11 @@ function unitOf(phase, { kind, source }) {
 
 /**
  * @param {{ phase?: string, done?: number | null, total?: number | null,
- *   message?: string | null } | null} progress
+ *   message?: string | null, wait_seconds?: number | null } | null} progress
  * @param {{ kind: "scan" | "import", source?: string | null }} context
  * @returns {{ title: string, percent: number | null, countText: string,
- *   message: string, valueText: string, announcement: string }}
+ *   message: string, valueText: string, announcement: string,
+ *   waiting: boolean }}
  */
 export function progressView(progress, { kind, source = null }) {
   const phase = progress?.phase ?? "starting";
@@ -74,5 +77,18 @@ export function progressView(progress, { kind, source = null }) {
     countText = `${done}${unit ? ` ${unit}` : ""} so far`;
   const message = typeof progress?.message === "string" ? progress.message : "";
   const valueText = [title, countText].filter(Boolean).join(": ");
-  return { title, percent, countText, message, valueText, announcement: title };
+  const wait = count(progress?.wait_seconds);
+  const waiting = wait !== null && wait > 0;
+  const announcement = waiting
+    ? `${title}: waiting ${wait} seconds for the source`
+    : title;
+  return {
+    title,
+    percent,
+    countText,
+    message,
+    valueText,
+    announcement,
+    waiting,
+  };
 }

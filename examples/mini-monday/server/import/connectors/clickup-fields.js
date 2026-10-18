@@ -97,11 +97,16 @@ function readAssignees(plan, task) {
   return ids.length > 0 ? ids : undefined;
 }
 
+/** A due or start date; `timed` is ClickUp's `due_date_time` flag. */
 function dated(plan, value, timed) {
-  const date = dateOf(value);
-  if (date !== undefined && timed === true) {
+  const date = dateOf(value, { dateOnly: timed === false });
+  if (date === undefined) return date;
+  if (timed === true) {
     const message = `Times of day in "${plan.column.title}" were dropped (Worklane dates have no time)`;
     plan.scope.count("time_dropped", message);
+  } else if (timed === false) {
+    const message = `Dates without a time in "${plan.column.title}" were read as the day ClickUp shows; ClickUp keeps them at 4 am in the time zone of whoever set them, which its API does not give, so for zones west of UTC−9:30 the day may be one late`;
+    plan.scope.count("date_only", message);
   }
   return date;
 }

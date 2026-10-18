@@ -22,7 +22,8 @@ const DOCS = {
   limit: { re: /^(?:[1-9]\d|100)$/ },
   deleted: { re: /^false$/ },
   archived: { re: /^false$/ },
-  next_cursor: { re: /^[\w=-]{1,200}$/ },
+  // The documented request parameter; `next_cursor` (deprecated) is refused.
+  cursor: { re: /^[\w=-]{1,200}$/ },
 };
 const PAGES = {
   max_page_depth: { re: /^-1$/, required: true },
@@ -188,8 +189,8 @@ function docPage(data, params, query) {
       (query.deleted !== "false" || !d.deleted) &&
       (query.archived !== "false" || !d.archived),
   );
-  const offset = query.next_cursor
-    ? Number(Buffer.from(query.next_cursor, "base64url").toString())
+  const offset = query.cursor
+    ? Number(Buffer.from(query.cursor, "base64url").toString())
     : 0;
   const page = docs
     .slice(offset, offset + limit)

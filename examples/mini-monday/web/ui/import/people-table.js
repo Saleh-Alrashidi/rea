@@ -4,7 +4,8 @@
  * "Skip", invites as member / viewer / guest (only with an email) and a
  * match with any other active Worklane user. A search box and a filter
  * narrow long lists; "Everyone not matched" sets one action for all
- * people not matched to a Worklane user (by email or by hand).
+ * people not matched to a Worklane user (by email or by hand), and keeps
+ * the actions chosen by hand in their rows.
  *
  * At most PAGE rows are drawn at first ("Show all" draws the rest), so a
  * source with thousands of people stays responsive.
@@ -22,12 +23,14 @@ import {
   SKIP,
   actionKind,
   applyToUnmatched,
+  chooseAction,
   filterPeople,
   peopleCounts,
   userChoices,
 } from "./plan-model.js";
 
 const PAGE = 100;
+const number = (value) => value.toLocaleString("en-US");
 const FILTERS = Object.freeze([
   { value: "all", label: "Everyone" },
   { value: "match", label: "Matched" },
@@ -79,7 +82,7 @@ function actionSelect(t, user) {
       on: {
         change: (event) => {
           const action = event.currentTarget.value;
-          t.selection.users.set(user.source_id, action);
+          chooseAction(t.selection, user.source_id, action);
           draw(action);
           t.changed();
         },
@@ -103,12 +106,22 @@ function personRow(t, user) {
         "span",
         { class: "admin-person compact" },
         avatar({ name: user.name }, { size: "sm", title: null }),
-        h("span", { class: "admin-person-name" }, user.name),
+        h(
+          "span",
+          null,
+          h("span", { class: "admin-person-name" }, user.name),
+          // Shown instead of the Email column on narrow screens.
+          h(
+            "span",
+            { class: "import-person-email-inline" },
+            user.email ?? "No email",
+          ),
+        ),
       ),
     ),
     h(
       "td",
-      { class: user.email ? null : "admin-muted" },
+      { class: ["import-person-email", !user.email && "admin-muted"] },
       user.email ?? "No email",
     ),
     h("td", null, select),
@@ -128,15 +141,16 @@ function drawRows(t) {
   const total = t.preview.users.length;
   t.status.textContent =
     shown.length === total
-      ? `${total} ${total === 1 ? "person" : "people"}`
-      : `Showing ${shown.length} of ${total} people`;
+      ? `${number(total)} ${total === 1 ? "person" : "people"}`
+      : `Showing ${number(shown.length)} of ${number(total)} people`;
   t.more.hidden = t.showAll || shown.length <= PAGE;
-  t.more.querySelector(".btn-label").textContent = `Show all ${shown.length}`;
+  t.more.querySelector(".btn-label").textContent =
+    `Show all ${number(shown.length)}`;
 }
 
 function drawCounts(t) {
   const counts = peopleCounts(t.preview, t.selection);
-  t.counts.textContent = `${counts.match} matched · ${counts.invite} to invite · ${counts.skip} skipped`;
+  t.counts.textContent = `${number(counts.match)} matched · ${number(counts.invite)} to invite · ${number(counts.skip)} skipped`;
 }
 
 function toolbar(t) {
@@ -157,7 +171,7 @@ function toolbar(t) {
     "select",
     {
       class: "input input-small",
-      "aria-label": "Show",
+      "aria-label": "Show people",
       on: {
         change: (event) => {
           t.filter.show = event.currentTarget.value;
@@ -173,6 +187,16 @@ function toolbar(t) {
     h("label", { class: "admin-search" }, icon("search", { size: 14 }), search),
     show,
   );
+}
+
+const people = (n) => `${number(n)} ${n === 1 ? "person" : "people"}`;
+
+function bulkText({ changed, kept }) {
+  const done =
+    changed === 0 ? "Nothing changed." : `${people(changed)} updated.`;
+  if (kept === 0) return done;
+  const verb = kept === 1 ? "was" : "were";
+  return `${done} ${people(kept)} you set by hand ${verb} kept.`;
 }
 
 function bulkControl(t) {
@@ -194,11 +218,8 @@ function bulkControl(t) {
       label: "Apply",
       size: "sm",
       onClick: () => {
-        const changed = applyToUnmatched(t.selection, t.preview, select.value);
-        t.bulkStatus.textContent =
-          changed === 0
-            ? "Nothing changed."
-            : `${changed} ${changed === 1 ? "person" : "people"} updated.`;
+        const result = applyToUnmatched(t.selection, t.preview, select.value);
+        t.bulkStatus.textContent = bulkText(result);
         drawRows(t);
         t.changed();
       },
@@ -251,7 +272,10 @@ export function peopleTable({ preview, selection, people, onChange }) {
       { class: "admin-table-scroll import-people-scroll" },
       h(
         "table",
-        { class: "admin-table import-people-table" },
+        {
+          class: "admin-table import-people-table",
+          "aria-label": "People",
+        },
         h(
           "thead",
           null,

@@ -17,6 +17,8 @@
 .import-tree,
 .import-entries {
   display: grid;
+  /* One track no wider than the panel (a long option must not widen it). */
+  grid-template-columns: minmax(0, 1fr);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -89,7 +91,8 @@
 }
 
 .import-target {
-  max-width: 260px;
+  min-width: 0;
+  max-width: min(260px, 100%);
 }
 
 .import-entry {
@@ -156,7 +159,8 @@
   margin-top: 2px;
 }
 
-.import-entries-more {
+.import-ws .import-collapse-more {
+  margin: 0;
   padding: var(--space-1) var(--space-3) var(--space-2) var(--space-6);
 }
 
@@ -229,6 +233,18 @@
 .import-person-action {
   min-width: 180px;
   max-width: 280px;
+}
+
+/* Long names and emails wrap, so the Action column stays in view. */
+.import-people-table .admin-person-name,
+.import-person-email {
+  max-width: 16rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.import-person-email-inline {
+  display: none;
 }
 
 .import-person-note-cell {
@@ -369,7 +385,7 @@ details[open] > .import-warning-summary .import-warning-chevron {
 
 .import-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: var(--space-3);
   margin: 0;
   padding: 0;
@@ -378,6 +394,10 @@ details[open] > .import-warning-summary .import-warning-chevron {
 
 .import-tile.empty .stat-value {
   color: var(--color-text-muted);
+}
+
+.import-tile .stat-label {
+  overflow-wrap: anywhere;
 }
 
 .import-link-section + .import-link-section {
@@ -434,7 +454,29 @@ details[open] > .import-warning-summary .import-warning-chevron {
 
   .import-target {
     flex: 1;
-    max-width: none;
+    max-width: 100%;
+  }
+
+  /* The email moves under the name; Action is the second column. */
+  .import-people-table .import-person-email,
+  .import-people-table thead th:nth-child(2) {
+    display: none;
+  }
+
+  .import-person > th {
+    min-width: 8.5rem;
+  }
+
+  .import-person-action {
+    min-width: 9rem;
+  }
+
+  .import-person-email-inline {
+    display: block;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .import-entry {

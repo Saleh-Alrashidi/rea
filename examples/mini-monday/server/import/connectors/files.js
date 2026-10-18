@@ -23,27 +23,40 @@
  * snapshot users (`email:<address>` or `name:<name>`) and editors of the
  * board, so the admin's user mapping decides who gets access. At most
  * `options.limits.items` (default and maximum 50,000) items and subitems
- * are read; the rest is reported. File boards keep the file name as their
- * source ID, so importing the same file again is flagged as a re-import.
- * Failures are ImportError: INVALID_FILE, EMPTY_FILE, FILE_TOO_LARGE,
- * INVALID_CSV, the xlsx reader's codes, or ABORTED.
+ * are read, and no more rows once the board holds SNAPSHOT_LIMITS.values
+ * cells (what one import can store); the rest is reported. File boards
+ * keep the file name as their source ID, so importing the same file again
+ * is flagged as a re-import. Parsing and conversion run in time slices
+ * (`../slices.js`), so a large file neither stalls the server nor delays
+ * a cancel. Failures are ImportError: INVALID_FILE, EMPTY_FILE,
+ * FILE_TOO_LARGE, INVALID_CSV, the xlsx reader's codes, or ABORTED.
  */
-import { setImmediate as nextTurn } from "node:timers/promises";
 import {
   FILE_LIMITS,
   columnType,
-  convertColumns,
+  convertColumnsSteps,
   decodeText,
-  paletteColor,
-  parseCsv,
+  parseCsvSteps,
   readOverrides,
-  throwIfAborted,
 } from "../csv.js";
 import { ImportError } from "../engine.js";
+import { drainSliced } from "../slices.js";
 import { BOARD_LIMITS } from "../snapshot-board.js";
 import { truncate } from "../snapshot-rules.js";
-import { SNAPSHOT_LIMITS, nearestColor } from "../snapshot.js";
-import { XLSX_LIMITS, readXlsx } from "../xlsx.js";
+import { SNAPSHOT_LIMITS } from "../snapshot.js";
+import { XLSX_LIMITS, readXlsxSteps } from "../xlsx.js";
+import {
+  DEFAULT_GROUP,
+  addCell,
+  addGroup,
+  addItem,
+  columnFor,
+  createBoard,
+  filled,
+  firstFilled,
+  mergeSubitemColumns,
+  titlesOf,
+} from "./file-board.js";
 
 const BOARD_PATH = "workspaces[0].boards[0]";
 const NAME_TITLES = Object.freeze(["name", "task name", "item", "item name"]);
@@ -56,91 +69,10 @@ const GROUP_TITLES = Object.freeze([
   "list name",
 ]);
 const SUBITEMS = "subitems";
-const DEFAULT_GROUP = "Imported";
 const EXTENSION = /\.(?:csv|tsv|txt|xlsx|xlsm)$/i;
 const MAX_NAME = 255;
-
-// ------------------------------------------------------------------ board
-
-/** The board being read: groups, collected columns and items. */
-function createBoard({ limit }) {
-  const board = { groups: [], columns: [], items: [], byKey: new Map() };
-  return Object.assign(board, { limit, dropped: 0, extraGroups: 0 });
-}
-
-function addGroup(board, { title, color = null }) {
-  const { groups } = board;
-  if (groups.length >= BOARD_LIMITS.groups) {
-    board.extraGroups += 1;
-    return groups.at(-1).source_id;
-  }
-  const id = `g${groups.length + 1}`;
-  const name = title || DEFAULT_GROUP;
-  groups.push({
-    source_id: id,
-    title: name,
-    color: color ? nearestColor(color) : paletteColor(name, groups.length),
-  });
-  return id;
-}
-
-/** The column `key` (created with `title` and `extra` when new). */
-function columnFor(board, { key, title, extra = {} }) {
-  const found = board.byKey.get(key);
-  if (found) return found;
-  const id = `c${board.columns.length + 1}`;
-  const column = {
-    source_id: id,
-    title,
-    cells: [],
-    fills: new Map(),
-    ...extra,
-  };
-  board.columns.push(column);
-  board.byKey.set(key, column);
-  return column;
-}
-
-/** Adds an item → its index, or -1 past the item limit. */
-function addItem(board, { name, group, parent = null }) {
-  if (board.items.length >= board.limit) {
-    board.dropped += 1;
-    return -1;
-  }
-  board.items.push({
-    source_id: `i${board.items.length + 1}`,
-    name,
-    group_source_id: group,
-    parent_source_id: parent,
-    values: {},
-    created_at: null,
-    creator_source_id: null,
-    updates: [],
-  });
-  return board.items.length - 1;
-}
-
-function addCell(column, { index, text, color }) {
-  if (text === "") return;
-  column.cells.push([index, text]);
-  const key = text.toLowerCase();
-  if (color?.fill && !column.fills.has(key)) column.fills.set(key, color.fill);
-}
-
-/** Header cells → distinct titles ("Column 3" for blanks, "X (2)" repeats). */
-function titlesOf(cells, width) {
-  const seen = new Map();
-  return Array.from({ length: width }, (_, index) => {
-    const base = cells[index] || `Column ${index + 1}`;
-    const key = base.toLowerCase();
-    const n = (seen.get(key) ?? 0) + 1;
-    seen.set(key, n);
-    return n === 1 ? base : `${base} (${n})`;
-  });
-}
-
-const filled = (row) => row.reduce((n, cell) => n + (cell === "" ? 0 : 1), 0);
-const firstFilled = (row) => row.findIndex((cell) => cell !== "");
+// Rows read between the conversion's yields (`../slices.js`).
+const ROWS_PER_STEP = 256;
 
 // ------------------------------------------------------------------ table
 
@@ -158,7 +90,7 @@ function groupColumn(titles, rows, ctx) {
 }
 
 /** A table: the first row is the header (see the module comment). */
-function readTable(rows, ctx) {
+function* readTable(rows, ctx) {
   const { board } = ctx;
   const [header = [], ...body] = rows.filter((row) => filled(row) > 0);
   const width = body.reduce(
@@ -176,7 +108,8 @@ function readTable(rows, ctx) {
       : columnFor(board, { key: `${at}`, title }),
   );
   const groups = new Map();
-  for (const row of body) {
+  for (const [at, row] of body.entries()) {
+    if (at % ROWS_PER_STEP === 0) yield;
     const label = groupAt === -1 ? "" : (row[groupAt] ?? "");
     const key = (label || DEFAULT_GROUP).toLowerCase();
     if (!groups.has(key)) groups.set(key, addGroup(board, { title: label }));
@@ -185,8 +118,8 @@ function readTable(rows, ctx) {
       group: groups.get(key),
     });
     if (index === -1) continue;
-    for (const [at, column] of columns.entries())
-      if (column) addCell(column, { index, text: row[at] ?? "" });
+    for (const [col, column] of columns.entries())
+      if (column) addCell(board, column, { index, text: row[col] ?? "" });
   }
   if (board.groups.length === 0) addGroup(board, { title: DEFAULT_GROUP });
 }
@@ -275,7 +208,8 @@ function readItemRow(ctx, { row, at, header, parent }) {
       column = columnFor(board, { key, title, extra });
       header.map.set(col, column);
     }
-    addCell(column, { index, text: row[col], color: ctx.colorAt(at, col) });
+    const color = ctx.colorAt(at, col);
+    addCell(board, column, { index, text: row[col], color });
   }
   return board.items[index].source_id;
 }
@@ -313,52 +247,17 @@ const ROW_READERS = {
   },
 };
 
-function readMonday(rows, shape, ctx) {
+function* readMonday(rows, shape, ctx) {
   ctx.state = { group: null, header: null, sub: null, parent: null };
   ctx.special = [shape.nameTitle];
   for (let at = shape.start; at < rows.length; at += 1) {
+    if (at % ROWS_PER_STEP === 0) yield;
     const kind = rowKind(rows, at, { state: ctx.state, shape });
     ROW_READERS[kind](ctx, { row: rows[at], at });
   }
 }
 
 // ----------------------------------------------------------------- columns
-
-/** Subitem columns join item columns of the same title and type. */
-function mergeSubitemColumns(columns) {
-  const items = new Map();
-  for (const column of columns)
-    if (!column.subitem) items.set(column.title.toLowerCase(), column);
-  const titles = new Set(columns.map((column) => column.title.toLowerCase()));
-  const out = [];
-  for (const column of columns) {
-    if (!column.subitem) {
-      out.push(column);
-      continue;
-    }
-    const target = items.get(column.title.toLowerCase());
-    // An item column without values takes the subitem column's type.
-    const open = target?.cells.length === 0 && !target.overridden;
-    if (open) target.type = column.type;
-    const fits =
-      target && (column.cells.length === 0 || target.type === column.type);
-    if (fits) {
-      for (const cell of column.cells) target.cells.push(cell);
-      for (const [key, fill] of column.fills)
-        if (!target.fills.has(key)) target.fills.set(key, fill);
-      continue;
-    }
-    if (target) {
-      let title = `${column.title} (subitem)`;
-      for (let n = 2; titles.has(title.toLowerCase()); n += 1)
-        title = `${column.title} (subitem ${n})`;
-      titles.add(title.toLowerCase());
-      column.title = title;
-    }
-    out.push(column);
-  }
-  return out;
-}
 
 function reportOverrides(ctx) {
   const special = new Set((ctx.special ?? []).map((t) => t.toLowerCase()));
@@ -372,7 +271,7 @@ function reportOverrides(ctx) {
   }
 }
 
-function typedColumns(ctx) {
+function* typedColumns(ctx) {
   const { board } = ctx;
   const nested = board.items.some((item) => item.parent_source_id !== null);
   const lists = board.columns.filter((column) => column.list && nested);
@@ -381,13 +280,21 @@ function typedColumns(ctx) {
     ctx.warn(BOARD_PATH, "subitems_column", message);
   }
   const kept = board.columns.filter((column) => !lists.includes(column));
-  for (const column of kept) columnType(column, ctx.overrides);
+  for (const column of kept) {
+    columnType(column, ctx.overrides);
+    yield;
+  }
   reportOverrides(ctx);
   return mergeSubitemColumns(kept);
 }
 
 function reportLimits(ctx, { extraRows = 0, truncated = false }) {
   const { board } = ctx;
+  if (board.cellDropped > 0) {
+    const limit = board.cellLimit.toLocaleString("en-US");
+    const message = `Only the first ${board.items.length} items were imported: one import holds at most ${limit} values, so ${board.cellDropped} more rows were left out`;
+    ctx.warn(BOARD_PATH, "too_many_values", message);
+  }
   const left = board.dropped + extraRows;
   if (left > 0 || truncated) {
     const more = left > 0 ? `; ${left} more rows were left out` : "";
@@ -401,9 +308,10 @@ function reportLimits(ctx, { extraRows = 0, truncated = false }) {
 }
 
 /** The finished snapshot board. */
-function finishBoard(ctx, { name, description }) {
+function* finishBoard(ctx, { name, description }) {
   const { board, users } = ctx;
-  const columns = convertColumns(typedColumns(ctx), board.items, ctx);
+  const typed = yield* typedColumns(ctx);
+  const columns = yield* convertColumnsSteps(typed, board.items, ctx);
   const ids = [...users.keys()];
   if (ids.length > BOARD_LIMITS.members) {
     const message = `${ids.length} people are named; only the first ${BOARD_LIMITS.members} were added as board members`;
@@ -446,36 +354,50 @@ function readFile(file) {
   return { kind, bytes, name };
 }
 
-function itemLimit(options) {
-  const asked = options?.limits?.items;
-  return Number.isSafeInteger(asked) && asked > 0
-    ? Math.min(asked, FILE_LIMITS.rows)
-    : FILE_LIMITS.rows;
+/** `options.limits[key]` when it lowers `max`, else `max`. */
+function limitOf(options, key, max) {
+  const asked = options?.limits?.[key];
+  return Number.isSafeInteger(asked) && asked > 0 ? Math.min(asked, max) : max;
 }
 
-const trimRows = (rows) => rows.map((row) => row.map((cell) => cell.trim()));
+/** `rows` with trimmed cells, in steps. */
+function* trimRows(rows) {
+  const out = [];
+  for (const [at, row] of rows.entries()) {
+    if (at % ROWS_PER_STEP === 0) yield;
+    out.push(row.map((cell) => cell.trim()));
+  }
+  return out;
+}
 
-function readCsvFile(bytes, ctx) {
+function* readCsvFile(bytes, ctx) {
   const { text, encoding } = decodeText(bytes);
   if (encoding === "windows-1252") {
     const message = "The file is not UTF-8; it was read as Windows-1252";
     ctx.warn(BOARD_PATH, "encoding", message);
   }
-  const parsed = parseCsv(text, {
+  const parsed = yield* parseCsvSteps(text, {
     maxRows: ctx.board.limit,
+    maxCells: ctx.board.cellLimit,
     signal: ctx.signal,
   });
+  ctx.board.cellDropped += parsed.cellRows;
+  if (parsed.strayQuotes > 0) {
+    const message = `${parsed.strayQuotes} quoted values have text after their closing quote (the first in line ${parsed.strayRecord}); it was kept as written, so those rows may have fewer columns than the header`;
+    ctx.warn(BOARD_PATH, "csv_malformed_quote", message);
+  }
   return {
-    rows: trimRows(parsed.rows),
+    rows: yield* trimRows(parsed.rows),
     label: `CSV file ${ctx.fileName}`,
     extraRows: parsed.extraRows,
     droppedCells: parsed.droppedCells,
   };
 }
 
-function readXlsxFile(bytes, ctx) {
+function* readXlsxFile(bytes, ctx) {
   const rows = Math.min(XLSX_LIMITS.rows, 2 * ctx.board.limit + 1_000);
-  const book = readXlsx(bytes, { limits: { rows }, signal: ctx.signal });
+  const limits = { rows };
+  const book = yield* readXlsxSteps(bytes, { limits, signal: ctx.signal });
   if (book.sheets > 1) {
     const message = `Only the first sheet “${book.sheet}” was imported; ${book.sheets - 1} other sheets were left out`;
     ctx.warn(BOARD_PATH, "other_sheets", message);
@@ -486,7 +408,7 @@ function readXlsxFile(bytes, ctx) {
   }
   ctx.colorAt = (at, col) => book.colors.get(`${at}:${col}`) ?? null;
   return {
-    rows: trimRows(book.rows),
+    rows: yield* trimRows(book.rows),
     label: `Excel workbook ${ctx.fileName}`,
     truncated: book.truncated,
     droppedCells: book.droppedCells,
@@ -500,7 +422,11 @@ function createContext({ name, options, signal }) {
     signal,
     warnings,
     warn: (path, code, message) => warnings.push({ code, message, path }),
-    board: createBoard({ limit: itemLimit(options) }),
+    board: createBoard({
+      limit: limitOf(options, "items", FILE_LIMITS.rows),
+      // Not a route option (the routes refuse it): tests lower it.
+      cellLimit: limitOf(options, "values", SNAPSHOT_LIMITS.values),
+    }),
     overrides: readOverrides(options?.column_types),
     users: new Map(),
     maxUsers: SNAPSHOT_LIMITS.users,
@@ -518,16 +444,16 @@ export async function scan({
 } = {}) {
   const { kind, bytes, name } = readFile(file);
   const ctx = createContext({ name, options, signal });
+  const sliced = (steps) => drainSliced(steps, { signal });
   onProgress({
     phase: "reading",
     done: 0,
     total: 1,
     message: `Reading ${name}`,
   });
-  await nextTurn();
-  throwIfAborted(signal);
-  const read =
-    kind === "csv" ? readCsvFile(bytes, ctx) : readXlsxFile(bytes, ctx);
+  const read = await sliced(
+    kind === "csv" ? readCsvFile(bytes, ctx) : readXlsxFile(bytes, ctx),
+  );
   if (read.rows.length === 0)
     throw new ImportError("EMPTY_FILE", "The file has no rows");
   if (read.droppedCells > 0) {
@@ -540,18 +466,16 @@ export async function scan({
     total: read.rows.length,
     message: "Reading rows",
   });
-  await nextTurn();
-  throwIfAborted(signal);
   const shape = kind === "xlsx" ? mondayShape(read.rows) : null;
-  if (shape) readMonday(read.rows, shape, ctx);
-  else readTable(read.rows, ctx);
+  await sliced(
+    shape ? readMonday(read.rows, shape, ctx) : readTable(read.rows, ctx),
+  );
   reportLimits(ctx, read);
   const title =
     shape?.title ?? (name.replace(EXTENSION, "").trim() || "Imported board");
-  const board = finishBoard(ctx, {
-    name: title,
-    description: shape?.description,
-  });
+  const board = await sliced(
+    finishBoard(ctx, { name: title, description: shape?.description }),
+  );
   const total = board.items.length;
   onProgress({
     phase: "converting",

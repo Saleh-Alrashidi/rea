@@ -26,9 +26,11 @@
 import { UpstreamError, createUpstream, throwIfAborted } from "../upstream.js";
 import { UPDATES_PER_ITEM, addItems, createBoard } from "./monday-board.js";
 import {
+  createProgress,
   createReport,
   idOf,
   isObject,
+  itemRoom,
   limitHit,
   listOf,
   scopeAt,
@@ -57,6 +59,10 @@ const PAGE = Object.freeze({
   blocks: 100,
 });
 const MAX_PAGES = 400;
+// monday may answer fewer doc blocks per page than asked for (a community
+// report says 25): a first page of at least this many blocks is paged on,
+// with its own length as the page size, until a shorter page.
+const MIN_BLOCK_PAGE = 25;
 const MAX_FAILURES = 3;
 const FATAL = new Set(["INVALID_TOKEN", "ABORTED", "UPSTREAM_CONFIG"]);
 const RETRY_CODES = new Set([
@@ -315,10 +321,7 @@ async function readItems(ctx, state) {
   const what = `Items of board "${state.board.name}"`;
   let cursor = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    if (ctx.counts.items >= ctx.limits.items) {
-      limitHit(ctx, "items", state.path);
-      return;
-    }
+    if (!itemRoom(ctx, state.path)) return;
     const first = cursor === null;
     const run = itemsRequest(ctx, state, cursor);
     const result = await guarded(ctx, state.path, what, run);
@@ -329,6 +332,10 @@ async function readItems(ctx, state) {
       : result.data?.next_items_page;
     if (!isObject(data)) return;
     addItems(ctx, state, data.items);
+    const { index, total } = ctx.at;
+    const read = state.board.items.length.toLocaleString("en-US");
+    const message = `Reading board "${state.board.name}": ${read} items so far`;
+    ctx.progress("items", index, total, message);
     cursor = idOf(data.cursor);
     if (cursor === null) return;
   }
@@ -339,25 +346,27 @@ async function readItems(ctx, state) {
 async function readBoards(ctx, boards, signal) {
   for (const [index, raw] of boards.entries()) {
     throwIfAborted(signal);
-    if (ctx.counts.items >= ctx.limits.items) {
-      limitHit(ctx, "items", "workspaces");
-      return;
-    }
+    if (!itemRoom(ctx, "workspaces")) return;
     const target = workspaceFor(ctx, raw.workspace?.id);
     const path = `${target.path}.boards[${target.ws.boards.length}]`;
     const state = createBoard(ctx, raw, path);
     const message = `Reading board "${state.board.name}"`;
+    ctx.at = { index, total: boards.length };
     ctx.progress("items", index, boards.length, message);
     await readItems(ctx, state);
     target.ws.boards.push(state.board);
   }
 }
 
-async function moreBlocks(ctx, id, path) {
+/**
+ * The blocks after the first `size` of doc `id`, `size` per page; one page
+ * past LIMITS.blocks at most, so the snapshot reports a longer doc.
+ */
+async function moreBlocks(ctx, { id, path, size }) {
   const blocks = [];
-  const lastPage = Math.ceil(LIMITS.blocks / PAGE.blocks) + 1;
+  const lastPage = Math.ceil(LIMITS.blocks / size) + 1;
   for (let page = 2; page <= lastPage; page += 1) {
-    const variables = { doc: id, limit: PAGE.blocks, page };
+    const variables = { doc: id, limit: size, page };
     const result = await guarded(ctx, path, "Doc blocks", () =>
       gql(ctx, BLOCKS_QUERY, variables),
     );
@@ -366,7 +375,7 @@ async function moreBlocks(ctx, id, path) {
     const rows = result.data?.docs?.[0]?.blocks;
     if (!Array.isArray(rows)) return blocks;
     blocks.push(...rows.filter(isObject));
-    if (rows.length < PAGE.blocks) return blocks;
+    if (rows.length < size) return blocks;
   }
   return blocks;
 }
@@ -380,8 +389,10 @@ async function addDoc(ctx, raw) {
     `${target.path}.docs[${target.ws.docs.length}]`,
   );
   let blocks = listOf(raw.blocks);
-  if (blocks.length >= PAGE.blocks) {
-    blocks = blocks.concat(await moreBlocks(ctx, id, scope.path));
+  if (blocks.length >= MIN_BLOCK_PAGE) {
+    const size = Math.min(blocks.length, PAGE.blocks);
+    const more = await moreBlocks(ctx, { id, path: scope.path, size });
+    blocks = blocks.concat(more);
   }
   // Public monday docs are open to their workspace; others stay private.
   const visibility = raw.doc_kind === "public" ? "workspace" : "private";
@@ -427,26 +438,24 @@ function readOptions(options) {
 }
 
 function createContext({ token, signal, onProgress, transport }, settings) {
+  const reporter = createProgress(onProgress, "monday.com");
   const client = createUpstream({
     source: "monday",
     token,
     signal,
-    tokenRejectedStatuses: [401, 403],
+    tokenRejected: ({ status }) => status === 401 || status === 403,
+    onWait: reporter.wait,
     env: transport?.env,
     limits: transport?.limits,
     clock: transport?.clock,
   });
-  const report = (phase, done, total, message) => {
-    if (typeof onProgress === "function") {
-      onProgress({ phase, done, total, message });
-    }
-  };
+  const report = reporter.progress;
   return {
     client,
     report: createReport(),
     limits: settings.limits,
     flags: { updates: settings.updates, subitems: settings.subitems },
-    counts: { items: 0, updates: 0, docs: 0 },
+    counts: { items: 0, values: 0, updates: 0, docs: 0 },
     users: new Map(),
     workspaces: [],
     workspaceIndex: new Map(),

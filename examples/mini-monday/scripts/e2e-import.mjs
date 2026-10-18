@@ -283,7 +283,8 @@ async function freshSource(run) {
   const page = run.alex;
   await openHash(page, run, "#/import");
   if ((await stepTitle(page)) === "Import finished") {
-    await page.locator("button", { hasText: "Import more" }).click();
+    // The done step offers it under its summary and at the end.
+    await page.locator("button", { hasText: "Import more" }).first().click();
   }
   await waitStep(page, "Choose what to import");
 }

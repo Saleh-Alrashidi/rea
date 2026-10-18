@@ -11,14 +11,24 @@
 import { hashFromUrl } from "../../router.js";
 
 const CREATED = Object.freeze([
-  { key: "workspaces", label: "Workspaces", icon: "workspace" },
-  { key: "boards", label: "Boards", icon: "grid" },
-  { key: "items", label: "Items", icon: "item" },
-  { key: "updates", label: "Updates", icon: "chat" },
-  { key: "docs", label: "Docs", icon: "docs" },
-  { key: "users", label: "People invited", icon: "userPlus" },
-  { key: "groups", label: "Groups", icon: "table" },
-  { key: "columns", label: "Columns", icon: "kanban" },
+  {
+    key: "workspaces",
+    one: "Workspace",
+    label: "Workspaces",
+    icon: "workspace",
+  },
+  { key: "boards", one: "Board", label: "Boards", icon: "grid" },
+  { key: "items", one: "Item", label: "Items", icon: "item" },
+  { key: "updates", one: "Update", label: "Updates", icon: "chat" },
+  { key: "docs", one: "Doc", label: "Docs", icon: "docs" },
+  {
+    key: "users",
+    one: "Person invited",
+    label: "People invited",
+    icon: "userPlus",
+  },
+  { key: "groups", one: "Group", label: "Groups", icon: "table" },
+  { key: "columns", one: "Column", label: "Columns", icon: "kanban" },
 ]);
 
 const LINK_KINDS = Object.freeze([
@@ -45,12 +55,12 @@ const KIND_NAMES = Object.freeze({
 const count = (value) =>
   Number.isSafeInteger(value) && value >= 0 ? value : 0;
 
-/** `[{ key, label, icon, value }]` for every created count. */
+/** `[{ key, label, icon, value }]` for every created count ("1 Board"). */
 export function createdTiles(created = {}) {
-  return CREATED.map((entry) => ({
-    ...entry,
-    value: count(created[entry.key]),
-  }));
+  return CREATED.map(({ one, ...entry }) => {
+    const value = count(created[entry.key]);
+    return { ...entry, label: value === 1 ? one : entry.label, value };
+  });
 }
 
 /** Links grouped by kind: `[{ kind, title, icon, links: [{ title, href }] }]`. */

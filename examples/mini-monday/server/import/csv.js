@@ -9,7 +9,9 @@
  *   them). Blank records are skipped. It keeps the first record and at
  *   most `maxRows` more, and at most `maxColumns` fields per record, and
  *   counts what it left out. A quoted field that never ends is an
- *   INVALID_CSV error (it would swallow the rest of the file).
+ *   INVALID_CSV error (it would swallow the rest of the file); text after
+ *   a closing quote is kept and counted (`strayQuotes`, not RFC 4180).
+ *   `parseCsvSteps` is the same reader as a generator for `../slices.js`.
  * - `inferType(values, title)` and `columnType(column, overrides)` pick a
  *   column's type from its non-empty, trimmed values (the override hook:
  *   `options.column_types` by column title, case-insensitive, wins).
@@ -18,7 +20,8 @@
  *   workbook cells and CSV text share one format.
  * - `convertColumns(columns, items, ctx)` turns the collected cell texts
  *   into snapshot values, status labels and people (users), with one
- *   warning per column for what changed.
+ *   warning per column for what changed (`convertColumnsSteps` yields
+ *   after each column).
  *
  * Formula-looking values (`=`, `+`, `-` or `@` first, unless the value is
  * a plain number such as `-5`) are never evaluated or parsed: a column
@@ -29,6 +32,7 @@ import { isValidStoredValue } from "../column-values.js";
 import { InputError } from "../store-state.js";
 import { readEmail } from "../store/people.js";
 import { ImportError } from "./engine.js";
+import { drain, throwIfAborted } from "./slices.js";
 import { MAX_LABELS } from "./snapshot-columns.js";
 import { WORKLANE_COLORS, nearestColor } from "./snapshot-rules.js";
 
@@ -46,7 +50,10 @@ const QUOTE = 34;
 const CR = 13;
 const LF = 10;
 const DELIMITERS = Object.freeze([",", ";", "\t"]);
-const ABORT_EVERY = 1024;
+// Records between the reader's yields (and abort checks).
+const RECORDS_PER_STEP = 256;
+// Items whose values are built between yields.
+const ITEMS_PER_STEP = 256;
 const NUMBER = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d{1,3})?$/i;
 // Doubles keep 15 significant digits; longer numbers stay text (IDs).
 const MAX_DIGITS = 15;
@@ -57,7 +64,8 @@ const FORMULA_START = /^[=+\-@]/;
 const MAX_SERIAL = 2_958_465;
 const DAY = 86_400;
 const PEOPLE_TITLE = /^(?:assignees?|owners?|persons?|people)$/i;
-const NAMED_EMAIL = /^(.*?)\s*<([^<>\s]+)>$/;
+// The "<email>" tail of "Name <email>" (from the last "<", so linear).
+const EMAIL_TAIL = /^<([^<>\s]+)>$/;
 const TOKEN_SPLIT = /[,;\n]/;
 /** Colors of common status and priority words; others cycle the palette. */
 const KNOWN_COLORS = Object.freeze({
@@ -87,13 +95,6 @@ const CP1252 =
   "\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f" +
   "\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178";
 const PALETTE = WORKLANE_COLORS.filter((color) => color !== "#c4c4c4");
-
-export const aborted = () =>
-  new ImportError("ABORTED", "The import was cancelled");
-
-export function throwIfAborted(signal) {
-  if (signal?.aborted) throw aborted();
-}
 
 /** The color for status label or group `title`, the `index`th of its kind. */
 export function paletteColor(title, index) {
@@ -150,7 +151,10 @@ function sniffDelimiter(text) {
   return best;
 }
 
-/** A quoted field from `start` (after its quote) → `{ value, next }`. */
+/**
+ * A quoted field from `start` (after its quote) → `{ value, next, stray }`
+ * (`stray`: text followed the closing quote).
+ */
 function readQuoted(text, { start, sep, record }) {
   let value = "";
   let at = start;
@@ -169,14 +173,19 @@ function readQuoted(text, { start, sep, record }) {
     // Text after the closing quote is kept as written (not RFC 4180).
     let end = close + 1;
     while (end < text.length && !isBreak(text.charCodeAt(end), sep)) end += 1;
-    return { value: value + text.slice(close + 1, end), next: end };
+    const stray = end > close + 1;
+    return { value: value + text.slice(close + 1, end), next: end, stray };
   }
 }
 
-/** The record at `at` → `{ fields, next }` (`next` past its line break). */
+/**
+ * The record at `at` → `{ fields, next, stray }` (`next` past its line
+ * break; `stray` counts fields with text after their closing quote).
+ */
 function readRecord(text, { at, sep, record }) {
   const fields = [];
   let next = at;
+  let stray = 0;
   for (;;) {
     let field;
     if (text.charCodeAt(next) === QUOTE) {
@@ -187,6 +196,7 @@ function readRecord(text, { at, sep, record }) {
       field = { value: text.slice(next, end), next: end };
     }
     fields.push(field.value);
+    if (field.stray) stray += 1;
     next = field.next;
     const code = text.charCodeAt(next);
     if (code === sep) {
@@ -195,45 +205,75 @@ function readRecord(text, { at, sep, record }) {
     }
     if (code === CR) next += text.charCodeAt(next + 1) === LF ? 2 : 1;
     else if (code === LF) next += 1;
-    return { fields, next };
+    return { fields, next, stray };
   }
+}
+
+/** Adds non-blank record `fields` to `result` within `limits`. */
+function keepRecord(result, fields, limits) {
+  const { maxRows, maxColumns, maxCells } = limits;
+  const { rows } = result;
+  let cells = 0;
+  for (const field of fields) if (field.trim() !== "") cells += 1;
+  if (rows.length > maxRows) {
+    result.extraRows += 1;
+    return;
+  }
+  // Like the file connector's item rule: a row while a full one fits.
+  if (result.cells + maxColumns > maxCells) {
+    result.cellRows += 1;
+    return;
+  }
+  result.width = Math.max(result.width, fields.length);
+  for (const field of fields.slice(maxColumns))
+    if (field.trim() !== "") result.droppedCells += 1;
+  const kept =
+    fields.length > maxColumns ? fields.slice(0, maxColumns) : fields;
+  result.cells += Math.min(cells, kept.length);
+  rows.push(kept);
 }
 
 /**
  * Parses `text` (see the module comment) → `{ rows, delimiter, extraRows,
- * droppedCells, width }`: `rows[0]` is the first (header) record,
- * `extraRows` the non-blank records past `maxRows`, `droppedCells` the
- * non-empty fields past `maxColumns`, `width` the widest record.
+ * cellRows, droppedCells, width, cells, strayQuotes, strayRecord }`:
+ * `rows[0]` is the first (header) record, `extraRows` the non-blank
+ * records past `maxRows`, `cellRows` those left out once the kept
+ * non-empty fields (`cells`) reach `maxCells`, `droppedCells` the
+ * non-empty fields past `maxColumns`, `width` the widest record,
+ * `strayQuotes` the fields with text after their closing quote (the first
+ * in record `strayRecord`, 1-based).
  */
-export function parseCsv(text, options = {}) {
-  const {
-    maxRows = FILE_LIMITS.rows,
-    maxColumns = FILE_LIMITS.columns,
-    signal = null,
-  } = options;
+export function* parseCsvSteps(text, options = {}) {
+  const limits = {
+    maxRows: options.maxRows ?? FILE_LIMITS.rows,
+    maxColumns: options.maxColumns ?? FILE_LIMITS.columns,
+    maxCells: options.maxCells ?? Number.POSITIVE_INFINITY,
+  };
   const delimiter = sniffDelimiter(text);
   const sep = delimiter.charCodeAt(0);
-  const rows = [];
-  const result = { rows, delimiter, extraRows: 0, droppedCells: 0, width: 0 };
+  const result = { rows: [], delimiter, extraRows: 0, cellRows: 0 };
+  Object.assign(result, { droppedCells: 0, width: 0, cells: 0 });
+  Object.assign(result, { strayQuotes: 0, strayRecord: null });
   let at = 0;
   for (let record = 1; at < text.length; record += 1) {
-    if (record % ABORT_EVERY === 0) throwIfAborted(signal);
-    const { fields, next } = readRecord(text, { at, sep, record });
-    at = next;
-    if (fields.every((field) => field.trim() === "")) continue;
-    if (rows.length > maxRows) {
-      result.extraRows += 1;
-      continue;
+    if (record % RECORDS_PER_STEP === 0) {
+      throwIfAborted(options.signal);
+      yield;
     }
-    result.width = Math.max(result.width, fields.length);
-    for (const field of fields.slice(maxColumns))
-      if (field.trim() !== "") result.droppedCells += 1;
-    rows.push(
-      fields.length > maxColumns ? fields.slice(0, maxColumns) : fields,
-    );
+    const { fields, next, stray } = readRecord(text, { at, sep, record });
+    at = next;
+    if (stray > 0) {
+      result.strayQuotes += stray;
+      result.strayRecord ??= record;
+    }
+    if (fields.some((field) => field.trim() !== ""))
+      keepRecord(result, fields, limits);
   }
   return result;
 }
+
+/** `parseCsvSteps` run to its end. */
+export const parseCsv = (text, options) => drain(parseCsvSteps(text, options));
 
 // --------------------------------------------------------------- inference
 
@@ -320,9 +360,11 @@ function emailOf(text) {
  * name, email }`, or null (too long, or formula-like).
  */
 export function personOf(token) {
-  const named = NAMED_EMAIL.exec(token);
-  const email = emailOf(named ? named[2] : token);
-  const name = email === null ? token : named?.[1].trim() || email;
+  const lt = token.lastIndexOf("<");
+  const named = lt === -1 ? null : EMAIL_TAIL.exec(token.slice(lt));
+  const email = emailOf(named ? named[1] : token);
+  const spelled = named ? token.slice(0, lt).trim() : "";
+  const name = email === null ? token : spelled || email;
   if (name.length > FILE_LIMITS.person || isFormulaLike(name)) return null;
   const key = email === null ? `name:${name}` : `email:${email}`;
   return { source_id: key.toLowerCase(), name, email };
@@ -474,24 +516,43 @@ function noteColumn(column, ctx, type) {
   }
 }
 
+function convertColumn(column, { position, pairs, ctx }) {
+  const local = { ...ctx, at: `${ctx.path}.columns[${position}]` };
+  // `{ labels }`, `{ values }` (people) or `{ type: "text" }` (fallback).
+  const typed = CONVERTERS[column.type]?.(column, local) ?? {};
+  const type = typed.type ?? column.type;
+  noteColumn(column, local, type);
+  for (const [index, text] of column.cells) {
+    const value =
+      type === "people" ? typed.values.get(index) : valueOf(type, text);
+    if (value !== undefined) pairs[index].push([column.source_id, value]);
+  }
+  const out = { source_id: column.source_id, title: column.title, type };
+  return type === "status" ? { ...out, labels: typed.labels } : out;
+}
+
 /**
  * Converts typed `columns` (see `columnType`) into snapshot columns and
- * sets `items[index].values`. `ctx`: `{ path, users (Map of source ID →
- * user), maxUsers, warn(path, code, message) }`.
+ * sets each `items[index].values` (a new object), yielding after each column and every
+ * ITEMS_PER_STEP items. `ctx`: `{ path, users (Map of source ID → user),
+ * maxUsers, warn(path, code, message) }`.
  */
-export function convertColumns(columns, items, ctx) {
-  return columns.map((column, position) => {
-    const local = { ...ctx, at: `${ctx.path}.columns[${position}]` };
-    // `{ labels }`, `{ values }` (people) or `{ type: "text" }` (fallback).
-    const typed = CONVERTERS[column.type]?.(column, local) ?? {};
-    const type = typed.type ?? column.type;
-    noteColumn(column, local, type);
-    for (const [index, text] of column.cells) {
-      const value =
-        type === "people" ? typed.values.get(index) : valueOf(type, text);
-      if (value !== undefined) items[index].values[column.source_id] = value;
-    }
-    const out = { source_id: column.source_id, title: column.title, type };
-    return type === "status" ? { ...out, labels: typed.labels } : out;
-  });
+export function* convertColumnsSteps(columns, items, ctx) {
+  const out = [];
+  // Each item's values are built at once: adding hundreds of keys to
+  // thousands of objects column by column is far slower (V8 maps).
+  const pairs = items.map(() => []);
+  for (const [position, column] of columns.entries()) {
+    out.push(convertColumn(column, { position, pairs, ctx }));
+    yield;
+  }
+  for (const [index, item] of items.entries()) {
+    if (index % ITEMS_PER_STEP === 0) yield;
+    item.values = Object.fromEntries(pairs[index]);
+  }
+  return out;
 }
+
+/** `convertColumnsSteps` run to its end. */
+export const convertColumns = (columns, items, ctx) =>
+  drain(convertColumnsSteps(columns, items, ctx));

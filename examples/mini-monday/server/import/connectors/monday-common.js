@@ -6,6 +6,11 @@
  */
 import { hexColor, isObject, str } from "./common.js";
 
+/**
+ * monday doc block types by `nameKey`: reads name them with spaces
+ * ("normal text", `DocumentBlock.type` is a free string), the input enum
+ * of `create_doc_block` (`DocBlockContentType`) with underscores.
+ */
 const BLOCK_TYPES = Object.freeze({
   normal_text: "paragraph",
   large_title: "heading1",
@@ -68,16 +73,20 @@ export function settingsOf(text) {
   return isObject(value) ? value : {};
 }
 
+/** A monday name as a lookup key: "Normal text" / "normal-text" → "normal_text". */
+const nameKey = (value) =>
+  str(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
 /**
  * A monday color as `#rrggbb`: monday color names map to colors, then as
  * `hexColor` (hex colors, `fallback` when absent, anything else passed
  * through for the snapshot's color check).
  */
 export function colorOf(value, fallback) {
-  const name = str(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
+  const name = nameKey(value);
   return Object.hasOwn(NAMED_COLORS, name)
     ? NAMED_COLORS[name]
     : hexColor(value, fallback);
@@ -112,19 +121,21 @@ function deltaText(content) {
 }
 
 /**
- * One monday doc block → `{ type, text, checked? }`. Unknown monday types
- * keep their name (the snapshot turns them into paragraphs and reports
- * them) with their text, link or "[type]" as text.
+ * One monday doc block → `{ type, text, checked? }` (either spelling of
+ * the type, see BLOCK_TYPES). Unknown monday types keep their name (the
+ * snapshot turns them into paragraphs and reports them) with their text,
+ * link or "[type]" as text.
  */
 function convertBlock(scope, raw) {
-  const kind = str(raw.type).slice(0, 40);
+  const kind = str(raw.type).trim().slice(0, 40);
   const content = parseJson(raw.content);
   const { text, embeds } = deltaText(content);
   if (embeds > 0) {
     const message = "Mentions and other embedded objects were left out";
     scope.count("embeds_dropped", message);
   }
-  const type = BLOCK_TYPES[kind];
+  const key = nameKey(kind);
+  const type = Object.hasOwn(BLOCK_TYPES, key) ? BLOCK_TYPES[key] : null;
   if (!type) {
     const url = str(content?.url);
     const link = /^https?:\/\//i.test(url) ? url : `[${kind || "block"}]`;

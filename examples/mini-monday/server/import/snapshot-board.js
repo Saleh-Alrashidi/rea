@@ -3,11 +3,12 @@
  * items with their values (`snapshot-columns.js`), subitem parents and
  * updates. Used by `validateSnapshot`; see `snapshot.js` for what errors
  * and warnings mean. Item and parent references that cannot be resolved
- * are cleared with a warning, and parent cycles are broken.
+ * are cleared with a warning, and parent cycles are broken. `readBoard`
+ * is a generator that yields every ITEMS_PER_STEP items (`slices.js`).
  */
 import { ACCESS_ROLES, ROLE_RANK } from "../access.js";
 import { LIMITS } from "../input.js";
-import { BOARD_KINDS, GROUP_COLOR } from "../store-state.js";
+import { BOARD_KINDS, GROUP_COLOR, deepFreeze } from "../store-state.js";
 import { capLabels, readColumns, readValues } from "./snapshot-columns.js";
 import {
   readArray,
@@ -25,6 +26,7 @@ import {
 } from "./snapshot-rules.js";
 
 export const BOARD_LIMITS = Object.freeze({ members: 1_000, groups: 500 });
+const ITEMS_PER_STEP = 64;
 
 // ------------------------------------------------------------------- items
 
@@ -245,7 +247,7 @@ function readMembers(c, raw, { path, users, scope }) {
   return [...roles].map(([user_source_id, role]) => ({ user_source_id, role }));
 }
 
-function readItems(c, raw, ctx) {
+function* readItems(c, raw, ctx) {
   const { path, totals } = ctx;
   const list = readArray(c, raw, {
     path,
@@ -259,9 +261,27 @@ function readItems(c, raw, ctx) {
     return null;
   }
   const taken = new Set();
-  const items = list.map((entry, index) =>
-    readItem(c, entry, { ...ctx, path: `${path}[${index}]`, taken }),
-  );
+  const items = [];
+  for (const [index, entry] of list.entries()) {
+    if (index % ITEMS_PER_STEP === ITEMS_PER_STEP - 1) yield;
+    const item = readItem(c, entry, {
+      ...ctx,
+      path: `${path}[${index}]`,
+      taken,
+    });
+    items.push(item);
+    if (item === null) continue;
+    // Frozen here, in steps, so freezing the whole snapshot is quick.
+    deepFreeze(item.values);
+    deepFreeze(item.updates);
+    // What one import can store (snapshot.js SNAPSHOT_LIMITS.values).
+    totals.values += Object.keys(item.values).length;
+    if (totals.values > totals.maxValues) {
+      const limit = totals.maxValues.toLocaleString("en-US");
+      c.error(path, "too_large", `At most ${limit} values in all`);
+      return null;
+    }
+  }
   return items.includes(null) ? null : items;
 }
 
@@ -273,11 +293,12 @@ const publicColumn = ({ source_id, title, type, original_type, labels }) =>
 const publicItem = ({ path: _path, ...item }) => item;
 
 /**
- * Reads one board at `path`. `users` is the Set of user source IDs and
- * `totals` counts items and updates across boards (`{ items, updates,
- * maxItems, maxUpdates }`). Returns the normalized board or null (errors).
+ * Reads one board at `path` (a generator, see the module comment). `users`
+ * is the Set of user source IDs and `totals` counts items, values and
+ * updates across boards (`{ items, values, updates, maxItems, maxValues,
+ * maxUpdates }`). Returns the normalized board or null (errors).
  */
-export function readBoard(c, raw, { path, users, totals }) {
+export function* readBoard(c, raw, { path, users, totals }) {
   if (!readObject(c, raw, path)) return null;
   const head = {
     source_id: readSourceId(c, raw.source_id, `${path}.source_id`),
@@ -312,7 +333,7 @@ export function readBoard(c, raw, { path, users, totals }) {
   }
   const byGroup = new Map((groups ?? []).map((g) => [g.source_id, g]));
   const itemPath = `${path}.items`;
-  const items = readItems(c, raw.items, {
+  const items = yield* readItems(c, raw.items, {
     path: itemPath,
     scope,
     columns: byColumn,

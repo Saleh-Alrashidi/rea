@@ -12,7 +12,9 @@
  *
  * The token lives only in the client's closure: it is sent as the
  * `Authorization` header and never appears in a URL, a log line or an error;
- * any upstream text that is put in an error passes through `redact`.
+ * any upstream text that is put in an error passes through `redact` with
+ * every form of it (`secretForms`: as sent, without a "Bearer " scheme,
+ * and URL-encoded), which the job registry uses for what a scan keeps.
  */
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -44,6 +46,9 @@ const TOKEN_PATTERN = /^[\x21-\x7e]+(?: [\x21-\x7e]+)?$/;
 const MAX_TOKEN_LENGTH = 4096;
 const MAX_MESSAGE_LENGTH = 200;
 const REDACTED = "[redacted]";
+const MIN_CREDENTIAL = 8;
+// Shorter waits (backoff between quick retries) are not announced.
+const WAIT_NOTICE_MS = 1000;
 
 /**
  * An expected upstream failure. `code` is one of INVALID_TOKEN, ABORTED,
@@ -128,13 +133,27 @@ export function upstreamUrl(base, path = "") {
   return url;
 }
 
-/** `text` with every occurrence of `secret` (raw or URL-encoded) replaced. */
+/**
+ * The texts token `token` can appear as, longest first: the header value
+ * as sent (trimmed), the credential after its scheme ("Bearer abc…" →
+ * "abc…"; the token format allows one space) when it has at least
+ * MIN_CREDENTIAL characters (shorter parts would redact ordinary words),
+ * and their URL-encoded forms.
+ */
+export function secretForms(token) {
+  if (typeof token !== "string" || token.trim() === "") return [];
+  const sent = token.trim();
+  const credential = sent.slice(sent.indexOf(" ") + 1);
+  const parts =
+    credential.length >= MIN_CREDENTIAL ? [sent, credential] : [sent];
+  const forms = parts.flatMap((form) => [form, encodeURIComponent(form)]);
+  return [...new Set(forms)].sort((a, b) => b.length - a.length);
+}
+
+/** `text` with every form of `secret` (see `secretForms`) replaced. */
 export function redact(text, secret) {
   let out = String(text ?? "");
-  if (typeof secret !== "string" || secret === "") return out;
-  for (const form of new Set([secret, encodeURIComponent(secret)])) {
-    out = out.split(form).join(REDACTED);
-  }
+  for (const form of secretForms(secret)) out = out.split(form).join(REDACTED);
   return out;
 }
 
@@ -174,8 +193,13 @@ function bounded(limits) {
 
 /**
  * A client for one scan. Options: `source` ("monday" | "clickup"), `token`,
- * `signal`, `tokenRejectedStatuses` (default [401]; these statuses become
- * INVALID_TOKEN without retrying), `perMinute` (request budget per sliding
+ * `signal`, `tokenRejected(response)` (default: HTTP 401; such answers,
+ * `{ status, headers, json }`, become INVALID_TOKEN without retrying, so a
+ * source can tell a rejected token from other refusals by their body),
+ * `onWait({ seconds, reason, status, perMinute })` (told before each wait
+ * of a second or more: `reason` "throttle" for the per-minute budget,
+ * "rate_limit" for a 429 or retry hint, "retry" for a 5xx), `perMinute`
+ * (request budget per sliding
  * minute, or null), and test seams `env`, `limits` (lower UPSTREAM_DEFAULTS)
  * and `clock` ({ now(), sleep(ms, signal) }). Throws INVALID_TOKEN for a
  * missing or malformed token and UPSTREAM_CONFIG for a bad override.
@@ -196,8 +220,12 @@ export function createUpstream(options = {}) {
     base: upstreamBase(options.source, options.env ?? process.env),
     bounds: bounded(options.limits),
     signal: options.signal ?? null,
-    rejected: new Set(options.tokenRejectedStatuses ?? [401]),
+    rejected:
+      typeof options.tokenRejected === "function"
+        ? options.tokenRejected
+        : (response) => response.status === 401,
     perMinute: Number.isInteger(options.perMinute) ? options.perMinute : null,
+    onWait: typeof options.onWait === "function" ? options.onWait : null,
     window: [],
     now: options.clock?.now ?? Date.now,
     sleep:
@@ -219,10 +247,15 @@ function safeMessage(state, text) {
     : clean;
 }
 
-async function pause(state, ms) {
+async function pause(state, ms, wait) {
   throwIfAborted(state.signal);
+  const delayMs = Math.max(0, Math.ceil(ms));
+  if (delayMs >= WAIT_NOTICE_MS && state.onWait) {
+    const seconds = Math.ceil(delayMs / 1000);
+    state.onWait({ seconds, perMinute: state.perMinute, ...wait });
+  }
   try {
-    await state.sleep(Math.max(0, Math.ceil(ms)), state.signal ?? undefined);
+    await state.sleep(delayMs, state.signal ?? undefined);
   } catch (error) {
     throwIfAborted(state.signal);
     throw error;
@@ -240,7 +273,8 @@ async function throttle(state) {
   };
   prune();
   while (state.window.length >= state.perMinute) {
-    await pause(state, state.window[0] + 60_000 - state.now());
+    const ms = state.window[0] + 60_000 - state.now();
+    await pause(state, ms, { reason: "throttle", status: null });
     prune();
   }
   state.window.push(state.now());
@@ -254,7 +288,9 @@ async function requestWithRetries(state, request) {
     const wait = retryDelay(state, response, request.retryHint, attempt);
     if (wait === null) return finish(state, response);
     if (attempt >= state.bounds.maxAttempts) throw exhausted(state, response);
-    await pause(state, wait);
+    const { status } = response;
+    const reason = status >= 500 ? "retry" : "rate_limit";
+    await pause(state, wait, { reason, status });
   }
 }
 
@@ -370,7 +406,7 @@ export function headerDelaySeconds(headers, nowMs = Date.now()) {
 
 function retryDelay(state, response, retryHint, attempt) {
   const { status } = response;
-  if (state.rejected.has(status) || (status >= 300 && status < 400)) {
+  if (state.rejected(response) || (status >= 300 && status < 400)) {
     return null;
   }
   const hint = typeof retryHint === "function" ? retryHint(response) : null;
@@ -429,7 +465,7 @@ function exhausted(state, response) {
 function finish(state, response) {
   const { status } = response;
   const { label } = state.spec;
-  if (state.rejected.has(status)) {
+  if (state.rejected(response)) {
     const message = `${label} rejected the API token (HTTP ${status})`;
     throw new UpstreamError("INVALID_TOKEN", message, { status });
   }

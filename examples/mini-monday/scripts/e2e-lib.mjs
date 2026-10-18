@@ -250,12 +250,17 @@ export async function signedIn(run, userId, options = {}) {
 }
 
 /** How far the page scrolls sideways (0 when it fits the viewport). */
+/**
+ * How far the page scrolls sideways: the document, or the app's `#page`
+ * scroller (which scrolls on its own, so the document never shows it).
+ */
 export const sidewaysOverflow = (page) =>
-  page.evaluate(
-    () =>
-      document.documentElement.scrollWidth -
-      document.documentElement.clientWidth,
-  );
+  page.evaluate(() => {
+    const doc = document.documentElement;
+    const scroller = document.querySelector("#page");
+    const inner = scroller ? scroller.scrollWidth - scroller.clientWidth : 0;
+    return Math.max(doc.scrollWidth - doc.clientWidth, inner);
+  });
 
 // -------------------------------------------------------------------- run
 

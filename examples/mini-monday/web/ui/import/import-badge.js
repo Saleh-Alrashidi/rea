@@ -45,8 +45,9 @@ function dateText(iso) {
 }
 
 /**
- * `{ label, href, title }` for `Board.import` (`{ source, source_url,
- * imported_at, imported_by }`), or null when there is none.
+ * `{ label, href, title, name }` for `Board.import` (`{ source,
+ * source_url, imported_at, imported_by }`), or null when there is none;
+ * `name` is the linked badge's accessible name (what the link does).
  */
 export function importBadgeInfo(meta) {
   if (!meta || typeof meta !== "object") return null;
@@ -61,7 +62,8 @@ export function importBadgeInfo(meta) {
   const title = href
     ? `${parts.join(" ")}. Opens the original.`
     : parts.join(" ");
-  return { label, href, title };
+  const name = href ? `${label}, open the original board (new tab)` : label;
+  return { label, href, title, name };
 }
 
 /** The badge element, or null (see the module comment). */
@@ -88,6 +90,7 @@ export function importBadge(meta) {
       target: "_blank",
       rel: "noopener noreferrer",
       title: info.title,
+      "aria-label": info.name,
     },
     content,
   );
