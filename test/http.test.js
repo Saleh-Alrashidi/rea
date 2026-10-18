@@ -9,6 +9,7 @@ import { request } from "node:http";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { signJwt } from "../server/auth.js";
+import { localModeEnv } from "../server/main.js";
 import {
   browserSession,
   gql,
@@ -479,10 +480,13 @@ test("apps server: config, SDK, app files with CSP, no cookies and no API", asyn
   }
 });
 
-/** Runs server/main.js until it prints its banner; returns the child. */
-function startMain(env) {
+/**
+ * Runs server/main.js in local mode with `env` over the `parent`
+ * environment until it prints its banner; returns the child.
+ */
+function startMain(env, parent = process.env) {
   const child = spawn(process.execPath, [MAIN], {
-    env: { ...process.env, ...env },
+    env: { ...localModeEnv(parent), ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const output = { stdout: "", stderr: "" };
@@ -504,7 +508,9 @@ test("server/main.js prints URLs and tokens and exits 0 on SIGTERM", async (t) =
     MM_APPS_PORT: "0",
     MM_DATA_FILE: ":memory:",
   };
-  const run = startMain(env);
+  // Hosted-mode variables the test runner inherits do not switch modes.
+  const inherited = { PORT: "5000", MM_SITE_PASSWORD: "a".repeat(16) };
+  const run = startMain(env, { ...process.env, ...inherited });
   t.after(() => run.child.kill("SIGKILL"));
   await run.ready;
   const lines = run.output.stdout.trimEnd().split("\n");

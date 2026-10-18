@@ -11,10 +11,15 @@
  * `crypto.timingSafeEqual`, answers a wrong password with 401
  * SITE_PASSWORD_INVALID after a fixed delay, and counts attempts per
  * client IP (`clientIp`): FAILURE_LIMIT failures within FAILURE_WINDOW_MS
- * → 429 RATE_LIMITED with `Retry-After`. An attempt is counted when it
- * starts (so parallel guesses cannot overtake the limit) and refunded
- * when it succeeds. Site sessions are browser sessions with an idle time
- * of SITE_SESSION_IDLE_MS (`startServers` sets it); signing out ends them.
+ * → 429 RATE_LIMITED with `Retry-After`. SITE_FAILURE_LIMIT failures from
+ * all clients together within the same window refuse every sign-in for
+ * the rest of it: client IPs come from `X-Forwarded-For` behind a proxy,
+ * and a client that reaches the port directly (or through a proxy that
+ * does not set the header) can name a new one per guess. An attempt is
+ * counted when it starts (so parallel guesses cannot overtake the limit)
+ * and refunded when it succeeds. Site sessions are browser sessions with
+ * an idle time of SITE_SESSION_IDLE_MS (`startServers` sets it); signing
+ * out ends them.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import path from "node:path";
@@ -36,6 +41,8 @@ import { sendFile } from "./static.js";
 export const SITE_SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
 export const SITE_PASSWORD_MIN_LENGTH = 12;
 export const FAILURE_LIMIT = 5;
+/** Failures from every client together per window (see above). */
+export const SITE_FAILURE_LIMIT = 10 * FAILURE_LIMIT;
 export const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const FAILURE_DELAY_MS = 300;
 /** The seed admin: every site sign-in starts a session for this user. */
@@ -99,9 +106,39 @@ export function sitePasswordProblem(value) {
 }
 
 /**
+ * Sign-in attempts per client and site-wide: `take(client)` counts one
+ * against both limits (`{ ok: true }`, or `{ ok: false, retryAfter }`
+ * with nothing counted) and `refund(client)` takes a counted attempt back.
+ */
+function createFailureLimits(now) {
+  const windowMs = FAILURE_WINDOW_MS;
+  const perClient = createRateLimiter({ limit: FAILURE_LIMIT, windowMs, now });
+  const site = createRateLimiter({
+    limit: SITE_FAILURE_LIMIT,
+    windowMs,
+    maxKeys: 1,
+    now,
+  });
+  return Object.freeze({
+    take(client) {
+      const own = perClient.take(client);
+      if (!own.ok) return own;
+      const all = site.take("site");
+      if (!all.ok) perClient.refund(client);
+      return all;
+    },
+    refund(client) {
+      perClient.refund(client);
+      site.refund("site");
+    },
+  });
+}
+
+/**
  * The gate's state for `cfg.gate`: `verify(candidate)` compares in
  * constant time, `failures` counts sign-in attempts per client and
- * `failureDelayMs` is the wait before a wrong-password answer.
+ * site-wide, and `failureDelayMs` is the wait before a wrong-password
+ * answer.
  */
 export function createGate({
   password,
@@ -111,11 +148,7 @@ export function createGate({
   const problem = sitePasswordProblem(password);
   if (problem !== null) throw new TypeError(`The site password ${problem}`);
   const digest = sha256(password);
-  const failures = createRateLimiter({
-    limit: FAILURE_LIMIT,
-    windowMs: FAILURE_WINDOW_MS,
-    now,
-  });
+  const failures = createFailureLimits(now);
   const verify = (candidate) => timingSafeEqual(sha256(candidate), digest);
   return Object.freeze({ verify, failures, failureDelayMs });
 }

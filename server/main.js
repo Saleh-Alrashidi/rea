@@ -38,6 +38,16 @@ export class ConfigError extends TypeError {
 /** Empty or unset variables count as unset. */
 const setting = (env, name) => (env[name] ? env[name] : undefined);
 
+/**
+ * `env` with the variables that select or configure hosted mode (`PORT`
+ * and the hosted-only ones) cleared, for harnesses that always run local
+ * mode whatever environment they inherit.
+ */
+export function localModeEnv(env) {
+  const cleared = ["PORT", ...HOSTED_ONLY].map((name) => [name, ""]);
+  return { ...env, ...Object.fromEntries(cleared) };
+}
+
 function readPort(env, name, { fallback, problems }) {
   const raw = setting(env, name);
   if (raw === undefined) return fallback;
@@ -177,12 +187,19 @@ export function banner({ hostOrigin, appsOrigin, tokens }) {
   ].join("\n");
 }
 
+/** Where rate limits take client IPs from (SPEC-3 §1 `MM_TRUST_PROXY`). */
+const clientIps = (trustProxy) =>
+  trustProxy
+    ? "last X-Forwarded-For hop (MM_TRUST_PROXY=1: let only the proxy reach PORT)"
+    : "the connection's address (MM_TRUST_PROXY=0)";
+
 /**
- * The hosted startup banner (SPEC-3 §5): public URL, gate, apps, data
- * file and tokens; a loud warning when the gate is off. Never the site
- * password.
+ * The hosted startup banner (SPEC-3 §5): public URL, gate, where client
+ * IPs come from, apps, data file and tokens; a loud warning when the gate
+ * is off. Never the site password.
  */
-export function hostedBanner({ hostOrigin, appsOrigin, gate, file, tokens }) {
+export function hostedBanner(options) {
+  const { hostOrigin, appsOrigin, gate, file, trustProxy, tokens } = options;
   const warning = gate
     ? []
     : [
@@ -197,6 +214,7 @@ export function hostedBanner({ hostOrigin, appsOrigin, gate, file, tokens }) {
     "mini-monday is running (hosted)",
     `  Public URL   ${hostOrigin}`,
     `  Site gate    ${gate ? "on (site password required)" : "OFF"}`,
+    `  Client IPs   ${clientIps(trustProxy)}`,
     `  Apps         ${apps}`,
     `  Data file    ${file ?? ":memory: (not saved)"}`,
     `  GraphQL API  ${hostOrigin}/v2`,
@@ -224,6 +242,7 @@ export async function main({
           ...servers,
           gate: options.sitePassword !== null,
           file,
+          trustProxy: options.trustProxy,
           tokens,
         })
       : banner({ ...servers, tokens });

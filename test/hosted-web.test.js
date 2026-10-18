@@ -6,6 +6,7 @@
  * already made as done.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { graphql, listDemoUsers, logout, request } from "../web/api.js";
 import { requestedNext, signinOutcome, wireSignin } from "../web/signin.js";
@@ -89,6 +90,24 @@ test("requestedNext is the ?next= path plus the hash the redirect kept", () => {
   assert.equal(next("?next=%2Fv2%2Fget_schema", ""), "/v2/get_schema");
 });
 
+test("signin.html cannot send the password itself before signin.js runs", () => {
+  const html = readFileSync(
+    new URL("../web/signin.html", import.meta.url),
+    "utf8",
+  );
+  const [form] = html.match(/<form\b[^>]*>[^]*<\/form>/);
+  const [open] = form.match(/^<form\b[^>]*>/);
+  // A native submission POSTs to /signin (never a GET with the password
+  // in the URL) and carries no field: nothing in the form has a name.
+  assert.match(open, /\smethod="post"/);
+  assert.match(open, /\saction="\/signin"/);
+  assert.doesNotMatch(form, /<(?:input|button|select|textarea)\b[^>]*\sname=/);
+  assert.match(form, /<input\b[^>]*\sid="signin-password"/);
+  // The default button is disabled, so Enter submits nothing until wired.
+  const [button] = form.match(/<button\b[^>]*\sid="signin-submit"[^>]*>/);
+  assert.match(button, /\sdisabled[\s>]/);
+});
+
 function signinPage(t) {
   const document = installFakeDom(t);
   const make = (tag) => document.createElement(tag);
@@ -99,6 +118,7 @@ function signinPage(t) {
     button: make("button"),
   };
   elements.error.hidden = true;
+  elements.button.disabled = true; // as signin.html ships it
   elements.input.select = () => (elements.selected = true);
   document.body.append(elements.form, elements.input, elements.error);
   return elements;
@@ -120,6 +140,7 @@ test("the sign-in form posts the password with next and follows the answer", asy
     return answers.shift();
   };
   wireSignin(elements, { fetch, location });
+  assert.equal(button.disabled, false, "wiring enables the button");
   // Empty: a message, no request.
   const empty = fire(form, "submit");
   assert.equal(empty.defaultPrevented, true);

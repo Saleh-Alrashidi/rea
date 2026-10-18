@@ -77,16 +77,16 @@ session; the next visit signs in as Alex again.
 Configuration (environment variables; setting `PORT` switches to hosted
 mode instead, see [Deploy privately on CranL](#deploy-privately-on-cranl)):
 
-| Variable         | Default                        | Meaning                                           |
-| ---------------- | ------------------------------ | ------------------------------------------------- |
-| `MM_HOST_PORT`   | `4100`                         | Host (workspace app + API) port; `0` = free       |
-| `MM_APPS_PORT`   | `4101`                         | Apps (iframe apps + SDK) port                     |
-| `MM_BIND`        | `127.0.0.1`                    | Listen address for both servers                   |
-| `MM_DATA_FILE`   | `.data/mini-monday.json`       | JSON persistence; `:memory:` disables it          |
-| `MM_HOST_ORIGIN` | `http://localhost:<host port>` | Public host origin                                |
-| `MM_APPS_ORIGIN` | `http://127.0.0.1:<apps port>` | Public apps origin (a different site on purpose)  |
-| `MM_DEMO_LOGIN`  | on                             | `0` turns off auto sign-in and the user switcher  |
-| `MM_TRUST_PROXY` | `0`                            | `1` takes client IPs (rate limits) from the proxy |
+| Variable         | Default                        | Meaning                                                                                     |
+| ---------------- | ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `MM_HOST_PORT`   | `4100`                         | Host (workspace app + API) port; `0` = free                                                 |
+| `MM_APPS_PORT`   | `4101`                         | Apps (iframe apps + SDK) port                                                               |
+| `MM_BIND`        | `127.0.0.1`                    | Listen address for both servers                                                             |
+| `MM_DATA_FILE`   | `.data/mini-monday.json`       | JSON persistence; `:memory:` disables it                                                    |
+| `MM_HOST_ORIGIN` | `http://localhost:<host port>` | Public host origin                                                                          |
+| `MM_APPS_ORIGIN` | `http://127.0.0.1:<apps port>` | Public apps origin (a different site on purpose)                                            |
+| `MM_DEMO_LOGIN`  | on                             | `0` turns off auto sign-in and the user switcher                                            |
+| `MM_TRUST_PROXY` | `0`                            | `1` takes client IPs (rate limits) from `X-Forwarded-For`; only behind a proxy that sets it |
 
 The data file format is `mini-monday-store/3`. A part-1 file is refused
 with a message; move it away and the server reseeds. A
@@ -125,22 +125,22 @@ public can be used.
    8080).
 4. **Set the app's port to `8080`** and its environment variables:
 
-   | Variable           | Value                                                                                                 |
-   | ------------------ | ----------------------------------------------------------------------------------------------------- |
-   | `PORT`             | `8080`, the app's port (the Dockerfile sets it too; a port the platform provides wins)                |
-   | `MM_HOST_ORIGIN`   | The app's address, e.g. `https://worklane.cranl.net`: exactly the origin, no path or trailing slash   |
-   | `MM_SITE_PASSWORD` | A long random password (at least 12 characters) for everyone who may use the site                     |
-   | `MM_DATA_FILE`     | Optional: a file on a mounted volume, e.g. `/data/worklane.json` (see Data below)                     |
-   | `MM_APPS_ORIGIN`   | Optional: a second domain for iframe apps (see Apps below)                                            |
-   | `MM_TRUST_PROXY`   | Leave unset (hosted default `1`): the proxy appends the client's IP as the last `X-Forwarded-For` hop |
-   | `MM_DEMO_LOGIN`    | Optional: `0` hides the demo user switcher                                                            |
+   | Variable           | Value                                                                                                       |
+   | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+   | `PORT`             | `8080`, the app's port (the Dockerfile sets it too; a port the platform provides wins)                      |
+   | `MM_HOST_ORIGIN`   | The app's address, e.g. `https://worklane.cranl.net`: exactly the origin, no path or trailing slash         |
+   | `MM_SITE_PASSWORD` | A long random password (at least 12 characters) for everyone who may use the site                           |
+   | `MM_DATA_FILE`     | Optional: `/data/worklane.json`, on a volume mounted at `/data` (see Data below)                            |
+   | `MM_APPS_ORIGIN`   | Optional: a second domain for iframe apps (see Apps below)                                                  |
+   | `MM_TRUST_PROXY`   | Leave unset (hosted default `1`, see Sign-in below): the proxy appends the client's IP to `X-Forwarded-For` |
+   | `MM_DEMO_LOGIN`    | Optional: `0` hides the demo user switcher                                                                  |
 
 5. **Health check path: `/healthz`** (200 `ok`, no data, no sign-in).
 6. **Deploy and open the address.** Every page asks for the site password
    first; signing in opens the workspace as Alex Rivera, the admin. The
    app's log (visible only to the project's members) shows the address,
-   whether the gate and apps are on, the data file and the two API tokens.
-   It never shows the password.
+   whether the gate and apps are on, where client IPs come from, the data
+   file and the two API tokens. It never shows the password.
 
 A missing or invalid setting stops the server before it listens, with one
 line per problem in the log and exit code 1:
@@ -166,15 +166,26 @@ the sign-in page and comes back to where it was. Every response carries
 **Sign-in.** The password is compared in constant time. A wrong one is
 answered after a fixed ~300 ms delay, and 5 failures from one client IP
 within 15 minutes refuse that IP for the rest of the window (429 with
-`Retry-After`); successful sign-ins do not count. A site session ends
-after 12 hours without use or at **Sign out**, after which the site shows
+`Retry-After`); successful sign-ins do not count. The client IP is the
+last `X-Forwarded-For` hop (`MM_TRUST_PROXY=1`), which only the platform
+proxy sets reliably: a client that reaches the port another way names its
+own IP for every guess. Let nothing but the proxy reach the port, or set
+`MM_TRUST_PROXY=0`. As a backstop, 50 failures from all clients together
+within 15 minutes pause every sign-in for the rest of the window; browsers
+already signed in and API tokens keep working. A site session ends after
+12 hours without use or at **Sign out**, after which the site shows
 `/signin` again. Demo user switching keeps you signed in.
 
 **Data.** The default data file lives on the container's disk, which may
 not survive a redeploy or restart: the demo workspace is then seeded again
-with new API tokens. To keep data, mount a volume (where your plan has
-them), make it writable by the app's user (`node`, uid 1000, with the
-Dockerfile) and set `MM_DATA_FILE` to a file on it.
+with new API tokens. To keep data, mount a volume at `/data` (where your
+plan has them) and set `MM_DATA_FILE=/data/worklane.json`. The Dockerfile
+creates `/data` owned by the app's user (`node`, uid 1000), and a new
+Docker volume mounted there takes that owner. A volume that keeps another
+owner (or a Railpack build, which has no `/data`) must be made writable by
+the user the app runs as: otherwise the site keeps working from memory
+while the log shows `saving the data file failed` for every change, and
+nothing survives a restart.
 
 **Apps.** Without `MM_APPS_ORIGIN` the app platform is off: boards show no
 app views, `POST /apps/session-token` answers 404 and the page allows no
@@ -183,10 +194,13 @@ frames. To turn it on, point a second domain (another host name than
 and set `MM_APPS_ORIGIN` to its origin; requests for that host reach the
 apps handler on the same port.
 
-**Try hosted mode locally** (`http:` is accepted for loopback hosts only):
+**Try hosted mode locally** (`http:` is accepted for loopback hosts only).
+No proxy is in front, so listen on loopback only and take client IPs from
+the connection:
 
 ```sh
-PORT=8080 MM_HOST_ORIGIN=http://localhost:8080 \
+PORT=8080 MM_BIND=127.0.0.1 MM_TRUST_PROXY=0 \
+  MM_HOST_ORIGIN=http://localhost:8080 \
   MM_SITE_PASSWORD='a long local password' npm start
 ```
 
@@ -521,9 +535,10 @@ node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
   password comparison and delay, rate limits behind a proxy, session
   expiry and sign-out, Host routing with and without an apps origin, and
   the headers. `e2e-hosted.mjs` starts hosted mode on a free `PORT` with a
-  password and drives the redirect to `/signin`, a wrong password, signing
-  in to the requested page, a board, demo switching, a public form signed
-  out and signing out.
+  password and drives the redirect to `/signin`, a sign-in form that cannot
+  send the password before its script runs, a wrong password, signing in
+  to the requested page, a board, demo switching, a public form signed out
+  and signing out.
 - The browser tests need `playwright` or `playwright-core` and a Chromium;
   without them they print why and exit 0. `MM_E2E_CHROMIUM` names a browser
   executable; `MM_E2E_STEPS=2,5` runs selected steps while developing.

@@ -10,7 +10,14 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ConfigError, hostedBanner, main, readConfig } from "../server/main.js";
+import { localServeConfig } from "../scripts/e2e-lib.mjs";
+import {
+  ConfigError,
+  hostedBanner,
+  localModeEnv,
+  main,
+  readConfig,
+} from "../server/main.js";
 import { PASSWORD } from "./hosted-helpers.js";
 
 const MAIN = fileURLToPath(new URL("../server/main.js", import.meta.url));
@@ -55,6 +62,24 @@ test("local mode (no PORT) reads as before, plus MM_TRUST_PROXY", () => {
       "MM_PUBLIC_DEMO applies only in hosted mode (set PORT)",
     ],
   );
+});
+
+test("localModeEnv runs local mode whatever hosted variables are inherited", () => {
+  const inherited = { ...HOSTED, MM_PUBLIC_DEMO: "1", MM_BIND: "127.0.0.2" };
+  const config = readConfig(localModeEnv(inherited));
+  assert.equal(config.mode, "local");
+  assert.equal(config.bind, "127.0.0.2", "other settings are kept");
+  assert.deepEqual(inherited, {
+    ...HOSTED,
+    MM_PUBLIC_DEMO: "1",
+    MM_BIND: "127.0.0.2",
+  });
+  // The browser tests' default servers (scripts/e2e-lib.mjs).
+  assert.deepEqual(localServeConfig(inherited), {
+    hostPort: 0,
+    appsPort: 0,
+    bind: "127.0.0.2",
+  });
 });
 
 test("hosted mode (PORT set): one listener, the gate and proxy-aware IPs", () => {
@@ -163,6 +188,7 @@ test("the hosted banner: URL, gate, apps, data file, tokens; a warning without a
     appsOrigin: null,
     gate: true,
     file: "/data/worklane.json",
+    trustProxy: true,
     tokens,
   });
   assert.equal(
@@ -171,6 +197,8 @@ test("the hosted banner: URL, gate, apps, data file, tokens; a warning without a
       "mini-monday is running (hosted)",
       `  Public URL   ${ORIGIN}`,
       "  Site gate    on (site password required)",
+      // Trusting X-Forwarded-For is safe only behind the platform proxy.
+      "  Client IPs   last X-Forwarded-For hop (MM_TRUST_PROXY=1: let only the proxy reach PORT)",
       "  Apps         off (set MM_APPS_ORIGIN to a second domain)",
       "  Data file    /data/worklane.json",
       `  GraphQL API  ${ORIGIN}/v2`,
@@ -184,10 +212,15 @@ test("the hosted banner: URL, gate, apps, data file, tokens; a warning without a
     appsOrigin: "https://apps.worklane.example",
     gate: false,
     file: null,
+    trustProxy: false,
     tokens,
   });
   assert.match(off, /^!!! WARNING: MM_PUBLIC_DEMO=1: the site gate is OFF/);
   assert.match(off, /Site gate {4}OFF\n/);
+  assert.match(
+    off,
+    /Client IPs {3}the connection's address \(MM_TRUST_PROXY=0\)\n/,
+  );
   assert.match(off, /Apps {9}on at https:\/\/apps\.worklane\.example\n/);
   assert.match(off, /Data file {4}:memory: \(not saved\)\n/);
 });
@@ -206,6 +239,7 @@ test("main() in hosted mode starts one listener and never prints the password", 
   t.after(stop);
   assert.equal(servers.appsServer, null);
   assert.match(output, /^mini-monday is running \(hosted\)\n/);
+  assert.match(output, /\n {2}Client IPs {3}last X-Forwarded-For hop /);
   assert.ok(!output.includes(PASSWORD));
   const { port } = servers.hostServer.address();
   const health = await fetch(`http://127.0.0.1:${port}/healthz`);

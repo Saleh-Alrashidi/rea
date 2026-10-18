@@ -10,7 +10,9 @@ ENV PORT=8080
 
 WORKDIR /app
 # The default data file lives in /app/.data, so the app user owns /app.
-RUN chown node:node /app
+# /data is the mount point for a volume (MM_DATA_FILE=/data/worklane.json):
+# a new Docker volume takes the owner of the directory it is mounted on.
+RUN chown node:node /app && mkdir -p /data && chown node:node /data
 COPY --chown=node:node . .
 USER node
 

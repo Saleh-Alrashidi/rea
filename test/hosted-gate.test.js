@@ -81,7 +81,7 @@ test("open: /signin, /healthz, /robots.txt and the sign-in assets", async (t) =>
   assert.equal(page.status, 200);
   assert.equal(page.headers["content-type"], "text/html; charset=utf-8");
   assert.equal(page.headers["cache-control"], "no-store");
-  assert.match(page.body, /<form id="signin-form"/);
+  assert.match(page.body, /<form\s+id="signin-form"/);
   assert.match(page.body, /type="password"/);
   const health = await request("/healthz");
   assert.deepEqual(

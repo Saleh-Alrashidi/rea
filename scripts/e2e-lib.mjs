@@ -25,7 +25,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { startServers } from "../server/http.js";
-import { readConfig } from "../server/main.js";
+import { localModeEnv, readConfig } from "../server/main.js";
 import { createStore } from "../server/store.js";
 import { launchBrowser, loadPlaywright } from "./e2e-browser.mjs";
 
@@ -375,14 +375,23 @@ async function drive(context, { name, steps, prefix, setup }) {
   return ok;
 }
 
-/** The default `serve`: local mode over an in-memory store. */
-async function serveLocal(log) {
-  const env = process.env;
+/**
+ * Where the default `serve` listens: local mode (whatever `PORT` or
+ * hosted-only variable `env` inherits), on free ports unless
+ * MM_HOST_PORT / MM_APPS_PORT say otherwise.
+ */
+export function localServeConfig(env = process.env) {
   const { hostPort, appsPort, bind } = readConfig({
-    ...env,
+    ...localModeEnv(env),
     MM_HOST_PORT: env.MM_HOST_PORT || "0",
     MM_APPS_PORT: env.MM_APPS_PORT || "0",
   });
+  return { hostPort, appsPort, bind };
+}
+
+/** The default `serve`: local mode over an in-memory store. */
+async function serveLocal(log) {
+  const { hostPort, appsPort, bind } = localServeConfig();
   const store = await createStore({ file: null, log });
   const servers = await startServers({ store, hostPort, appsPort, bind, log });
   return { store, servers };
