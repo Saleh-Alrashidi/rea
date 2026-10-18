@@ -320,7 +320,8 @@ web/
                      command-palette.js people-picker.js badge.js skeleton.js
   ui/shell/          topbar.js sidebar.js notifications.js user-menu.js workspace-switcher.js
   pages/             home.js my-work.js shared.js board.js docs.js doc-editor.js notes.js
-                     forms.js form-builder.js teams.js admin.js workspace-settings.js not-found.js
+                     form-builder.js teams.js admin.js workspace.js workspace-settings.js
+                     not-found.js   (board forms are listed in the board's Forms view)
   form-page.js       public form (loaded by form.html)
 ```
 
@@ -432,3 +433,46 @@ A cohesive, modern design system in `styles/tokens.css`:
   Escape closes overlays, visible focus, 4.5:1 text contrast in both themes.
 - Responsive from 360 px: sidebar drawer, horizontally scrollable tables with a
   sticky name column, stacked page headers.
+
+## 6. Server verdicts (part 2 addendum)
+
+The browser must not re-derive access rules. Wherever the UI needs to know
+whether an action is allowed for a subject other than the caller, the server
+computes the verdict through `server/access.js` and returns it.
+
+```graphql
+type User { ... capabilities: [String!]! }   # only on `me`; others return []
+                                              # values from access.can(): manage_users, admin_directory,
+                                              # create_workspace, create_team, create_content, create_note
+type Board { ... assignable_users: [User!]! } # active users who can open the board and whom the caller may see
+type Member { ... can_remove: Boolean! can_change_role: Boolean! role_options: [AccessRole!]! }
+type ShareCandidate { kind: SubjectKind! id: ID! name: String! subtitle: String
+  eligible: Boolean! reason: String role_options: [AccessRole!]! }
+type Query { ...
+  share_candidates(resource_kind: ResourceKind!, resource_id: ID!, query: String, limit: Int = 20): [ShareCandidate!]!
+}
+```
+
+- `Member.can_remove` / `can_change_role` are true only when the caller may
+  manage the resource and the change would keep an effective owner (the same
+  rule `keepsAnOwner` enforces); `role_options` lists the roles the caller may
+  assign to that subject on that resource (empty when none).
+- `share_candidates` lists users and teams in the caller's directory matching
+  `query` (case-insensitive substring of name or email; empty query lists the
+  first `limit`, 1–50), excluding current members, each with the `canGrant`
+  verdict (`eligible`, a human-readable `reason` when not eligible, and the
+  roles that would be accepted). Requires owner access to the resource
+  (else `NOT_FOUND`/`FORBIDDEN` per §1.2).
+- People-column writes (`change_column_value`, `change_simple_column_value`,
+  `change_multiple_column_values`, `create_item`, form submissions) reject users
+  who cannot open the board with `BAD_USER_INPUT`
+  (`"<name> cannot access this board"`); existing values are not rewritten.
+- Directory privacy: guests see only users in their directory (themselves,
+  members of resources shared with them, and their teams' members). Any user
+  name outside the directory that would appear in an API field, including
+  activity `actor_label`, `from_text`/`to_text`, notification `text` and people
+  column `text`, is shown as "Someone" (people column `value` keeps only visible
+  IDs). Store structured user IDs where needed so text can be rendered per
+  viewer at read time.
+- Teams: `capRole` applies to team management; a viewer account that is a team
+  owner cannot manage the team.
