@@ -161,8 +161,19 @@ const Mutation = wrapAll(write, {
   },
 });
 
-function appUrl(view, _args, { store, appsOrigin }) {
-  if (view.type !== "app" || !view.app_install_id) return null;
+/** Apps run only with an apps origin (SPEC-3 §3: off without one). */
+const appsEnabled = (ctx) => typeof ctx.appsOrigin === "string";
+
+/** The board's views; app views only while the app platform is on. */
+function views(board, _args, ctx) {
+  const all = ctx.store.listViews(board.id);
+  return appsEnabled(ctx) ? all : all.filter((view) => view.type !== "app");
+}
+
+function appUrl(view, _args, ctx) {
+  const { store, appsOrigin } = ctx;
+  if (!appsEnabled(ctx) || view.type !== "app" || !view.app_install_id)
+    return null;
   const install = store.getInstall(view.app_install_id);
   const app = install ? store.getApp(install.app_id) : null;
   if (!app) return null;
@@ -179,7 +190,7 @@ const Board = {
   items: (board, { limit }, { store }) =>
     store.listItems({ boardId: board.id, limit: readLimit(limit) }).items,
   items_count: (board, _a, { store }) => store.countItems(board.id),
-  views: (board, _a, { store }) => store.listViews(board.id),
+  views,
   workspace: (board, _a, { store }) => store.getWorkspace(board.workspace_id),
   members: (board, _a, ctx) => memberRecords(ctx, "board", board),
   my_access: (board, _a, ctx) => boardAccess(ctx.store, viewerOf(ctx), board),

@@ -1,7 +1,8 @@
 /**
  * App platform routes: session tokens for iframe apps (host server) and,
  * on the apps server, the SDK, `/apps/config.js` and the Status summary
- * app's backend that verifies session tokens.
+ * app's backend that verifies session tokens. `cfg.appsOrigin` null means
+ * the app platform is off.
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,9 +26,11 @@ export const STATUS_SUMMARY_PATH = "/apps/status-summary/";
 
 /**
  * `{ install_id }` → a session token for the current user. Installs that
- * are unknown or on boards the user cannot access are both 404.
+ * are unknown or on boards the user cannot access are both 404, and so is
+ * the route while the app platform is off (no apps origin, SPEC-3 §3).
  */
 export async function postSessionToken(req, res, cfg) {
+  if (cfg.appsOrigin === null) fail(404, "Not found");
   requireJsonType(req);
   const principal = sessionPrincipal(req, cfg);
   const { install_id: raw } = await readJsonObject(req);

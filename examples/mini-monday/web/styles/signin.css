@@ -1,0 +1,75 @@
+/*
+ * Sign-in page of a private site (signin.html): one centered card. Colors,
+ * sizes and both themes come from tokens.css; the brand, buttons, inputs
+ * and the error banner from components.css and base.css.
+ */
+
+body.signin-page {
+  overflow: auto;
+}
+
+.signin-root {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: var(--space-8) var(--space-4);
+}
+
+.signin-card {
+  display: grid;
+  gap: var(--space-5);
+  width: min(400px, 100%);
+  padding: var(--space-8) var(--space-6);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-md);
+}
+
+.signin-brand {
+  justify-self: start;
+}
+
+.signin-heading {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.signin-title {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+}
+
+.signin-lead {
+  color: var(--color-text-secondary);
+}
+
+.signin-input {
+  height: 40px;
+  font-size: var(--text-lg);
+}
+
+.signin-error {
+  overflow-wrap: anywhere;
+}
+
+.signin-submit {
+  height: 40px;
+  font-size: var(--text-lg);
+}
+
+.signin-note {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 480px) {
+  .signin-root {
+    place-items: start center;
+    padding: var(--space-6) var(--space-4);
+  }
+
+  .signin-card {
+    padding: var(--space-6) var(--space-4);
+  }
+}

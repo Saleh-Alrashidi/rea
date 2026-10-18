@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Sign in · Worklane</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%235b5bd6'/%3E%3Cpath d='M7.5 10.5l4 11 4.5-8.5 4.5 8.5 4-11' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles/tokens.css" />
+    <link rel="stylesheet" href="/styles/base.css" />
+    <link rel="stylesheet" href="/styles/components.css" />
+    <link rel="stylesheet" href="/styles/signin.css" />
+    <script type="module" src="/signin.js"></script>
+  </head>
+  <body class="signin-page">
+    <main class="signin-root">
+      <form id="signin-form" class="signin-card" novalidate>
+        <p class="brand signin-brand">
+          <svg
+            class="brand-mark"
+            viewBox="0 0 32 32"
+            width="28"
+            height="28"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect
+              class="brand-mark-tile"
+              x="1"
+              y="1"
+              width="30"
+              height="30"
+              rx="8"
+            />
+            <path
+              class="brand-mark-line"
+              d="M7.5 10.5l4 11 4.5-8.5 4.5 8.5 4-11"
+              fill="none"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="brand-word">Worklane</span>
+        </p>
+        <div class="signin-heading">
+          <h1 class="signin-title">Sign in</h1>
+          <p class="signin-lead">
+            This Worklane is private. Enter the site password to continue.
+          </p>
+        </div>
+        <div class="field">
+          <label class="field-label" for="signin-password">Site password</label>
+          <input
+            id="signin-password"
+            class="input signin-input"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            aria-describedby="signin-error"
+            autofocus
+          />
+        </div>
+        <p
+          id="signin-error"
+          class="banner banner-danger signin-error"
+          role="alert"
+          hidden
+        ></p>
+        <button
+          id="signin-submit"
+          class="btn btn-primary btn-block signin-submit"
+          type="submit"
+        >
+          Sign in
+        </button>
+        <p class="signin-note">
+          This browser stays signed in until you sign out or leave it unused for
+          12 hours.
+        </p>
+      </form>
+    </main>
+    <noscript><p class="noscript">Signing in needs JavaScript.</p></noscript>
+  </body>
+</html>

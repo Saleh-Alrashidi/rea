@@ -1,0 +1,12 @@
+# Only what the server needs at run time goes into the image.
+.data
+e2e-output
+node_modules
+test
+scripts
+*.md
+!README.md
+.git
+.gitignore
+.dockerignore
+Dockerfile
