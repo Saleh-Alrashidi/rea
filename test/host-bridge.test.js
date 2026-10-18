@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import test from "node:test";
 import { execute } from "../server/graphql/execute.js";
 import { parse } from "../server/graphql/parse.js";
-import { buildSchema } from "../server/graphql/schema.js";
+import { createSchema } from "../server/schema.js";
 import { createStore } from "../server/store.js";
 import { createClient } from "../sdk/mini-monday-sdk.js";
 import { createHostBridge } from "../web/host-bridge.js";
@@ -397,52 +396,6 @@ test("destroy() stops handling requests and suppresses in-flight replies", async
   assert.equal(posted.length, count);
 });
 
-const typed = (spec) =>
-  Object.fromEntries(Object.entries(spec).map(([k, type]) => [k, { type }]));
-
-/** SPEC.md's storage fields over the real store (until server/schema.js). */
-function storageFragmentSchema() {
-  const scope = ({ install_id: id, segment }, { principal }) =>
-    segment === "instance" ? `install:${id}` : `app:${principal.appId}`;
-  const target = { install_id: "ID!", segment: "StorageSegment!" };
-  Object.assign(target, { key: "String!" });
-  const field = (type, args, resolve) => ({ type, args: typed(args), resolve });
-  const value = (_, args, ctx) => {
-    const entry = ctx.store.getAppStorage(scope(args, ctx), args.key);
-    return entry && { key: args.key, ...entry };
-  };
-  const set = (_, { key, value: text, previous_version: v, ...rest }, ctx) =>
-    ctx.store.setAppStorage(scope(rest, ctx), key, text, v ?? null);
-  const remove = (_, args, ctx) =>
-    ctx.store.deleteAppStorage(scope(args, ctx), args.key);
-  const writeArgs = { ...target, value: "String!", previous_version: "Int" };
-  const result = "StorageWriteResult!";
-  const mutations = {
-    set_app_storage: field(result, writeArgs, set),
-    delete_app_storage: field(result, target, remove),
-  };
-  const valueFields = { key: "String!", value: "String!", version: "Int!" };
-  const writeFields = { success: "Boolean!", version: "Int", reason: "String" };
-  return buildSchema({
-    enums: { StorageSegment: ["global", "instance"] },
-    types: {
-      Query: { fields: { app_storage: field("StorageValue", target, value) } },
-      Mutation: { fields: mutations },
-      StorageValue: { fields: typed(valueFields) },
-      StorageWriteResult: { fields: typed(writeFields) },
-    },
-    query: "Query",
-    mutation: "Mutation",
-  });
-}
-
-async function loadSchema() {
-  const url = new URL("../server/schema.js", import.meta.url);
-  if (!existsSync(url)) return storageFragmentSchema();
-  const { createSchema } = await import(url.href);
-  return createSchema();
-}
-
 /** Wires an SDK client and a host bridge through cloned, async postMessage. */
 function connect(handlers) {
   const host = messageTarget();
@@ -479,7 +432,7 @@ async function appContext() {
 }
 
 test("the SDK and host bridge round-trip storage through the GraphQL engine", async (t) => {
-  const schema = await loadSchema();
+  const schema = createSchema();
   const context = await appContext();
   const { store, principal } = context;
   const graphql = async ({ query, variables, operationName }) => {

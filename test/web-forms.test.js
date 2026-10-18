@@ -52,9 +52,17 @@ test("question list: the name question stays first, required and kept", () => {
   for (const index of [1, 3, 4]) {
     list = Q.addQuestion(list, COLUMNS[index]).questions;
   }
-  assert.deepEqual(pluck(list), ["q1", "q2", "q3", "q4"]);
+  const ids = pluck(list);
+  assert.equal(new Set(ids).size, 4, "unique IDs");
+  assert.ok(
+    ids.slice(1).every((id) => /^q_[a-z0-9]{2,26}$/.test(id)),
+    ids,
+  );
   assert.equal(Q.addQuestion(list, COLUMNS[1]).ok, false, "asked once");
-  assert.equal(Q.nextQuestionId([{ id: "q1" }, { id: "q3" }]), "q2");
+  const counted = ["a", "a", "b"];
+  const suffix = () => counted.shift();
+  const taken = [{ id: "q1" }, { id: "q_a" }];
+  assert.equal(Q.nextQuestionId(taken, suffix), "q_b", "skips taken IDs");
 
   assert.equal(Q.canMove(list, 1, -1), false, "nothing moves above the name");
   assert.equal(Q.moveQuestion(list, 0, 1), list, "the name never moves");
@@ -270,13 +278,18 @@ test("builder: the preview is the public definition; patches send their fields",
   assert.equal(await viewer.code(B.FORM_MUTATIONS.update, update), "FORBIDDEN");
 });
 
-test("admin rules: never on yourself, keep an admin, metadata-only directory", async (t) => {
+test("admin rules: never deactivate yourself, keep an admin, metadata-only directory", async (t) => {
   const me = { id: "1", role: "admin", status: "active" };
   const member = { id: "2", role: "member", status: "active" };
   const users = [me, member, { id: "3", role: "admin", status: "deactivated" }];
-  assert.match(AD.userActions(me, me, users).roleReason, /own role/);
+  assert.match(AD.userActions(me, me, users).roleReason, /active admin/);
+  assert.match(AD.userActions(me, me, users).statusReason, /yourself/);
   assert.equal(AD.userActions(me, member, users).roleReason, null);
   const other = { id: "4", role: "admin", status: "active" };
+  const twoAdmins = [...users, other];
+  // The server lets an admin change their own role while another admin stays.
+  assert.equal(AD.userActions(me, me, twoAdmins).roleReason, null);
+  assert.match(AD.userActions(me, me, twoAdmins).statusReason, /yourself/);
   assert.match(AD.userActions(other, me, users).statusReason, /active admin/);
   assert.match(AD.userActions(member, me, users).statusReason, /Only admins/);
   const counts = AD.parseRoleCounts('{"admin":2,"member":-1,"guest":"x"}');
@@ -315,7 +328,7 @@ test("admin rules: never on yourself, keep an admin, metadata-only directory", a
   assert.equal(await sam.code(AD.ADMIN_MUTATIONS.deactivate, noa), "FORBIDDEN");
 });
 
-test("teams: owner rules and the demote document", async (t) => {
+test("teams: owner rules and one-step role changes", async (t) => {
   const member = (id, name, role, status = "active") => ({
     role,
     user: { id, name, status },
@@ -327,15 +340,18 @@ test("teams: owner rules and the demote document", async (t) => {
     members: [
       member(3, "Noa", "member"),
       member(1, "Alex", "owner"),
+      member(8, "Kai", "owner", "deactivated"),
       member(7, "Morgan", "member", "deactivated"),
     ],
   });
-  const [owner, morgan, noa] = team.members;
-  assert.deepEqual(pluck(team.members), ["1", "7", "3"], "owners first");
-  assert.match(T.memberActions(team, owner).remove, /one owner/);
-  assert.match(T.memberActions(team, owner).demote, /one owner/);
+  const [owner, kai, morgan, noa] = team.members;
+  assert.deepEqual(pluck(team.members), ["1", "8", "7", "3"], "owners first");
+  // A deactivated owner cannot manage the team, so Alex is the last owner.
+  assert.match(T.memberActions(team, owner).remove, /active owner/);
+  assert.match(T.memberActions(team, owner).demote, /active owner/);
+  assert.equal(T.memberActions(team, kai).demote, null);
   assert.equal(T.memberActions(team, noa).promote, null);
-  assert.match(T.memberActions(team, morgan).promote, /Deactivated/);
+  assert.equal(T.memberActions(team, morgan).promote, null);
   const readOnly = { ...team, canManage: false };
   assert.match(T.memberActions(readOnly, noa).remove, /owners and admins/);
 
@@ -345,14 +361,22 @@ test("teams: owner rules and the demote document", async (t) => {
   const { noa: noaId, alex: alexId } = seed.users;
   const roleOf = (id) =>
     store.getTeam(teamId).members.find((entry) => entry.user_id === id)?.role;
-  const promote = { teamId, userIds: [noaId], asOwner: true };
-  await alex.data(T.TEAM_MUTATIONS.addMembers, promote);
-  await alex.data(T.TEAM_MUTATIONS.makeMember, { teamId, userIds: [noaId] });
+  const changes = [];
+  const off = store.on((change) => changes.push(change.type));
+  t.after(off);
+  const set = (userId, role) => ({ teamId, userId, role });
+  await alex.data(T.TEAM_MUTATIONS.setRole, set(noaId, "owner"));
+  assert.equal(roleOf(noaId), "owner");
+  await alex.data(T.TEAM_MUTATIONS.setRole, set(noaId, "member"));
   assert.equal(roleOf(noaId), "member");
-  const last = { teamId, userIds: [alexId] };
-  const refused = await alex.call(T.TEAM_MUTATIONS.makeMember, last);
+  assert.deepEqual(changes, ["team_updated", "team_updated"], "one each");
+  const refused = await alex.call(
+    T.TEAM_MUTATIONS.setRole,
+    set(alexId, "member"),
+  );
   assert.ok(refused.body.errors.length > 0, "the last owner stays an owner");
   assert.equal(roleOf(alexId), "owner");
+  assert.equal(roleOf(noaId), "member", "nobody was removed");
   const sam = as(seed.users.sam);
   assert.equal(
     await sam.code(T.TEAM_MUTATIONS.remove, { teamId }),
@@ -367,10 +391,34 @@ test("workspaces: delete only when empty, settings send what changed", async (t)
   const main = W.normalizeWorkspace(raw);
   assert.ok(main.canManage && main.forms.every((form) => form.board.name));
   // Alex sees 1 board and 1 doc; the server also counts hidden ones.
-  const reason = "Move or delete its 1 board and 1 doc first";
-  assert.equal(W.deleteReason(main), reason);
-  assert.equal(W.deleteReason({ ...main, boards: [], docs: [] }), null);
+  assert.equal(main.canDelete, false);
+  assert.equal(W.deleteReason(main), "Delete its 1 board and 1 doc first");
+  const looksEmpty = { ...main, boards: [], docs: [] };
+  assert.match(W.deleteReason(looksEmpty), /shared only with others/);
+  assert.equal(W.deleteReason({ ...looksEmpty, canDelete: true }), null);
   assert.match(W.deleteReason({ ...main, canManage: false }), /owners/);
+  // A workspace that looks empty to its owner is not offered for deletion
+  // while someone else's private board is in it.
+  const sam = as(ids.users.sam);
+  const created = await sam.data(
+    `mutation { create_workspace(name: "Side project") { id } }`,
+  );
+  const sideId = String(created.create_workspace.id);
+  const side = async () =>
+    W.normalizeWorkspace(
+      (await sam.data(W.WORKSPACE_QUERY)).workspaces.find(
+        (w) => String(w.id) === sideId,
+      ),
+    );
+  assert.equal(W.deleteReason(await side()), null, "empty: deletable");
+  await as(ids.users.noa).data(
+    `mutation($w: ID!) { create_board(board_name: "Noa's plan",
+      board_kind: private, workspace_id: $w) { id } }`,
+    { w: sideId },
+  );
+  const hiding = await side();
+  assert.deepEqual([hiding.boards.length, hiding.canDelete], [0, false]);
+  assert.match(W.deleteReason(hiding), /shared only with others/);
   const values = {
     name: ` ${main.name} `,
     description: main.description,
@@ -381,7 +429,6 @@ test("workspaces: delete only when empty, settings send what changed", async (t)
   const edited = { ...values, kind: "closed", color: "#00C875" };
   const changes = W.settingsChanges(main, edited);
   assert.deepEqual(changes, { kind: "closed", color: "#00c875" });
-  const sam = as(ids.users.sam);
   const listed = (await sam.data(W.WORKSPACE_QUERY)).workspaces;
   assert.equal(
     pluck(listed).map(String).includes(ids.workspaces.leadership),

@@ -103,6 +103,10 @@
   font-weight: var(--weight-regular);
 }
 
+.share-owner-note {
+  white-space: normal;
+}
+
 .share-role-text {
   color: var(--color-text-secondary);
   font-size: var(--text-sm);

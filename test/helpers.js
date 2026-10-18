@@ -1,10 +1,12 @@
 /**
  * Shared test helpers: real host and apps servers over an in-memory store,
- * plus small HTTP clients for GraphQL, browser sessions and raw requests,
- * and ways to act as any seeded user (`sessionFor`, `tokenFor`, `as`).
+ * plus small HTTP clients for GraphQL, browser sessions, raw requests and
+ * SSE streams, a response double for the event hub, and ways to act as any
+ * seeded user (`sessionFor`, `tokenFor`, `as`).
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { request as httpRequest } from "node:http";
 import { ALL_SCOPES } from "../server/auth.js";
 import { startServers } from "../server/http.js";
@@ -326,4 +328,71 @@ export function rawRequest(baseUrl, { method = "GET", path, headers, body }) {
     req.on("error", reject);
     req.end(body);
   });
+}
+
+/**
+ * Opens an SSE stream with fetch. `next(pattern)` reads until `pattern`
+ * matches the unread text, consumes through the match and returns it;
+ * `ends()` reads until the server ends the stream and returns the text
+ * that was still unread. Both fail after `timeoutMs`.
+ */
+export async function openStream(url, headers = {}) {
+  const controller = new AbortController();
+  const response = await fetch(url, { headers, signal: controller.signal });
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+  let unread = "";
+  let ended = false;
+  // A read that lost a race against the timeout is kept for the next call.
+  let pending = null;
+  /** Reads one chunk into `unread` (or notes the end) before `deadline`. */
+  const read = async (deadline, waitingFor) => {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new Error(`timed out waiting for ${waitingFor}`);
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(resolve, left, null);
+    });
+    pending ??= reader.read();
+    const chunk = await Promise.race([pending, timeout]);
+    clearTimeout(timer);
+    if (chunk === null) return;
+    pending = null;
+    if (chunk.done) ended = true;
+    else unread += decoder.decode(chunk.value, { stream: true });
+  };
+  const next = async (pattern, timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const match = pattern.exec(unread);
+      if (match) {
+        unread = unread.slice(match.index + match[0].length);
+        return match;
+      }
+      if (ended) throw new Error(`stream ended before ${pattern}`);
+      await read(deadline, pattern);
+    }
+  };
+  const ends = async (timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (!ended) await read(deadline, "the end of the stream");
+    return unread;
+  };
+  return { response, next, ends, close: () => controller.abort() };
+}
+
+/** A minimal response double that records writes (and an ended `body`). */
+export function fakeResponse() {
+  const res = new EventEmitter();
+  Object.assign(res, { writableLength: 0, writes: [], destroyed: false });
+  res.writableEnded = false;
+  res.writeHead = (status, headers) => Object.assign(res, { status, headers });
+  res.flushHeaders = () => {};
+  res.write = (text) => res.writes.push(text);
+  res.end = (body) => {
+    if (body !== undefined) res.body = body;
+    res.writableEnded = true;
+  };
+  res.destroy = () => (res.destroyed = true);
+  return res;
 }

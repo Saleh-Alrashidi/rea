@@ -6,10 +6,12 @@
  * State has one shape in memory and on disk (see `store/persistence.js`):
  * an array of frozen records per collection plus `next_id`. Records are
  * replaced, never changed in place. Domain modules receive
- * `ctx = { state, now, log, listeners, persist, reader, pending }` where
- * `now()` returns an ISO timestamp, `reader` is the store-like lookup
- * object handed to `server/access.js`, and `pending` holds the extra change
- * events (notifications) that the next `commit` emits after its own.
+ * `ctx = { state, now, log, listeners, persist, reader, pending, revision }`
+ * where `now()` returns an ISO timestamp, `reader` is the store-like lookup
+ * object handed to `server/access.js`, `pending` holds the extra change
+ * events (notifications, member changes) that the next `commit` emits
+ * after its own, and
+ * `revision` counts commits.
  *
  * Expected failures (input limits, conflicts, rule violations) are results,
  * not exceptions: mutators return `{ ok: false, reason, ...details }`.
@@ -28,6 +30,12 @@ export const COLUMN_TYPES = Object.freeze([
 export const GROUP_COLOR = "#579bfc";
 export const SCOPE_KEY = /^(?:install|app):[1-9]\d*$/;
 export const BOARD_KINDS = Object.freeze(["public", "private", "share"]);
+/** Display names of board kinds (activity texts, search subtitles). */
+export const BOARD_KIND_LABELS = Object.freeze({
+  public: "Main",
+  private: "Private",
+  share: "Shareable",
+});
 export const WORKSPACE_KINDS = Object.freeze(["open", "closed"]);
 export const DOC_VISIBILITIES = Object.freeze(["workspace", "private"]);
 export const FORM_ACCESS = Object.freeze(["public", "account", "closed"]);
@@ -219,8 +227,6 @@ export function failure(reason, details = {}) {
   return Object.freeze({ ok: false, reason, ...details });
 }
 
-export const isFailure = (result) => result?.ok === false;
-
 /**
  * Wraps every function of `api` so an InputError becomes
  * `{ ok: false, reason: "invalid", message }` and stale queued events from
@@ -253,10 +259,12 @@ function emit(ctx, event) {
 }
 
 /**
- * Schedules a save, emits `event` and then the queued notification events
- * (one per recipient), and returns `record`.
+ * Schedules a save, counts a new revision, emits `event` and then the
+ * queued events (one per notified recipient or changed resource), and
+ * returns `record`.
  */
 export function commit(ctx, event, record) {
+  ctx.revision += 1;
   ctx.persist.schedule();
   const events = [event, ...ctx.pending.splice(0)];
   for (const each of events) emit(ctx, Object.freeze(each));

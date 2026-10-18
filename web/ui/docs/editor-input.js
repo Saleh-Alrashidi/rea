@@ -3,6 +3,10 @@
  * "/", block moves), `beforeinput` fallbacks for virtual keyboards, typing,
  * markdown shortcuts, plain-text paste and to-do checkboxes. Handlers take
  * the editor record from `editor-core.js`.
+ *
+ * Undo and redo (Ctrl/⌘+Z, Ctrl/⌘+Shift+Z, Ctrl+Y, and the browser's own
+ * `historyUndo`/`historyRedo` input) never reach the browser's undo stack,
+ * which knows nothing of structural edits: they replay the editor's history.
  */
 
 import {
@@ -37,8 +41,10 @@ import {
   offsetsIn,
   openActions,
   openSlash,
+  record,
   split,
   syncBlankState,
+  undoRedo,
   viewAt,
 } from "./editor-core.js";
 
@@ -46,6 +52,15 @@ import {
 
 const plainKey = (event) => !event.altKey && !event.ctrlKey && !event.metaKey;
 const modKey = (event) => event.ctrlKey || event.metaKey;
+
+/** "undo", "redo" or null for a keydown. */
+function historyKey(event) {
+  if (!modKey(event) || event.altKey) return null;
+  const key = event.key.toLowerCase();
+  if (key === "z") return event.shiftKey ? "redo" : "undo";
+  if (key === "y" && !event.shiftKey) return "redo";
+  return null;
+}
 
 function onEnter(ed, event, index, view) {
   event.preventDefault();
@@ -151,6 +166,12 @@ function onDividerKey(ed, event, index) {
 
 export function onKeydown(ed, event) {
   if (ed.state.readOnly || event.isComposing || event.keyCode === 229) return;
+  const history = historyKey(event);
+  if (history) {
+    event.preventDefault();
+    undoRedo(ed, history);
+    return;
+  }
   const index = indexOf(ed, event.target);
   const view = viewAt(ed, index);
   if (!view || event.target !== view.content) return;
@@ -170,6 +191,11 @@ export function onKeydown(ed, event) {
 export function onBeforeInput(ed, event) {
   if (ed.state.readOnly) return;
   const type = event.inputType ?? "";
+  if (type === "historyUndo" || type === "historyRedo") {
+    event.preventDefault();
+    undoRedo(ed, type === "historyRedo" ? "redo" : "undo");
+    return;
+  }
   const index = indexOf(ed, event.target);
   const view = viewAt(ed, index);
   if (!view || !hasText(view.type)) return;
@@ -200,6 +226,8 @@ export function onInput(ed, event) {
   const view = viewAt(ed, index);
   if (!view || !hasText(view.type) || event.target !== view.content) return;
   let text = view.content.textContent;
+  const before = ed.state.blocks[index];
+  if (text !== before.text) record(ed, { kind: "typing", blockId: before.id });
   if (event.isComposing) {
     ed.state.blocks = updateText(ed.state.blocks, index, text);
     ed.onChange(ed.state.blocks);

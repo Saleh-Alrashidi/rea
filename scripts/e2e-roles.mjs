@@ -6,8 +6,10 @@
  * member until shared, a viewer's read-only board, a guest who sees only
  * shared content, doc autosave with a version conflict, notes, the form
  * builder with a public submission, admin user management, teams,
- * workspaces, and a screenshot tour of every page (light; dark and 360 px
- * for the main pages) into `e2e-output/`.
+ * workspaces, a screenshot tour of every page (light; dark and 360 px
+ * for the main pages) into `e2e-output/`, and then the interaction checks
+ * of `e2e-roles-ux.mjs` (focus, keyboard, undo, unsaved work, live access
+ * changes).
  *
  * Each step signs in the demo users it needs in their own browser
  * contexts and confirms every change through the public GraphQL API as
@@ -29,6 +31,7 @@ import {
 } from "./e2e-lib.mjs";
 import { CONTENT_STEPS } from "./e2e-roles-content.mjs";
 import { TOUR_STEPS } from "./e2e-roles-tour.mjs";
+import { UX_STEPS } from "./e2e-roles-ux.mjs";
 
 const BOARD_ACCESS = `query Board($id: ID!) {
   boards(ids: [$id]) { id name board_kind my_access }
@@ -177,6 +180,12 @@ async function privateUntilShared(run) {
   await alex.page.locator(".board-share").click();
   const dialog = alex.page.locator("dialog.share-dialog[open]");
   await dialog.locator("label.choice", { hasText: "Private" }).click();
+  // The share dialog asks as the board header does: Main → Private hides
+  // the board from the workspace.
+  const confirm = alex.page.locator("dialog.modal[open]:not(.share-dialog)");
+  const message = await confirm.locator(".dialog-message").textContent();
+  check(/will no longer see it/.test(message), `confirmation: ${message}`);
+  await confirm.locator("button[type=submit]").click();
   await waitUntil(
     () => run.store.getBoard(run.agencyId).board_kind === "private",
     "the board to become private",
@@ -305,5 +314,6 @@ runE2E({
     ["guest Chris sees only shared content", guestSeesSharedOnly],
     ...CONTENT_STEPS,
     ...TOUR_STEPS,
+    ...UX_STEPS,
   ],
 });

@@ -342,6 +342,36 @@ test("admin_take_ownership: admins only, boards and docs only, logged", async (t
   assert.equal(doc.my_access, "owner");
 });
 
+test("a doc takeover reaches its owners and outlives the admin leaving", async (t) => {
+  const { users, ids } = await setup(t);
+  const doc = ids.docs.brief;
+  const take = `mutation T($r: ID!) { admin_take_ownership(resource_kind: doc,
+    resource_id: $r) { id } }`;
+  const before = Object.fromEntries(
+    await Promise.all(
+      ["priya", "sam", "chris"].map(async (key) => [
+        key,
+        (await users[key].data(INBOX)).unread_notifications_count,
+      ]),
+    ),
+  );
+  await users.alex.data(take, { r: doc });
+  const vars = { k: "doc", r: doc, sk: "user", s: ids.users.alex };
+  await users.alex.data(UNSHARE, vars);
+  const inbox = await users.priya.data(INBOX);
+  assert.equal(inbox.unread_notifications_count, before.priya + 1);
+  assert.deepEqual(inbox.notifications[0], {
+    kind: "share",
+    text: "Alex Rivera (admin) took ownership of the doc “Launch brief”",
+    url: `#/docs/${doc}`,
+  });
+  // Editors and viewers (the Marketing team, Chris) are not owners.
+  for (const key of ["sam", "chris"]) {
+    const count = (await users[key].data(INBOX)).unread_notifications_count;
+    assert.equal(count, before[key], key);
+  }
+});
+
 test("workspace members: owners manage them; closed workspaces open to members", async (t) => {
   const { users, ids, shareVars } = await setup(t);
   const space = ids.workspaces.leadership;

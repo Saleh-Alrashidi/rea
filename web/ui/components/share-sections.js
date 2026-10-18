@@ -164,6 +164,13 @@ function memberRow(state, member) {
         self ? h("span", { class: "share-you" }, " (you)") : null,
       ),
       detail ? h("span", { class: "share-member-detail" }, detail) : null,
+      ownerReason && resource.canManage
+        ? h(
+            "span",
+            { class: "share-member-detail share-owner-note" },
+            ownerReason,
+          )
+        : null,
     ),
     member.accountRole === "guest" || member.accountRole === "viewer"
       ? roleBadge(member.accountRole)

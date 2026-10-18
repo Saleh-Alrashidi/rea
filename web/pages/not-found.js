@@ -21,6 +21,7 @@ export function notFoundView({ what } = {}) {
     { class: "page-container not-found" },
     emptyState({
       icon: "search",
+      headingLevel: 1,
       title: what ? `This ${what} isn’t available` : "Page not found",
       text: what
         ? `It may have been deleted, or you don’t have access to it.`

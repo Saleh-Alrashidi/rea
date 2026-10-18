@@ -10,7 +10,7 @@
  */
 
 import { request } from "../../api.js";
-import { SHARE_MUTATIONS } from "../components/share-model.js";
+import { SHARE_MUTATIONS, normalizeMember } from "../components/share-model.js";
 import { decodeItem, prepareColumns } from "./values.js";
 
 /** Stay well under the server's 5,000-field complexity budget per request. */
@@ -28,13 +28,12 @@ const ITEM_FIELDS = `fragment BoardItem on Item {
   column_values { id text value }
 }`;
 
-// `workspaces` lists the workspaces the user can open: a board can be
-// shared with someone outside its workspace, whose link then stays hidden.
+// A board can be shared with someone outside its workspace: the server's
+// `can_open` says whether its link is shown.
 const BOARD_QUERY = `query HostBoard($ids: [ID!]) {
-  workspaces { id }
   boards(ids: $ids, limit: 1) {
     id name description items_count board_kind my_access
-    workspace { id name }
+    workspace { id name can_open }
     members {
       kind id name role
       user { id name initials color role }
@@ -82,31 +81,6 @@ function sortGroups(groups) {
 }
 
 /**
- * True when the user can open the board's workspace (it is one of their
- * `workspaces`); a board can be shared with people outside it.
- */
-function canOpenWorkspace(workspace, workspaces) {
-  if (!workspace) return false;
-  const id = String(workspace.id);
-  return (workspaces ?? []).some((entry) => String(entry.id) === id);
-}
-
-/** A board member for avatars: `{ kind, id, name, role, color, … }`. */
-function decodeMember(member) {
-  const team = member.kind === "team";
-  return {
-    kind: team ? "team" : "user",
-    id: String(member.id),
-    name: member.name,
-    role: member.role,
-    color: member.user?.color ?? null,
-    initials: member.user?.initials ?? null,
-    accountRole: member.user?.role ?? null,
-    memberCount: member.team?.member_count ?? null,
-  };
-}
-
-/**
  * Loads a board with columns, groups, views and all items (following
  * `items_page` cursors up to MAX_ITEMS). Returns null for unknown boards.
  * `truncated` is true when more items exist than were loaded.
@@ -141,8 +115,8 @@ export async function loadBoard(boardId) {
     workspace: raw.workspace
       ? { id: String(raw.workspace.id), name: raw.workspace.name }
       : null,
-    workspaceAccessible: canOpenWorkspace(raw.workspace, data.workspaces),
-    members: (raw.members ?? []).map(decodeMember),
+    workspaceAccessible: raw.workspace?.can_open === true,
+    members: (raw.members ?? []).map(normalizeMember),
     itemsCount: raw.items_count,
     columns,
     groups: sortGroups(raw.groups),

@@ -7,8 +7,9 @@
  * Records returned by the store are frozen. Every mutator emits one change
  * event `{ type, board_id?, item_id?, group_id?, column_id?, user_ids?,
  * resource_kind?, resource_id? }`, followed by one `notification_created`
- * event per notified user, and returns the new or updated record. Unknown
- * IDs return null and emit nothing. Expected failures return
+ * event per notified user (and, for `deleteTeam`, one `members_changed`
+ * event per resource that lost the team's grant), and returns the new or
+ * updated record. Unknown IDs return null and emit nothing. Expected failures return
  * `{ ok: false, reason, message?, … }` (see `server/store-state.js`);
  * arguments of the wrong type throw a TypeError.
  *
@@ -30,6 +31,7 @@ import {
   createPersistence,
   emptyState,
   loadState,
+  removeStaleTemps,
 } from "./store/persistence.js";
 import { seedState } from "./store/seed.js";
 import { storageApi } from "./store/storage.js";
@@ -49,9 +51,10 @@ const DOMAINS = [
 ];
 
 /**
- * Creates the store. Loads `file` when it exists (an invalid file is an
- * error and is never overwritten); otherwise seeds when `seed` is true and
- * saves the result. `file: null` (or `":memory:"`) keeps data in memory.
+ * Creates the store. Removes temp files that interrupted saves of `file`
+ * left, then loads `file` when it exists (an invalid file is an error and
+ * is never overwritten); otherwise seeds when `seed` is true and saves the
+ * result. `file: null` (or `":memory:"`) keeps data in memory.
  * Writes are debounced (50 ms) and atomic; `flush()` awaits them. `now`
  * returns a Date; `log.error` receives background save and listener errors.
  */
@@ -63,6 +66,7 @@ export async function createStore({
 } = {}) {
   const memory = file === null || file === ":memory:";
   const target = memory ? null : path.resolve(file);
+  if (target) await removeStaleTemps(target);
   const loaded = target ? await loadState(target) : null;
   const state = loaded ?? emptyState();
   const listeners = new Set();
@@ -73,6 +77,7 @@ export async function createStore({
     listeners,
     reader: createReader(state),
     pending: [],
+    revision: 0,
   };
   if (!loaded && seed) seedState(ctx);
   ctx.persist = createPersistence({ file: target, state, log });
@@ -86,6 +91,8 @@ export async function createStore({
     return () => void listeners.delete(entry);
   };
   const flush = () => ctx.persist.flush();
+  // Grows with every committed change; readers cache derived views by it.
+  const revision = () => ctx.revision;
   const api = Object.assign({}, ...DOMAINS.map((domain) => domain(ctx)));
-  return Object.freeze({ ...guardApi(ctx, api), on, flush });
+  return Object.freeze({ ...guardApi(ctx, api), on, flush, revision });
 }

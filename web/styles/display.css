@@ -144,7 +144,7 @@
   border-radius: var(--radius-full);
   background: var(--color-danger);
   box-shadow: 0 0 0 2px var(--color-panel);
-  color: #fff;
+  color: var(--color-text-on-danger);
   font-size: 10px;
   font-weight: var(--weight-bold);
   line-height: 1;

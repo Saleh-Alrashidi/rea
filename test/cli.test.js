@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
@@ -16,9 +16,9 @@ import {
   parseArgs,
   UsageError,
 } from "../cli/mm.js";
+import { startTestServers } from "./helpers.js";
 
 const CLI_PATH = fileURLToPath(new URL("../cli/mm.js", import.meta.url));
-const HELPERS_PATH = fileURLToPath(new URL("./helpers.js", import.meta.url));
 const CLOSED = { MM_ENDPOINT: "http://127.0.0.1:9/v2", MM_TOKEN: "t" };
 
 /** Splits a block of lines into argv arrays (words split on whitespace). */
@@ -415,13 +415,8 @@ test("a reader that closes early ends the output quietly", async (t) => {
 
 // ------------------------------------------------- end to end (real server)
 
-/** Starts the real servers through test/helpers.js (another module's file). */
+/** Starts the real servers through test/helpers.js. */
 async function realServers(t) {
-  if (!existsSync(HELPERS_PATH)) {
-    t.skip("test/helpers.js is not available yet");
-    return null;
-  }
-  const { startTestServers } = await import("./helpers.js");
   const servers = await startTestServers();
   t.after(() => servers.close());
   const endpoint = new URL("/v2", servers.hostUrl).href;
@@ -436,7 +431,6 @@ async function realServers(t) {
 
 test("e2e: me, boards and items print tables and JSON", async (t) => {
   const real = await realServers(t);
-  if (!real) return;
   const me = await run(["me"], real.env());
   assert.equal(me.code, 0, me.stderr);
   assert.match(me.stdout, /Name\s+Alex Rivera/);
@@ -465,7 +459,6 @@ test("e2e: me, boards and items print tables and JSON", async (t) => {
 
 test("e2e: items pages a large, wide board within the field budget", async (t) => {
   const real = await realServers(t);
-  if (!real) return;
   const { store } = real;
   const board = store.createBoard({ name: "Wide", creatorId: "1" });
   for (let n = 0; n < 12; n += 1) {
@@ -490,7 +483,6 @@ test("e2e: items pages a large, wide board within the field budget", async (t) =
 
 test("e2e: create-item and set-status write; read-only refuses", async (t) => {
   const real = await realServers(t);
-  if (!real) return;
   const boardId = real.roadmap.id;
   const argv = ["create-item", boardId, "CLI item", "--group", "next_up"];
   const created = await run([...argv, "--json"], real.env());
@@ -518,7 +510,6 @@ test("e2e: create-item and set-status write; read-only refuses", async (t) => {
 
 test("e2e: query, API versions and schema", async (t) => {
   const real = await realServers(t);
-  if (!real) return;
   const query = await run(["query", "{ me { name } }"], real.env());
   assert.equal(query.code, 0, query.stderr);
   assert.equal(JSON.parse(query.stdout).data.me.name, "Alex Rivera");
@@ -545,7 +536,6 @@ test("e2e: query, API versions and schema", async (t) => {
 
 test("e2e: the executable talks to the real server", async (t) => {
   const real = await realServers(t);
-  if (!real) return;
   const args = [CLI_PATH, "boards", "--json"];
   const result = await spawnCli(process.execPath, args, real.env());
   assert.equal(result.code, 0, result.stderr);

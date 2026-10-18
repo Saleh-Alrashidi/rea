@@ -19,11 +19,12 @@ import { h } from "../../dom.js";
 import { button } from "./button.js";
 import { openDialog } from "./dialog.js";
 import { loadDirectory } from "./directory.js";
-import { BOARD_KINDS, resourceKind as kindInfo } from "./labels.js";
+import { resourceKind as kindInfo } from "./labels.js";
 import {
   SHARE_MUTATIONS,
   SHARE_QUERIES,
   SHARE_SETTINGS,
+  boardKindConfirmation,
   normalizeMember,
   normalizeResource,
 } from "./share-model.js";
@@ -128,18 +129,16 @@ function invite(state, role) {
 async function changeSetting(state, value) {
   const setting = SHARE_SETTINGS[state.kind];
   const { resource } = state;
-  const losingGuests =
-    state.kind === "board" &&
-    resource.setting === "share" &&
-    value !== "share" &&
-    resource.members.some((member) => member.accountRole === "guest");
-  if (losingGuests) {
-    const confirmed = await state.ctx.dialog.confirm({
-      title: `Make this board ${BOARD_KINDS[value].label}?`,
-      message: "Guests lose access to boards that are not Shareable.",
-      confirmButton: "Change board type",
-      danger: true,
-    });
+  if (state.kind === "board") {
+    // The same confirmation as the board header's "Board type" menu.
+    const board = {
+      name: resource.title,
+      kind: resource.setting,
+      members: resource.members,
+    };
+    const confirmed = await state.ctx.dialog.confirm(
+      boardKindConfirmation(board, value),
+    );
     if (!confirmed) {
       renderShareBody(state);
       return;

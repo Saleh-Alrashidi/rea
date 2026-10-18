@@ -54,6 +54,7 @@ function adminsOnly() {
     { class: "page-container" },
     emptyState({
       icon: "admin",
+      headingLevel: 1,
       title: "Only admins can open Admin",
       text: "Ask an admin if you need a user, role or ownership change.",
       action: { label: "Go to Home", icon: "home", href: homeHash() },

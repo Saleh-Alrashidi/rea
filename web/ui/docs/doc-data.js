@@ -8,6 +8,7 @@
  */
 
 import { hasRole } from "../components/permissions.js";
+import { normalizeMember } from "../components/share-model.js";
 import { parseBlocksJson, serializeBlocks } from "./blocks.js";
 
 const PERSON = "id name initials color";
@@ -25,12 +26,11 @@ export const DOCS_LIST_QUERY = `query DocsList {
 export const DOC_QUERY = `query DocEditor($id: ID!) {
   docs(ids: [$id]) {
     id title visibility my_access version blocks_json created_at updated_at
-    workspace { id name color }
+    workspace { id name color can_open }
     created_by { ${PERSON} }
     updated_by { ${PERSON} }
     members { kind id name role user { ${PERSON} } }
   }
-  workspaces { id }
 }`;
 
 export const UPDATE_DOC_MUTATION = `mutation UpdateDoc($id: ID!, $expectedVersion: Int!, $title: String, $blocksJson: String) {
@@ -62,15 +62,7 @@ export function normalizeDoc(doc) {
     record.blocks = parseBlocksJson(doc.blocks_json);
   }
   if (Array.isArray(doc.members)) {
-    // Shaped for avatar stacks: users carry their color and initials.
-    record.members = doc.members.map((member) => ({
-      kind: member.kind,
-      id: String(member.id),
-      name: member.name,
-      role: member.role,
-      color: member.user?.color ?? null,
-      initials: member.user?.initials ?? null,
-    }));
+    record.members = doc.members.map(normalizeMember);
   }
   return record;
 }
@@ -85,10 +77,9 @@ export async function loadDoc(api, id) {
     const doc = data.docs.find((entry) => String(entry.id) === String(id));
     if (!doc) return null;
     const record = normalizeDoc(doc);
-    // A doc can be shared with people outside its workspace.
-    record.workspaceAccessible = data.workspaces.some(
-      (workspace) => String(workspace.id) === record.workspace?.id,
-    );
+    // A doc can be shared with people outside its workspace; the server
+    // says whether the workspace itself can be opened.
+    record.workspaceAccessible = doc.workspace?.can_open === true;
     return record;
   } catch (error) {
     if (error?.code === "NOT_FOUND") return null;

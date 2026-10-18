@@ -1,6 +1,6 @@
 /**
  * My work (`#/my-work`): items assigned to the user, grouped Overdue /
- * This week / Later / No date, with board links and inline status changes
+ * This week / Later / No date / Done, with board links and inline status changes
  * (read-only pills on boards the user can only view).
  */
 
@@ -110,7 +110,7 @@ function renderWork(body, items, options) {
     return;
   }
   const groups = groupByDue(items, options.today).filter(
-    (group) => group.items.length > 0 || group.key !== "none",
+    (group) => group.items.length > 0 || !group.optional,
   );
   body.replaceChildren(
     items.length >= MAX_MY_WORK

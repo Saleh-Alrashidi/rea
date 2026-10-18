@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dueBucket, groupByDue } from "../web/ui/board/my-work-data.js";
+import {
+  dueBucket,
+  groupByDue,
+  isOverdue,
+} from "../web/ui/board/my-work-data.js";
+import { isDoneStatus, prepareColumns } from "../web/ui/board/values.js";
 import { paletteOptions } from "../web/ui/components/command-palette.js";
 import {
   addDays,
@@ -20,7 +25,7 @@ import { sharedCards } from "../web/pages/shared.js";
 
 const ORIGIN = "http://localhost:4100";
 
-test("my work buckets: overdue, this week, later, no date", () => {
+test("my work buckets: overdue, this week, later, no date, done", () => {
   const today = "2026-10-18";
   assert.equal(dueBucket("2026-10-17", today), "overdue");
   assert.equal(dueBucket("2026-10-18", today), "week");
@@ -33,6 +38,8 @@ test("my work buckets: overdue, this week, later, no date", () => {
       { id: "2", due: null },
       { id: "3", due: "2026-01-01" },
       { id: "4", due: "2026-10-19" },
+      { id: "5", due: "2026-09-30", done: true },
+      { id: "6", due: null, done: true },
     ],
     today,
   );
@@ -43,8 +50,22 @@ test("my work buckets: overdue, this week, later, no date", () => {
       ["week", ["4"]],
       ["later", ["1"]],
       ["none", ["2"]],
+      ["done", ["5", "6"]],
     ],
   );
+  assert.equal(isOverdue({ due: "2026-09-30", done: true }, today), false);
+  assert.equal(isOverdue({ due: "2026-09-30", done: false }, today), true);
+  const [status] = prepareColumns([
+    {
+      id: "status",
+      type: "status",
+      settings_str: JSON.stringify({
+        labels: { 0: "Working on it", 1: "Done", 2: " done ", 5: "" },
+      }),
+    },
+  ]);
+  const done = [0, 1, 2, 5, null].map((index) => isDoneStatus(status, index));
+  assert.deepEqual(done, [false, true, true, false, false]);
   assert.equal(addDays("2026-12-30", 3), "2027-01-02");
   assert.equal(todayString(new Date(2026, 0, 5)), "2026-01-05");
 });

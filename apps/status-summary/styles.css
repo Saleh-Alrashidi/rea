@@ -1,65 +1,72 @@
 /* Status summary app. The host's context.theme sets data-theme on <html>;
-   until the context arrives, the OS color-scheme preference applies. */
+   until the context arrives, the OS color-scheme preference applies. The
+   colors follow Worklane's own tokens (web/styles/tokens.css), so the view
+   sits in the host's indigo palette in both themes. */
 :root {
   color-scheme: light;
-  --page: #f6f7fb;
+  --page: #f7f7fb;
   --card: #ffffff;
-  --text: #323338;
-  --muted: #676879;
-  --border: #d0d4e4;
-  --track: #e6e9ef;
-  --primary: #0073ea;
-  --primary-hover: #0060b9;
+  --text: #1c1e2e;
+  --muted: #63677b;
+  --border: #dfe1ea;
+  --track: #e4e6ef;
+  --primary: #5b5bd6;
+  --primary-hover: #4f4fc8;
   --primary-text: #ffffff;
+  --primary-ink: #4a4ac0;
   --button: #ffffff;
-  --button-hover: #f0f3ff;
-  --success: #00854d;
-  --danger: #d83a52;
-  --danger-surface: #ffebee;
-  --focus: #0073ea;
-  --live: #00c875;
-  --shadow: 0 1px 3px rgb(0 0 0 / 8%);
+  --button-hover: #eef0f6;
+  --success: #18794e;
+  --danger: #c62a3c;
+  --danger-surface: #fdecee;
+  --focus: #5b5bd6;
+  --live: #18794e;
+  --shadow: 0 1px 2px rgb(20 21 40 / 6%), 0 1px 3px rgb(20 21 40 / 8%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: #181b34;
-    --card: #30324e;
-    --text: #d5d8df;
-    --muted: #9699a6;
-    --border: #4b4e69;
-    --track: #44475f;
-    --primary: #579bfc;
-    --primary-hover: #7aaffd;
-    --primary-text: #181b34;
-    --button: #30324e;
-    --button-hover: #3b3e5c;
-    --success: #4dd9a0;
-    --danger: #ff8a9b;
-    --danger-surface: #4a2733;
-    --focus: #579bfc;
+    --page: #0f1017;
+    --card: #171822;
+    --text: #ececf3;
+    --muted: #9093a8;
+    --border: #2d2f42;
+    --track: #2b2d45;
+    --primary: #5b5bd6;
+    --primary-hover: #6767e0;
+    --primary-text: #ffffff;
+    --primary-ink: #a9a8ff;
+    --button: #1e1f2c;
+    --button-hover: #23253a;
+    --success: #4cc38a;
+    --danger: #ff6b70;
+    --danger-surface: #3a1418;
+    --focus: #8f8ff0;
+    --live: #4cc38a;
     --shadow: 0 1px 3px rgb(0 0 0 / 40%);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #181b34;
-  --card: #30324e;
-  --text: #d5d8df;
-  --muted: #9699a6;
-  --border: #4b4e69;
-  --track: #44475f;
-  --primary: #579bfc;
-  --primary-hover: #7aaffd;
-  --primary-text: #181b34;
-  --button: #30324e;
-  --button-hover: #3b3e5c;
-  --success: #4dd9a0;
-  --danger: #ff8a9b;
-  --danger-surface: #4a2733;
-  --focus: #579bfc;
+  --page: #0f1017;
+  --card: #171822;
+  --text: #ececf3;
+  --muted: #9093a8;
+  --border: #2d2f42;
+  --track: #2b2d45;
+  --primary: #5b5bd6;
+  --primary-hover: #6767e0;
+  --primary-text: #ffffff;
+  --primary-ink: #a9a8ff;
+  --button: #1e1f2c;
+  --button-hover: #23253a;
+  --success: #4cc38a;
+  --danger: #ff6b70;
+  --danger-surface: #3a1418;
+  --focus: #8f8ff0;
+  --live: #4cc38a;
   --shadow: 0 1px 3px rgb(0 0 0 / 40%);
 }
 
@@ -123,7 +130,7 @@ h2 {
 }
 
 .eyebrow {
-  color: var(--primary);
+  color: var(--primary-ink);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;

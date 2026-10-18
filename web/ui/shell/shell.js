@@ -10,6 +10,7 @@
  */
 
 import { invalidateDirectory } from "../components/directory.js";
+import { changesAccess } from "../components/labels.js";
 import { isPopoverOpen } from "../components/popover.js";
 import { BUS_EVENTS } from "./bus.js";
 import { createFlows } from "./create.js";
@@ -75,13 +76,29 @@ function selectWorkspace(sh, id) {
   drawSidebar(sh);
 }
 
+/**
+ * Under 900 px the open sidebar is a modal drawer over a backdrop: the rest
+ * of the shell (skip link, top bar, page) is inert, so Tab stays in the
+ * drawer (its own close button, Escape and the backdrop close it).
+ */
 function applyLayout(sh) {
-  const { app, sidebar } = sh.elements;
+  const { app, sidebar, backdrop } = sh.elements;
   const drawer = isDrawer();
-  app.classList.toggle("sidebar-open", drawer && sh.drawerOpen);
+  const modal = drawer && sh.drawerOpen;
+  app.classList.toggle("sidebar-open", modal);
   app.classList.toggle("sidebar-collapsed", !drawer && sh.collapsed);
   sh.topbar.update({ sidebarOpen: drawer ? sh.drawerOpen : !sh.collapsed });
   sidebar.inert = drawer && !sh.drawerOpen;
+  for (const child of app.children) {
+    if (child !== sidebar && child !== backdrop) child.inert = modal;
+  }
+  if (modal) {
+    sidebar.setAttribute("role", "dialog");
+    sidebar.setAttribute("aria-modal", "true");
+  } else {
+    sidebar.removeAttribute("role");
+    sidebar.removeAttribute("aria-modal");
+  }
 }
 
 function setDrawer(sh, open, { focus = true } = {}) {
@@ -154,9 +171,11 @@ function wireEvents(sh) {
     .addEventListener?.("change", () => applyLayout(sh));
   ctx.router.onChange((route) => onRoute(sh, route));
   ctx.bus.on(BUS_EVENTS.workspace, (id) => selectWorkspace(sh, id));
-  ctx.bus.on(BUS_EVENTS.notification, (event) =>
-    sh.notifications.onNotification(event),
-  );
+  ctx.bus.on(BUS_EVENTS.notification, (event) => {
+    sh.notifications.onNotification(event);
+    // The sidebar, `ctx.me` and the create controls follow the new access.
+    if (changesAccess(event?.kind)) refresh(sh);
+  });
   onThemeChange((detail) => {
     sh.topbar.updateTheme();
     ctx.bus.emit(BUS_EVENTS.theme, detail);
@@ -165,7 +184,8 @@ function wireEvents(sh) {
 
 /**
  * Mounts the shell. Returns `refresh()` (`ctx.refreshShell`), the creation
- * `flows` and `selectWorkspace(id)`.
+ * `flows`, `selectWorkspace(id)` and `markNotificationRead(notification)`
+ * (`ctx.markNotificationRead`).
  *
  * @param {{ ctx: object, data: import("./shell-data.js").ShellData,
  *   elements: { app: HTMLElement, topbar: HTMLElement, sidebar: HTMLElement,
@@ -205,5 +225,7 @@ export function createShell({ ctx, data, elements, openPalette }) {
     refresh: () => refresh(sh),
     flows: sh.flows,
     selectWorkspace: (id) => selectWorkspace(sh, id),
+    markNotificationRead: (notification) =>
+      sh.notifications.markOpened(notification),
   };
 }

@@ -11,6 +11,7 @@ import { accessBadge } from "../components/badge.js";
 import { emptyState } from "../components/empty-state.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
+import { findByFocusKey } from "../components/focus.js";
 import { closePopover, isPopoverOpen } from "../components/popover.js";
 import { skeletonList } from "../components/skeleton.js";
 import { cellEditor } from "./cells.js";
@@ -323,6 +324,27 @@ function cardContent(props) {
   );
 }
 
+/** The focus key of the focused element outside `dialog`, or null. */
+function openerKey(dialog) {
+  const active = globalThis.document.activeElement;
+  if (!active || dialog.contains(active)) return null;
+  return active.dataset?.focusKey ?? null;
+}
+
+/**
+ * Focuses the element with `key` once the render that closed the card has
+ * rebuilt the view, unless focus has already moved somewhere else.
+ */
+function returnFocus(key) {
+  if (!key) return;
+  globalThis.setTimeout(() => {
+    const doc = globalThis.document;
+    const active = doc.activeElement;
+    if (active && active !== doc.body) return;
+    findByFocusKey(doc, key)?.focus({ preventScroll: false });
+  }, 0);
+}
+
 /**
  * Creates the item card panel. `render(props)` fills it; `props.status` is
  * "loading", "missing", "error" or "ready" (with `item`, `detail`, `board`,
@@ -342,6 +364,9 @@ export function createItemCard({ onClose }) {
     if (event.target === dialog) onClose();
   });
   let shown = false;
+  // The control that opened the card ("Open", a kanban title), by focus key:
+  // closing re-renders the board view, so the element itself may be gone.
+  let returnKey = null;
   dialog.addEventListener("close", () => {
     // The browser may close a modal itself (for example on a repeated
     // Escape); keep the route in step with what is shown. The event is
@@ -355,15 +380,19 @@ export function createItemCard({ onClose }) {
     element: dialog,
     /** Opens the panel (idempotent). */
     show() {
+      if (!dialog.open) returnKey = openerKey(dialog);
       if (!dialog.isConnected) globalThis.document.body.append(dialog);
       if (!dialog.open) dialog.showModal();
       shown = true;
     },
-    /** Closes and detaches the panel. */
+    /** Closes and detaches the panel; focus returns to its opener. */
     hide() {
+      const wasOpen = dialog.open;
       shown = false;
       if (dialog.open) dialog.close();
       dialog.remove();
+      if (wasOpen) returnFocus(returnKey);
+      returnKey = null;
     },
     render(props) {
       const full = { ...props, onClose };

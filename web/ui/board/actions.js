@@ -7,7 +7,8 @@
 import { request } from "../../api.js";
 import { formHash } from "../../router.js";
 import { confirmDialog, formDialog } from "../components/dialog.js";
-import { BOARD_KINDS, boardKind } from "../components/labels.js";
+import { BOARD_KINDS } from "../components/labels.js";
+import { boardKindConfirmation } from "../components/share-model.js";
 import { showError } from "../components/toast.js";
 import { CREATE_MUTATIONS } from "../shell/create.js";
 import { mutate } from "./board-data.js";
@@ -16,6 +17,7 @@ import {
   GROUP_COLORS,
   displayText,
   encodeValue,
+  valuePayload,
 } from "./values.js";
 
 const NEW_GROUP_NAME = "New group";
@@ -63,32 +65,13 @@ function createKit(app) {
         const column = state.board.columns.find(
           (entry) => entry.id === columnId,
         );
-        return [columnId, JSON.parse(encodeValue(column, value))];
+        return [columnId, valuePayload(column, value)];
       });
       return entries.length > 0
         ? JSON.stringify(Object.fromEntries(entries))
         : null;
     },
   };
-}
-
-/** The confirmation for changing a board's kind (who can see it). */
-function kindChangeMessage(board, kind) {
-  const guests = board.members.filter(
-    (member) => member.kind === "user" && member.accountRole === "guest",
-  );
-  const losing = board.kind === "share" && kind !== "share" && guests.length;
-  const lines = [boardKind(kind).description];
-  if (losing) {
-    const names = guests.map((guest) => guest.name).join(", ");
-    lines.push(
-      `Guests lose access to boards that are not Shareable: ${names}.`,
-    );
-  }
-  if (board.kind === "public") {
-    lines.push("People who aren’t members of the board will no longer see it.");
-  }
-  return { message: lines.join(" "), danger: Boolean(losing) };
 }
 
 /** Board rename, describe, kind and delete (the shell creates boards). */
@@ -121,13 +104,7 @@ function boardActions(app, kit) {
     async setBoardKind(kind) {
       const board = state.board;
       if (!Object.hasOwn(BOARD_KINDS, kind) || board.kind === kind) return;
-      const { message, danger } = kindChangeMessage(board, kind);
-      const confirmed = await confirmDialog({
-        title: `Make “${board.name}” ${boardKind(kind).label}?`,
-        message,
-        confirmButton: "Change board type",
-        danger,
-      });
+      const confirmed = await confirmDialog(boardKindConfirmation(board, kind));
       if (!confirmed) return;
       run(
         "setBoardKind",

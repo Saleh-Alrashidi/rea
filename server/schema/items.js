@@ -5,7 +5,7 @@
  * every column value format; people values may name only users the caller
  * may see.
  */
-import { boardAccess, requireBoard, requireItem } from "../access.js";
+import { boardAccess, describe, requireBoard, requireItem } from "../access.js";
 import {
   formatColumnValue,
   parseColumnValue,
@@ -14,11 +14,13 @@ import {
 } from "../column-values.js";
 import { columnOf, groupOf } from "./boards.js";
 import {
-  allBoards,
+  accessibleBoards,
   badInput,
-  describe,
   isPlainObject,
+  lookupUser,
   notFound,
+  parseJson,
+  perRequest,
   pick,
   read,
   readIds,
@@ -28,15 +30,11 @@ import {
   wrapAll,
   write,
 } from "./common.js";
-import { visibleUserLookup } from "./people.js";
 
 const MAX_UPDATE_LENGTH = 10_000;
-const userOf = (store, id) => (id ? store.getUser(id) : null);
 const actor = (ctx) => ({ actorId: viewerOf(ctx).id });
-/** Parse options: people values may only name users the caller sees. */
-const parseOptions = (ctx) => ({
-  getUser: visibleUserLookup(ctx.store, viewerOf(ctx)),
-});
+/** People values may only name (and show) users the caller may see. */
+const userOptions = (ctx) => ({ getUser: (id) => lookupUser(ctx, id) });
 
 /** Turns a column-values parse result into a stored value or an error. */
 function parsed(column, result) {
@@ -51,14 +49,9 @@ function parsed(column, result) {
  * format. Every entry is validated before the caller writes anything.
  */
 function parseValueMap(ctx, { boardId, text, allowName }) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = undefined;
-  }
+  const data = parseJson(text, "column_values");
   if (!isPlainObject(data)) badInput("column_values must be a JSON object");
-  const options = parseOptions(ctx);
+  const options = userOptions(ctx);
   return Object.entries(data).map(([columnId, raw]) => {
     const column = ctx.store.getColumn(boardId, columnId);
     if (!column) badInput(`Unknown column ${describe(columnId)}`);
@@ -71,8 +64,9 @@ function parseValueMap(ctx, { boardId, text, allowName }) {
   });
 }
 
-function columnValues(item, { ids }, { store }) {
-  const options = { getUser: store.getUser };
+function columnValues(item, { ids }, ctx) {
+  const { store } = ctx;
+  const options = userOptions(ctx);
   return pick(store.listColumns(item.board_id), ids).map((column) => {
     const stored = column.type === "name" ? item.name : item.values[column.id];
     const { text, value } = formatColumnValue(column, stored, options);
@@ -91,7 +85,7 @@ function boardItem(ctx, args) {
 const changeValue = (parse) => (_parent, args, ctx) => {
   const item = boardItem(ctx, args);
   const column = columnOf(ctx.store, item.board_id, args.column_id);
-  const options = parseOptions(ctx);
+  const options = userOptions(ctx);
   const value = parsed(column, parse(column, args.value ?? null, options));
   return ctx.store.setColumnValue(item.id, column.id, value, actor(ctx));
 };
@@ -122,14 +116,12 @@ function changeMultipleValues(_p, args, ctx) {
 
 // ---------------------------------------------------------------- my work
 
-/** Items assigned to the caller on accessible boards (SPEC-2 §3). */
-function myWork(_p, { limit }, ctx) {
-  const size = readLimit(limit);
+/** Active items assigned to the caller on accessible boards, in order. */
+function assignedItems(ctx) {
   const viewer = viewerOf(ctx);
   const { store } = ctx;
   const entries = [];
-  allBoards(store).forEach((board, boardIndex) => {
-    if (boardAccess(store, viewer, board) === null) return;
+  accessibleBoards(ctx).forEach((board, boardIndex) => {
     const columns = store.listColumns(board.id);
     const people = columns.filter((column) => column.type === "people");
     const date = columns.find((column) => column.type === "date");
@@ -151,10 +143,13 @@ function myWork(_p, { limit }, ctx) {
     (a.due ?? "").localeCompare(b.due ?? "") ||
     a.boardIndex - b.boardIndex ||
     a.itemIndex - b.itemIndex;
-  return entries
-    .sort(order)
-    .slice(0, size)
-    .map((entry) => entry.item);
+  return entries.sort(order).map((entry) => entry.item);
+}
+
+/** Items assigned to the caller on accessible boards (SPEC-2 §3). */
+function myWork(_p, { limit }, ctx) {
+  const size = readLimit(limit);
+  return perRequest(ctx, "my_work", () => assignedItems(ctx)).slice(0, size);
 }
 
 const Query = wrapAll(read, {
@@ -193,7 +188,7 @@ const Mutation = wrapAll(write, {
   },
 });
 
-const creator = (record, _a, { store }) => userOf(store, record.creator_id);
+const creator = (record, _a, ctx) => lookupUser(ctx, record.creator_id);
 
 const Item = {
   board: (item, _a, { store }) => store.getBoard(item.board_id),

@@ -4,7 +4,8 @@
  * members through the shared share dialog; and deleting the workspace once
  * it holds no boards or docs. Owners only (`can_manage`); other members
  * see the settings read-only. An inaccessible workspace reads like a
- * missing one.
+ * missing one. Unsaved changes are confirmed before leaving the page,
+ * reloading or closing the tab.
  */
 
 import { h } from "../dom.js";
@@ -14,6 +15,7 @@ import { button } from "../ui/components/button.js";
 import { choiceCards } from "../ui/components/choice.js";
 import { emptyState } from "../ui/components/empty-state.js";
 import { icon } from "../ui/components/icon.js";
+import { guardUnsaved } from "../ui/components/leave-guard.js";
 import { WORKSPACE_KINDS, accessRole } from "../ui/components/labels.js";
 import { pageHeader, setDocumentTitle } from "../ui/components/page-header.js";
 import { skeletonCards } from "../ui/components/skeleton.js";
@@ -59,9 +61,13 @@ function textField({ id, label, value, multiline, disabled, onInput }) {
   );
 }
 
+/** Whether the form holds changes that are not saved. */
+const isDirty = (s) =>
+  Boolean(s.workspace?.canManage && s.values) &&
+  Object.keys(settingsChanges(s.workspace, s.values)).length > 0;
+
 function updateSaveBar(s) {
-  const changes = settingsChanges(s.workspace, s.values);
-  const dirty = Object.keys(changes).length > 0;
+  const dirty = isDirty(s);
   const invalid = s.values.name.trim() === "";
   s.save.disabled = !dirty || invalid || s.busy;
   s.reset.disabled = !dirty || s.busy;
@@ -237,6 +243,7 @@ async function remove(s) {
     return;
   }
   ctx.toast.success(`${workspace.name} was deleted`);
+  s.values = null; // nothing is left to save
   await ctx.refreshShell();
   ctx.router.navigate(homeHash(), { replace: true });
 }
@@ -362,8 +369,15 @@ export async function mount(container, ctx, params) {
     ),
   );
   ctx.bus.emit(BUS_EVENTS.workspace, params.workspaceId);
+  const offs = [
+    ctx.router.guard(() =>
+      isDirty(s) ? "Discard your unsaved workspace settings?" : null,
+    ),
+    guardUnsaved({ unsaved: () => isDirty(s) }),
+  ];
   await load(s);
   return () => {
     s.active = false;
+    for (const off of offs) off();
   };
 }

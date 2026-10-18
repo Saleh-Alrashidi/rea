@@ -17,6 +17,7 @@ import { avatar, avatarStack } from "../components/avatar.js";
 import { formatDay } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
+import { onMenuKeydown } from "../components/menu.js";
 import { openPopover } from "../components/popover.js";
 import { statusOption, textColorOn } from "./values.js";
 
@@ -32,13 +33,18 @@ export function peopleStack(ids, users) {
   return avatarStack(peopleFor(ids, users), { size: "sm" });
 }
 
+/** A label of the status picker: a radio item of its menu. */
 function statusChoice({ option, selected, onPick }) {
   const button = h(
     "button",
     {
       type: "button",
+      role: "menuitemradio",
+      tabindex: "-1",
       class: ["status-choice", selected && "selected"],
-      "aria-pressed": selected ? "true" : "false",
+      "aria-checked": selected ? "true" : "false",
+      // The picker opens on the current label, not the first one.
+      "data-autofocus": selected ? true : null,
       on: { click: () => onPick(option.index) },
     },
     option.label,
@@ -49,7 +55,9 @@ function statusChoice({ option, selected, onPick }) {
 }
 
 /**
- * Colored status pill; clicking opens a label picker.
+ * Colored status pill; clicking opens a label picker, a menu of radio items
+ * (arrow keys, Home/End and typeahead move; focus starts on the current
+ * label).
  * @param {{ column: object, value: number | null, label: string,
  *   onChange(index: number | null): void, focusKey?: string,
  *   placeholder?: string }} options
@@ -63,7 +71,7 @@ export function statusPill(options) {
     {
       type: "button",
       class: ["status-pill", !text && "empty"],
-      "aria-haspopup": "dialog",
+      "aria-haspopup": "menu",
       "aria-expanded": "false",
       "aria-label": `${label}: ${text || "not set"}. Change status`,
       dataset: { focusKey },
@@ -82,10 +90,11 @@ export function statusPill(options) {
     const popover = openPopover({
       anchor: pill,
       label: `Choose ${column.title}`,
+      role: "menu",
       content: () =>
         h(
           "div",
-          { class: "status-picker" },
+          { class: "status-picker", on: { keydown: onMenuKeydown } },
           (column.status?.options ?? []).map((choice) =>
             statusChoice({
               option: choice,
@@ -100,6 +109,8 @@ export function statusPill(options) {
             "button",
             {
               type: "button",
+              role: "menuitem",
+              tabindex: "-1",
               class: "status-choice status-clear",
               on: {
                 click() {

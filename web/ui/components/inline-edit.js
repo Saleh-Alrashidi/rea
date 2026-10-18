@@ -1,10 +1,17 @@
 /**
  * Inline-editable text: an input styled as plain text that commits on Enter
  * or blur and reverts on Escape.
+ *
+ * A number input whose text is not a number (`validity.badInput`, e.g. "3e")
+ * reports its value as "", which must not be taken for a deliberate clear:
+ * such text is never committed. Enter keeps it and shows the browser's
+ * message so it can be fixed; leaving the field restores the saved value and
+ * says so in a toast.
  */
 
 import { h } from "../../dom.js";
 import { isRebuilding } from "./focus.js";
+import { showToast } from "./toast.js";
 
 /**
  * Builds an inline editor. `onCommit(next)` runs once per changed value;
@@ -46,24 +53,50 @@ export function inlineInput(options) {
       keydown(event) {
         if (event.key === "Enter") {
           event.preventDefault();
-          commit();
-        } else if (event.key === "Escape" && input.value !== committed) {
+          commit({ leaving: false });
+        } else if (event.key === "Escape" && (badInput() || changed())) {
           // Revert without letting Escape close a surrounding panel.
           event.preventDefault();
           event.stopPropagation();
-          input.value = committed;
+          restore();
         }
+      },
+      input() {
+        input.removeAttribute("aria-invalid");
       },
       blur() {
         // Removal during a re-render blurs the input; its unsaved text moves
         // to the replacement element instead of being committed here.
         if (isRebuilding(input)) return;
-        commit();
+        commit({ leaving: true });
       },
     },
   });
 
-  function commit() {
+  const badInput = () => input.validity?.badInput === true;
+  const changed = () => input.value !== committed;
+
+  function restore() {
+    input.value = committed;
+    input.removeAttribute("aria-invalid");
+  }
+
+  function rejectBadInput(leaving) {
+    if (!leaving) {
+      input.setAttribute("aria-invalid", "true");
+      input.reportValidity?.();
+      return;
+    }
+    restore();
+    const message = `${label}: that isn’t a number, so the value was kept`;
+    showToast({ message, type: "error" });
+  }
+
+  function commit({ leaving }) {
+    if (badInput()) {
+      rejectBadInput(leaving);
+      return;
+    }
     const next = trim ? input.value.trim() : input.value;
     if (required && next === "") {
       input.value = committed;

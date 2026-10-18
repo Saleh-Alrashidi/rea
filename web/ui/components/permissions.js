@@ -52,10 +52,11 @@ export function isViewOnly(myAccess) {
 /**
  * True when the account role of `me` grants `capability`
  * ("manage_users" | "admin_directory" | "create_workspace" | "create_team" |
- * "create_content" | "create_note"). Deactivated users have none.
+ * "create_content" | "create_note"). Only active users have any, as the
+ * server's `access.can` decides.
  */
 export function can(me, capability) {
-  if (!me || me.status === "deactivated") return false;
+  if (me?.status !== "active") return false;
   return ACCOUNT_CAPABILITIES[me.role]?.has(capability) ?? false;
 }
 

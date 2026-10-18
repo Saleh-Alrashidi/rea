@@ -37,11 +37,12 @@ function safeCall(listener, data) {
 }
 
 /**
- * Creates the bus. `subscribeBoardEvents(boardId, onChange) → close` opens a
- * board stream (`api.subscribeBoardEvents`; injectable for tests).
+ * Creates the bus. `subscribeBoardEvents(boardId, onChange, onEnd) → close`
+ * opens a board stream (`api.subscribeBoardEvents`; injectable for tests);
+ * `onEnd()` reports that the server ended it for good.
  *
  * @param {{ subscribeBoardEvents(boardId: string,
- *   onChange: (change: object) => void): () => void }} options
+ *   onChange: (change: object) => void, onEnd: () => void): () => void }} options
  */
 export function createBus({ subscribeBoardEvents }) {
   const listeners = new Map();
@@ -66,18 +67,29 @@ export function createBus({ subscribeBoardEvents }) {
     }
   }
 
+  /** The server ended `entry`'s stream: drop it and tell its watchers. */
+  function boardEnded(boardId, entry) {
+    if (boards.get(boardId) !== entry) return;
+    boards.delete(boardId);
+    entry.close?.();
+    for (const onEnd of Array.from(entry.ends)) safeCall(onEnd);
+  }
+
   function openBoard(boardId) {
-    const entry = { listeners: new Set(), close: null };
+    const entry = { listeners: new Set(), ends: new Set(), close: null };
     boards.set(boardId, entry);
+    const onChange = (change) => {
+      const target = change.board_id;
+      if (target !== undefined && String(target) !== boardId) return;
+      for (const listener of Array.from(entry.listeners)) {
+        safeCall(listener, change);
+      }
+      emit(BUS_EVENTS.boardChange, change);
+    };
     try {
-      entry.close = subscribeBoardEvents(boardId, (change) => {
-        const target = change.board_id;
-        if (target !== undefined && String(target) !== boardId) return;
-        for (const listener of Array.from(entry.listeners)) {
-          safeCall(listener, change);
-        }
-        emit(BUS_EVENTS.boardChange, change);
-      });
+      entry.close = subscribeBoardEvents(boardId, onChange, () =>
+        boardEnded(boardId, entry),
+      );
     } catch (error) {
       globalThis.console?.error?.("Board events unavailable", error);
     }
@@ -86,19 +98,23 @@ export function createBus({ subscribeBoardEvents }) {
 
   /**
    * Calls `listener(change)` for every change of `boardId` (one shared
-   * stream per board) and re-emits them as `board-change`. Returns
+   * stream per board) and re-emits them as `board-change`; `onEnd()` runs
+   * when the server ends the stream (the board was deleted or the user lost
+   * access), after which a new `watchBoard` opens a fresh one. Returns
    * `unwatch()`; the stream closes with its last watcher.
    */
-  function watchBoard(boardId, listener) {
+  function watchBoard(boardId, listener, onEnd = null) {
     const id = String(boardId);
     if (!ID_PATTERN.test(id)) throw new TypeError("boardId must be an ID");
     const entry = boards.get(id) ?? openBoard(id);
     entry.listeners.add(listener);
+    if (onEnd) entry.ends.add(onEnd);
     let active = true;
     return () => {
       if (!active) return;
       active = false;
       entry.listeners.delete(listener);
+      if (onEnd) entry.ends.delete(onEnd);
       if (entry.listeners.size > 0 || boards.get(id) !== entry) return;
       boards.delete(id);
       entry.close?.();

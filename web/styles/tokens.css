@@ -5,7 +5,10 @@
  * always with `<html data-theme="dark">` (ui/shell/theme.js sets it).
  *
  * Text colors meet 4.5:1 on page, panel, raised and hover surfaces in both
- * themes; primary buttons keep white text at 5.4:1.
+ * themes; primary buttons keep white text at 5.4:1. Text on a solid danger
+ * fill uses --color-text-on-danger: white on the light theme's dark red
+ * (5.5:1), near-black on the dark theme's light red (6.9:1; white there
+ * would be 2.8:1).
  */
 
 :root {
@@ -107,6 +110,7 @@
   --color-warning-soft: #fff3e0;
   --color-danger: #c62a3c;
   --color-danger-hover: #a8202f;
+  --color-text-on-danger: #ffffff;
   --color-danger-soft: #fdecee;
   --color-info: #0b6bcb;
   --color-info-soft: #e6f1fc;
@@ -152,6 +156,7 @@
     --color-warning-soft: #2c2112;
     --color-danger: #ff6b70;
     --color-danger-hover: #ff8a8e;
+    --color-text-on-danger: #1a0b0d;
     --color-danger-soft: #3a1418;
     --color-info: #70b8ff;
     --color-info-soft: #0f2238;
@@ -196,6 +201,7 @@
   --color-warning-soft: #2c2112;
   --color-danger: #ff6b70;
   --color-danger-hover: #ff8a8e;
+  --color-text-on-danger: #1a0b0d;
   --color-danger-soft: #3a1418;
   --color-info: #70b8ff;
   --color-info-soft: #0f2238;

@@ -86,10 +86,10 @@ test("createBoard adds the default columns, group and views", async () => {
     [placed.workspace_id, placed.board_kind],
     [leadership.id, "private"],
   );
-  assert.throws(
-    () => store.createBoard({ name: "x", boardKind: "secret" }),
-    TypeError,
-  );
+  const secret = store.createBoard({ name: "x", boardKind: "secret" });
+  assert.equal(secret.reason, "invalid", "an unknown kind is bad input");
+  const unset = store.createBoard({ name: "x", boardKind: null });
+  assert.match(unset.message, /board_kind must be one of/);
   assert.throws(() => store.createBoard({ name: "" }), TypeError);
   assert.throws(
     () => store.createBoard({ name: "x", description: 5 }),

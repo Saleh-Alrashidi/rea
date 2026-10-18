@@ -101,14 +101,19 @@ ordered `viewer < editor < owner`.
 | Create workspaces and teams                             | ✓            | ✓            |                |              |
 | Create boards, docs, forms (where they can edit)        | ✓            | ✓            |                |              |
 | Create personal notes                                   | ✓            | ✓            | ✓              | ✓            |
-| Implicit access to Main boards and workspace docs       | editor       | editor       | viewer         | —            |
+| Implicit access to Main boards                          | owner        | editor       | viewer         | —            |
+| Implicit access to workspace docs                       | editor       | editor       | viewer         | —            |
 | Can be added to Private boards                          | ✓            | ✓            | ✓              |              |
 | Can be added to Shareable boards, docs and notes        | ✓            | ✓            | ✓              | ✓            |
 | Edit                                                    | per resource | per resource | never (viewer) | per resource |
 
 Admins have no silent access to private content: the content directory
 shows titles and owners only, and **Take ownership** adds the admin as an
-owner in plain sight (boards also log it in the activity).
+owner in plain sight. The resource's owners get a notification that stays
+in their inbox even if the admin removes themselves again, and boards also
+log the takeover in the activity. On Main boards admins are implicit owners
+(`server/access.js`, SPEC-2 §1.2); a kind change that would remove their
+own access is refused until they add themselves as an owner.
 
 ### Sharing
 
@@ -118,9 +123,13 @@ Private; workspace Open / Closed; notes stay private until shared), the
 current members with role menus, and a people-and-teams picker that
 explains why someone is not eligible (guests only on Shareable boards,
 docs and notes; deactivated users never). The last owner cannot be removed
-or demoted. Turning a Shareable board into Main or Private asks first,
-then removes its guests. Granting a team covers its current and future
-members.
+or demoted; only owner grants that give owner access count (not those of
+deactivated users, viewer accounts or guests on boards that exclude them),
+and teams likewise keep an active owner. Turning a Shareable board into
+Main or Private asks first, then removes its guests. Granting a team covers
+its current and future members, and the share notification names the role
+each person really gets (a viewer account is told "viewer"). Deleting a
+team logs the removal on every board it was a member of.
 
 ### Workspaces, boards and the inbox
 
@@ -131,7 +140,8 @@ members.
 - **Home**: greeting, quick-create tiles, next due items, unread
   notifications, recent boards and docs, and what was shared with you.
 - **My work**: items assigned to you, grouped by Overdue / This week /
-  Later / No date, with inline status changes.
+  Later / No date / Done (finished items are never overdue), with inline
+  status changes.
 - **Boards**: the part-1 table, kanban and app views, plus a kind badge,
   member avatars, Share, an **Activity** timeline (who changed what, with
   from → to chips) and a **Forms** view. Viewers get read-only cells and a
@@ -169,7 +179,10 @@ example app, **Status summary** (`apps/status-summary/`), uses the SDK
 (`sdk/mini-monday-sdk.js`) to read the board through the host-proxied API,
 listen to live board events, keep a note in app storage with optimistic
 versioning, show host notices and open item cards, and verify a signed
-session token with its own backend.
+session token with its own backend. Apps act as their user: reading app
+storage needs viewer access to the install's board and writing it needs
+editor, so view-only users cannot change the shared note. Each storage
+segment holds at most 1,000 live keys.
 
 ### CLI
 
@@ -202,7 +215,8 @@ server/
   schema.js        merges server/schema/*.js into one buildSchema() call
   schema/          common people workspaces boards items sharing docs notes
                    forms inbox search storage
-  graphql/         parse.js schema.js execute.js errors.js (the engine)
+  graphql/         parse.js schema.js validate.js execute.js errors.js
+                   (the engine)
   auth.js          API tokens, browser sessions, app principals, JWTs
   events.js        server-sent events hub
   column-values.js parse and format column values
@@ -223,17 +237,25 @@ test/              node:test suites
 **One owner for access.** `server/access.js` is the single module that
 interprets account roles, user status, grants and team membership
 (`workspaceAccess`, `boardAccess`, `docAccess`, `noteAccess`,
-`formAccess`, `can`, `canGrant`, `notificationVisible`). The store records
-facts and never decides authority; resolvers, HTTP routes, the SSE hub and
-the app/session-token code all ask `access.js`. The web client reads only
-the server's verdicts (`my_access`, `can_manage`, `role`) to decide which
-controls to show.
+`formAccess`, `installAccess`, `can`, `canGrant`, `notificationVisible`,
+and the people directory: `visibleUserIds`, `teamVisible`). The store
+records facts and never decides authority; resolvers, HTTP routes, the
+SSE hub and the app/session-token code all ask `access.js`. Every
+User-valued field (authors, actors, owners, members) resolves through the
+caller's directory, so a guest sees `null` for people outside it. The web
+client reads only the server's verdicts (`my_access`, `can_manage`,
+`can_open`, `can_delete`, `role`) to decide which controls to show.
 
 **GraphQL subset.** `server/graphql/` is a small, dependency-free engine:
 queries and mutations (no subscriptions), variables with defaults,
 aliases, fragments (named and inline), `@include`/`@skip`, full validation
 before execution, input coercion, null propagation, and limits on query
-length (100,000 characters), depth (12) and resolved fields (5,000). Fields carry
+length (100,000 characters), depth (12) and resolved fields (5,000).
+Validation and argument coercion cost no more than the document's size
+however often a fragment is spread, and fields sharing a response key
+must have mergeable sub-selections. Lists that scan everything a caller
+can access (search, My work, Shared with me, the directory) run once per
+request however often a query aliases them. Fields carry
 `addedIn`/`removedIn` versions, so `/v2/get_schema?version=…&format=sdl`
 prints each API version's SDL. Expected failures use error codes
 (`NOT_FOUND`, `FORBIDDEN`, `BAD_USER_INPUT`, `VERSION_CONFLICT` with
@@ -251,9 +273,12 @@ types the app listens to. Methods: `get`, `set`, `listen`, `unlisten`,
 change events (`event: change`) after an access check, re-checks access on
 every change and ends the stream when access is lost. `GET
 /v2/events?stream=me` streams the signed-in user's notification events
-(`event: notification`) and ends when the user is deactivated. The web
-app refreshes boards, the activity view, form response counts and the
-notification bell from these streams.
+(`event: notification`, with the notification's `kind`, `text` and
+`url`) and ends when the user is deactivated. A stream opened with a
+browser session ends with that session (sign-out, user switching, idle
+expiry). The hub accepts 1,000 streams, at most 32 per user (more → 429).
+The web app refreshes boards, the activity view, form response counts and
+the notification bell from these streams.
 
 ## Security model
 
@@ -309,9 +334,12 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
   version conflict, notes privacy, the form builder with a public
   submission, admin invites, role changes and deactivation, teams,
   workspaces, and a screenshot tour of every page (light; dark and 360 px
-  for the main pages). Both fail on console errors, page errors, CSP
-  violations, failed requests and unexpected HTTP errors, and save
-  screenshots to `e2e-output/`.
+  for the main pages). Its interaction steps (`e2e-roles-ux.mjs`,
+  `e2e-roles-ux2.mjs`) cover keyboard focus (item card, drawer, popovers,
+  status picker, skip link), unsaved-work guards, doc undo, number-cell
+  typos, dark-mode contrast and live access changes. Both fail on console
+  errors, page errors, CSP violations, failed requests and unexpected HTTP
+  errors, and save screenshots to `e2e-output/`.
 - The browser tests need `playwright` or `playwright-core` and a Chromium;
   without them they print why and exit 0. `MM_E2E_CHROMIUM` names a browser
   executable; `MM_E2E_STEPS=2,5` runs selected steps while developing.
@@ -336,12 +364,23 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
   `Doc.workspace` are non-null; the workspace's description, members and
   other content stay hidden.
 - **Scale.** Search, My work, Shared with me and the guest directory scan
-  every accessible record per request, and persistence rewrites one JSON
-  file. Activity keeps the newest 1,000 entries per board and the inbox
-  the newest 200 notifications per user.
+  every accessible record once per request, and persistence rewrites one
+  JSON file (temp files of interrupted saves are removed at start-up).
+  Activity keeps the newest 1,000 entries per board and the inbox the
+  newest 200 notifications per user. There is no request rate limit on
+  `/v2`; each request's work is bounded by the query limits above.
+- **Text limits count UTF-16 code units**, like the browser's
+  `maxlength`: a name of 255 characters fits, but one made of emoji or
+  other characters outside the Basic Multilingual Plane fits only half as
+  many.
+- **Deleting a workspace** needs it to be empty, including boards and
+  docs that others keep private in it; `can_delete` says so up front, and
+  only an admin can find such content (content directory, Take
+  ownership).
 - **Editing.** Docs and notes have no real-time co-editing (concurrent
-  saves surface as a version conflict), and undo in docs is the browser's
-  per-block undo.
+  saves surface as a version conflict). Undo in docs is the editor's own
+  doc-wide history (typing and structural edits, up to 200 steps), cleared
+  when the doc is reloaded.
 - **Not production software.** No TLS termination, backups, audit log
   export, email, accessibility audit beyond the checks above, or security
   review beyond this example's tests.

@@ -7,25 +7,30 @@
  */
 import {
   isActive,
+  membersOf,
   requireCapability,
   resourceAccess,
   subjectGrants,
+  teamVisible,
   workspaceAccess,
 } from "../access.js";
+import { BOARD_KIND_LABELS } from "../store-state.js";
 import {
   MAX_NAME_LENGTH,
+  accessibleBoards,
   allBoards,
   badInput,
   byTitle,
+  lookupUser,
+  perRequest,
   read,
   readLimit,
   viewerOf,
+  visibleUsers,
   wrapAll,
 } from "./common.js";
-import { teamVisible, visibleUsers } from "./people.js";
 
 const MAX_SEARCH_RESULTS = 50;
-const BOARD_KINDS = { public: "Main", private: "Private", share: "Shareable" };
 const ROLE_TEXT = { editor: "Can edit", viewer: "Can view" };
 
 const result = (kind, record, { title, subtitle = null, url }) => ({
@@ -38,23 +43,30 @@ const result = (kind, record, { title, subtitle = null, url }) => ({
 const order = (a, b) => a.kind.localeCompare(b.kind) || byTitle(a, b);
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** Boards, docs and notes the caller can open, with their access role. */
-function accessibleContent(store, viewer) {
-  const pairs = (kind, records) =>
-    records.flatMap((record) => {
-      const role = resourceAccess(store, viewer, kind, record);
-      return role === null ? [] : [{ kind, record, role }];
-    });
-  return [
-    ...pairs("board", allBoards(store)),
-    ...pairs("doc", store.listDocs()),
-    ...pairs("note", store.listNotes()),
-  ];
-}
+/**
+ * Boards, docs and notes the caller can open, with their access role
+ * (once per request, like every list below: a query may alias these
+ * fields up to the field budget).
+ */
+const accessibleContent = (ctx) =>
+  perRequest(ctx, "content", () => {
+    const { store } = ctx;
+    const viewer = viewerOf(ctx);
+    const pairs = (kind, records) =>
+      records.flatMap((record) => {
+        const role = resourceAccess(store, viewer, kind, record);
+        return role === null ? [] : [{ kind, record, role }];
+      });
+    return [
+      ...pairs("board", accessibleBoards(ctx)),
+      ...pairs("doc", store.listDocs()),
+      ...pairs("note", store.listNotes()),
+    ];
+  });
 
 const boardResult = (board) =>
   result("board", board, {
-    subtitle: `${BOARD_KINDS[board.board_kind]} board`,
+    subtitle: `${BOARD_KIND_LABELS[board.board_kind]} board`,
     url: `#/boards/${board.id}`,
   });
 const docResult = (doc) =>
@@ -62,9 +74,9 @@ const docResult = (doc) =>
     subtitle: doc.visibility === "private" ? "Private doc" : "Workspace doc",
     url: `#/docs/${doc.id}`,
   });
-function noteResult(store, viewer, note) {
-  const owner = store.getUser(note.owner_id);
-  const mine = note.owner_id === viewer.id;
+function noteResult(ctx, note) {
+  const owner = lookupUser(ctx, note.owner_id);
+  const mine = note.owner_id === viewerOf(ctx).id;
   const subtitle = mine ? "Your note" : `Shared by ${owner?.name ?? "someone"}`;
   return result("note", note, { subtitle, url: `#/notes/${note.id}` });
 }
@@ -91,8 +103,10 @@ function boardContent(store, boards) {
   });
 }
 
-function directoryResults(store, viewer) {
-  const users = visibleUsers(store, viewer).map((user) => {
+function directoryResults(ctx) {
+  const { store } = ctx;
+  const viewer = viewerOf(ctx);
+  const users = visibleUsers(ctx).map((user) => {
     const status = isActive(user) ? null : "Deactivated";
     const subtitle = [user.title, status].filter(Boolean).join(" · ") || null;
     return result("user", user, { subtitle, url: "#/teams" });
@@ -119,24 +133,28 @@ function directoryResults(store, viewer) {
   return [...users, ...teams, ...workspaces];
 }
 
-/** Every record `viewer` could find, as SearchResults. */
-function candidates(store, viewer) {
-  const content = accessibleContent(store, viewer);
-  const boards = content.filter((entry) => entry.kind === "board");
-  const own = content.map(({ kind, record }) => {
-    if (kind === "board") return boardResult(record);
-    if (kind === "doc") return docResult(record);
-    return noteResult(store, viewer, record);
+const contentResult = (ctx, { kind, record }) => {
+  if (kind === "board") return boardResult(record);
+  if (kind === "doc") return docResult(record);
+  return noteResult(ctx, record);
+};
+
+/**
+ * Every record the caller could find, as SearchResults in result order
+ * with their lower-cased titles (`match`), once per request.
+ */
+const candidates = (ctx) =>
+  perRequest(ctx, "search", () => {
+    const content = accessibleContent(ctx);
+    const boards = content.filter((entry) => entry.kind === "board");
+    const records = boards.map((entry) => entry.record);
+    const all = [
+      ...content.map((entry) => contentResult(ctx, entry)),
+      ...boardContent(ctx.store, records),
+      ...directoryResults(ctx),
+    ].sort(order);
+    return all.map((entry) => ({ entry, match: entry.title.toLowerCase() }));
   });
-  return [
-    ...own,
-    ...boardContent(
-      store,
-      boards.map((entry) => entry.record),
-    ),
-    ...directoryResults(store, viewer),
-  ];
-}
 
 function search(_p, args, ctx) {
   const limit = readLimit(args.limit, MAX_SEARCH_RESULTS);
@@ -145,59 +163,62 @@ function search(_p, args, ctx) {
     badInput(`query must be at most ${MAX_NAME_LENGTH} characters`);
   }
   if (term === "") return [];
-  return candidates(ctx.store, viewerOf(ctx))
-    .filter((entry) => entry.title.toLowerCase().includes(term))
-    .sort(order)
-    .slice(0, limit);
+  const results = [];
+  for (const { entry, match } of candidates(ctx)) {
+    if (!match.includes(term)) continue;
+    results.push(entry);
+    if (results.length === limit) break;
+  }
+  return results;
 }
 
 /** Content reached through an explicit grant where the caller is no owner. */
-function sharedWithMe(_p, _a, ctx) {
-  const { store } = ctx;
-  const viewer = viewerOf(ctx);
-  const field = { board: "members", doc: "members", note: "shares" };
-  return accessibleContent(store, viewer)
-    .filter(
-      ({ kind, record, role }) =>
-        role !== "owner" &&
-        subjectGrants(store, viewer, record[field[kind]]) !== null,
-    )
-    .map(({ kind, record, role }) => {
-      const entry =
-        kind === "board"
-          ? boardResult(record)
-          : kind === "doc"
-            ? docResult(record)
-            : noteResult(store, viewer, record);
-      return { ...entry, subtitle: ROLE_TEXT[role] ?? entry.subtitle };
-    })
-    .sort(order);
-}
+const sharedWithMe = (_p, _a, ctx) =>
+  perRequest(ctx, "shared_with_me", () => {
+    const { store } = ctx;
+    const viewer = viewerOf(ctx);
+    const shared = ({ kind, record, role }) =>
+      role !== "owner" &&
+      subjectGrants(store, viewer, membersOf(kind, record)) !== null;
+    return accessibleContent(ctx)
+      .filter(shared)
+      .map((content) => {
+        const entry = contentResult(ctx, content);
+        return {
+          ...entry,
+          subtitle: ROLE_TEXT[content.role] ?? entry.subtitle,
+        };
+      })
+      .sort(order);
+  });
 
 /** The first user owner grant of a board or doc, else its creator. */
-function ownerOf(store, record) {
+function ownerOf(ctx, record) {
   const grant = record.members.find(
     (entry) => entry.kind === "user" && entry.role === "owner",
   );
   const id = grant?.id ?? record.creator_id ?? record.created_by ?? null;
-  return id ? store.getUser(id) : null;
+  return lookupUser(ctx, id);
 }
 
 function contentDirectory(_p, _a, ctx) {
   requireCapability(ctx, "admin_directory");
-  const { store } = ctx;
-  const entry = (kind, record, privacy) => ({
-    kind,
-    id: record.id,
-    title: record.name ?? record.title,
-    privacy,
-    owner: ownerOf(store, record),
-    workspace: store.getWorkspace(record.workspace_id),
+  return perRequest(ctx, "content_directory", () => {
+    const { store } = ctx;
+    const entry = (kind, record, privacy) => ({
+      kind,
+      id: record.id,
+      title: record.name ?? record.title,
+      privacy,
+      owner: ownerOf(ctx, record),
+      workspace: store.getWorkspace(record.workspace_id),
+    });
+    const boards = allBoards(store);
+    return [
+      ...boards.map((board) => entry("board", board, board.board_kind)),
+      ...store.listDocs().map((doc) => entry("doc", doc, doc.visibility)),
+    ].sort(order);
   });
-  return [
-    ...allBoards(store).map((board) => entry("board", board, board.board_kind)),
-    ...store.listDocs().map((doc) => entry("doc", doc, doc.visibility)),
-  ].sort(order);
 }
 
 export const definition = {

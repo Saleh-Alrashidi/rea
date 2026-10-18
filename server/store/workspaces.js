@@ -56,6 +56,9 @@ export function workspaceApi(ctx) {
     resource_kind: "workspace",
     resource_id: workspace.id,
   });
+  const holds = (id) => (record) => record.workspace_id === id;
+  const isEmpty = (id) =>
+    !state.boards.some(holds(id)) && !state.docs.some(holds(id));
   return {
     listWorkspaces: () => [...state.workspaces],
     getWorkspace: (id) => byId(state.workspaces, id),
@@ -99,14 +102,19 @@ export function workspaceApi(ctx) {
       replace(state.workspaces, workspace, next);
       return commit(ctx, event("workspace_updated", next), next);
     },
+    /**
+     * True when no board or doc is in workspace `id`, counting those the
+     * caller cannot see (they block deletion too).
+     */
+    isWorkspaceEmpty: (id) => isEmpty(id),
     /** Deletes an empty workspace; with boards or docs → `not_empty`. */
     deleteWorkspace(id) {
       const workspace = byId(state.workspaces, id);
       if (!workspace) return null;
-      const holds = (r) => r.workspace_id === id;
-      if (state.boards.some(holds) || state.docs.some(holds)) {
+      if (!isEmpty(id)) {
         return failure("not_empty", {
-          message: "Move or delete its boards and docs first",
+          message:
+            "Only an empty workspace can be deleted, and this one still holds boards or docs (possibly ones shared only with others)",
         });
       }
       removeWhere(state.workspaces, (record) => record === workspace);

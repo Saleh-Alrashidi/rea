@@ -42,10 +42,15 @@
           id="note"
           rows="4"
           maxlength="65536"
-          placeholder="Write a note for everyone who uses this view"
+          readonly
+          aria-describedby="note-access"
+          placeholder="No note yet"
         ></textarea>
+        <p id="note-access" class="hint muted" hidden>
+          View only: the board’s editors can change this note.
+        </p>
         <div class="row">
-          <button id="save-note" class="primary" type="button">
+          <button id="save-note" class="primary" type="button" disabled hidden>
             Save note
           </button>
           <button id="reload-note" type="button" hidden>Load latest</button>

@@ -24,7 +24,6 @@ import {
   optional,
   push,
   randomToken,
-  readBoolean,
   readChoice,
   readColor,
   readName,
@@ -64,6 +63,14 @@ function readQuestion(state, { board, raw, index }) {
   if (label === "" || label.length > LIMITS.label) {
     invalid(`${where} label must be 1-${LIMITS.label} characters`);
   }
+  // Question fields come from client JSON: a wrong type is bad input.
+  if (
+    raw.help !== undefined &&
+    raw.help !== null &&
+    typeof raw.help !== "string"
+  ) {
+    invalid(`${where} help must be text`);
+  }
   const help = readText(raw.help ?? "", `${where} help`, LIMITS.help);
   if (
     raw.id !== undefined &&
@@ -71,9 +78,10 @@ function readQuestion(state, { board, raw, index }) {
   ) {
     invalid(`${where} id must be 1-64 letters, digits, _ or -`);
   }
-  const required =
-    column.type === "name" ||
-    readBoolean(raw.required ?? false, `${where} required`);
+  if (raw.required !== undefined && typeof raw.required !== "boolean") {
+    invalid(`${where} required must be true or false`);
+  }
+  const required = column.type === "name" || raw.required === true;
   return { id: raw.id, column_id: column.id, label, help, required };
 }
 

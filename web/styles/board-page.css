@@ -30,13 +30,15 @@
 
 .board-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
 
 .board-name-heading {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: min(240px, 100%);
+  overflow-wrap: anywhere;
   font-size: var(--text-2xl);
   font-weight: var(--weight-bold);
 }
@@ -46,6 +48,9 @@
 }
 
 .board-name {
+  field-sizing: content;
+  min-width: 8ch;
+  max-width: 100%;
   font-size: var(--text-2xl);
   font-weight: var(--weight-bold);
   letter-spacing: -0.01em;
@@ -53,7 +58,9 @@
 
 .board-badges {
   display: flex;
+  flex: 1;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
 }
 
@@ -189,14 +196,6 @@
 }
 
 @media (max-width: 480px) {
-  .board-title-row {
-    flex-wrap: wrap;
-  }
-
-  .board-name-heading {
-    flex-basis: 100%;
-  }
-
   .search {
     flex: 1;
   }

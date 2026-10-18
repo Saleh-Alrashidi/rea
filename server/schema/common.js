@@ -7,7 +7,14 @@
  * (`require*`, `*Access`, `can`) and only map its answers. A missing record
  * and a record the caller cannot access produce the same NOT_FOUND error.
  */
-import { actingUser, membersOf, notFoundError } from "../access.js";
+import {
+  actingUser,
+  boardAccess,
+  membersOf,
+  notFoundError,
+  teamVisible,
+  visibleUserIds,
+} from "../access.js";
 import { GraphQLError } from "../graphql/errors.js";
 import { API_VERSIONS } from "../versions.js";
 
@@ -19,12 +26,6 @@ const MAX_LIMIT = 500;
 
 export const isPlainObject = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** A short JSON rendering of a caller-supplied value for messages. */
-export const describe = (value) => {
-  const text = String(value);
-  return JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}…` : text);
-};
 
 /** Throws a GraphQLError; usable as an expression (`x ?? fail(…)`). */
 export const fail = (code, message, extensions) => {
@@ -138,11 +139,66 @@ export const wrapAll = (wrap, resolvers) =>
     Object.entries(resolvers).map(([name, resolve]) => [name, wrap(resolve)]),
   );
 
+// ------------------------------------------------------ per-request views
+
+const REQUEST_CACHES = new WeakMap();
+
+/**
+ * `compute()` at most once per request (`ctx`), `key` and store revision.
+ * Resolvers that scan everything the caller can access share one scan
+ * however often a query aliases them, and any committed change (in this
+ * request or a concurrent one) starts over. Without a store revision
+ * (stub stores) nothing is cached.
+ */
+export function perRequest(ctx, key, compute) {
+  const revision = ctx.store.revision?.();
+  if (revision === undefined) return compute();
+  let cache = REQUEST_CACHES.get(ctx);
+  if (cache?.revision !== revision) {
+    cache = { revision, values: new Map() };
+    REQUEST_CACHES.set(ctx, cache);
+  }
+  if (!cache.values.has(key)) cache.values.set(key, compute());
+  return cache.values.get(key);
+}
+
+/** The IDs of the users the caller may see, or null for everyone. */
+const directoryOf = (ctx) =>
+  perRequest(ctx, "directory", () => visibleUserIds(ctx.store, viewerOf(ctx)));
+
+/** The users the caller may see, in store order. */
+export function visibleUsers(ctx) {
+  const ids = directoryOf(ctx);
+  const users = ctx.store.listUsers();
+  return ids === null ? users : users.filter((user) => ids.has(user.id));
+}
+
+/**
+ * A user the caller may see, else null: every User-valued field (authors,
+ * actors, owners, members) and every people value resolves through this,
+ * so hidden users look exactly like unknown IDs.
+ */
+export function lookupUser(ctx, id) {
+  if (id === null || id === undefined) return null;
+  const ids = directoryOf(ctx);
+  return ids === null || ids.has(id) ? ctx.store.getUser(id) : null;
+}
+
+/** Boards the caller can access, in store order. */
+export const accessibleBoards = (ctx) =>
+  perRequest(ctx, "boards", () => {
+    const viewer = viewerOf(ctx);
+    return allBoards(ctx.store).filter(
+      (board) => boardAccess(ctx.store, viewer, board) !== null,
+    );
+  });
+
 // ---------------------------------------------------------------- members
 
 /**
- * The grants of `resource` as Member records `{ kind, id, name, role,
- * user, team }`; grants whose user or team no longer exists are skipped.
+ * The grants of `resource` as Member records `{ kind, id, name, role }`;
+ * grants whose user or team no longer exists are skipped. `Member.user`
+ * and `Member.team` resolve through the caller's directory.
  */
 export function memberRecords(store, resourceKind, resource) {
   return membersOf(resourceKind, resource).flatMap((grant) => {
@@ -150,11 +206,18 @@ export function memberRecords(store, resourceKind, resource) {
     const record = isUser ? store.getUser(grant.id) : store.getTeam(grant.id);
     if (!record) return [];
     const { kind, id, role } = grant;
-    const user = isUser ? record : null;
-    const team = isUser ? null : record;
-    return [{ kind, id, role, name: record.name, user, team }];
+    return [{ kind, id, role, name: record.name }];
   });
 }
+
+const Member = {
+  user: (member, _a, ctx) =>
+    member.kind === "user" ? lookupUser(ctx, member.id) : null,
+  team: (member, _a, ctx) => {
+    const team = member.kind === "team" ? ctx.store.getTeam(member.id) : null;
+    return teamVisible(viewerOf(ctx), team) ? team : null;
+  },
+};
 
 export function initials(name) {
   const words = name.trim().split(/\s+/u).filter(Boolean);
@@ -206,6 +269,7 @@ export const definition = {
         API_VERSIONS.find((version) => version.value === apiVersion),
       versions: () => API_VERSIONS,
     },
+    Member,
   },
   extras: {
     "Query.version": { description: "The API version of this request." },

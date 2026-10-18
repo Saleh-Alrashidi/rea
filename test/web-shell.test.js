@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import test from "node:test";
+import { ALL_SCOPES } from "../server/auth.js";
+import { execute } from "../server/graphql/execute.js";
 import { parse } from "../server/graphql/parse.js";
+import { createSchema } from "../server/schema.js";
+import { createStore } from "../server/store.js";
 import { request } from "../web/api.js";
 import { MY_WORK_QUERY } from "../web/ui/board/my-work-data.js";
 import { SEARCH_QUERY } from "../web/ui/components/command-palette.js";
@@ -36,7 +39,6 @@ import { HOME_QUERY } from "../web/pages/home.js";
 import { SHARED_DETAILS_QUERY, SHARED_QUERY } from "../web/pages/shared.js";
 
 const ORIGIN = "http://localhost:4100";
-const SCHEMA_URL = new URL("../server/schema.js", import.meta.url);
 
 /** Every GraphQL document the shell, components and pages send. */
 const DOCUMENTS = {
@@ -110,23 +112,8 @@ test("every shell and page document parses with the server parser", () => {
   }
 });
 
-/** The real schema when it serves the SPEC-2 API, else null. */
-async function workspaceSchema() {
-  if (!existsSync(SCHEMA_URL)) return null;
-  const { createSchema } = await import("../server/schema.js");
+test("every document validates against the SPEC-2 schema", async () => {
   const schema = createSchema();
-  return schema.types.get("Query").fields.has("workspaces") ? schema : null;
-}
-
-test("every document validates against the SPEC-2 schema", async (t) => {
-  const schema = await workspaceSchema();
-  if (!schema) {
-    t.skip("server/schema.js does not serve the SPEC-2 API yet");
-    return;
-  }
-  const { execute } = await import("../server/graphql/execute.js");
-  const { createStore } = await import("../server/store.js");
-  const { ALL_SCOPES } = await import("../server/auth.js");
   const store = await createStore({ file: null });
   const principal = {
     kind: "session",
@@ -225,9 +212,13 @@ test("share rules: roles per kind, last owner, guests", () => {
   assert.equal(board.canManage, true);
   assert.equal(board.hash, "#/boards/4");
   assert.equal(board.setting, "private");
-  const [owner, editor] = board.members;
-  assert.match(lastOwnerReason(board, owner), /at least one owner/);
+  const [owner, editor, team] = board.members;
+  assert.match(lastOwnerReason(board, owner), /^This board needs/);
   assert.equal(lastOwnerReason(board, editor), null);
+  // Team owner grants never count as the owner a resource keeps.
+  const withTeam = { ...board, members: [owner, { ...team, role: "owner" }] };
+  assert.match(lastOwnerReason(withTeam, owner), /at least one owner/);
+  assert.equal(lastOwnerReason(withTeam, withTeam.members[1]), null);
   board.members.push({ ...editor, id: "8", role: "owner" });
   assert.equal(lastOwnerReason(board, owner), null);
 
@@ -287,8 +278,8 @@ test("the people picker never offers deactivated users", () => {
 test("the bus shares one stream per board and filters other boards", () => {
   const opened = [];
   const bus = createBus({
-    subscribeBoardEvents(boardId, onChange) {
-      const stream = { boardId, onChange, closed: false };
+    subscribeBoardEvents(boardId, onChange, onEnd) {
+      const stream = { boardId, onChange, onEnd, closed: false };
       opened.push(stream);
       return () => (stream.closed = true);
     },
@@ -312,4 +303,25 @@ test("the bus shares one stream per board and filters other boards", () => {
   stopB();
   assert.equal(opened[0].closed, true);
   assert.throws(() => bus.watchBoard("../4", () => {}), TypeError);
+
+  // The server ends a stream (lost access): its watchers hear it once, and
+  // the next watch opens a new stream instead of the dead one.
+  const ends = [];
+  const stopC = bus.watchBoard(
+    "7",
+    () => {},
+    () => ends.push("c"),
+  );
+  bus.watchBoard(
+    "7",
+    () => {},
+    () => ends.push("d"),
+  );
+  opened.at(-1).onEnd();
+  opened.at(-1).onEnd();
+  assert.deepEqual(ends, ["c", "d"]);
+  assert.equal(opened.at(-1).closed, true);
+  stopC();
+  bus.watchBoard("7", () => {});
+  assert.equal(opened.length, 3, "a fresh stream after the end");
 });

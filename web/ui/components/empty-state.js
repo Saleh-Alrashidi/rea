@@ -34,8 +34,12 @@ function actionElement(action, variant) {
 }
 
 /**
+ * `headingLevel: 1` makes the title the page's h1, for messages that are a
+ * page's whole content (not found, no access, failed to load); panels keep
+ * the default h2.
+ *
  * @param {{ icon?: string, title: string, text?: string, busy?: boolean,
- *   compact?: boolean, tone?: "neutral" | "danger",
+ *   compact?: boolean, tone?: "neutral" | "danger", headingLevel?: 1 | 2,
  *   action?: { label: string, icon?: string, onClick?: () => void,
  *     href?: string, disabledReason?: string } | null,
  *   secondaryAction?: { label: string, onClick?: () => void, href?: string } | null }} options
@@ -66,7 +70,11 @@ export function emptyState(options) {
       { class: "empty-icon" },
       iconElement(icon, { size: compact ? 20 : 28 }),
     ),
-    h("h2", { class: "empty-title" }, title),
+    h(
+      options.headingLevel === 1 ? "h1" : "h2",
+      { class: "empty-title" },
+      title,
+    ),
     text ? h("p", { class: "empty-text" }, text) : null,
     options.action || options.secondaryAction
       ? h(

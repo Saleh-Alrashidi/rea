@@ -2,7 +2,9 @@
  * Block editor core: the editor record (`ed`), DOM reconciliation by
  * block ID, caret placement and the structural operations shared by the
  * key and input handlers (`editor-input.js`). Every operation applies a
- * pure `blocks.js` result, re-renders and moves the caret explicitly.
+ * pure `blocks.js` result, re-renders and moves the caret explicitly, and
+ * records the state it replaces in the editor's undo history
+ * (`history.js`); `undoRedo` replays that history.
  */
 
 import { openBlockActions, openSlashMenu } from "./block-menu.js";
@@ -19,6 +21,7 @@ import {
   splitBlock,
 } from "./blocks.js";
 import { caretX, getOffsets, placeCaretAtX, setCaret } from "./caret.js";
+import { changedFocus } from "./history.js";
 
 export const LIMIT_MESSAGE = `A block holds up to ${BLOCK_LIMITS.text.toLocaleString("en-US")} characters.`;
 export const FULL_MESSAGE = `A doc holds up to ${BLOCK_LIMITS.blocks.toLocaleString("en-US")} blocks.`;
@@ -82,12 +85,44 @@ export function focusAt(ed, { index, offset }) {
     setCaret(view.content, Math.min(offset, view.content.textContent.length));
 }
 
-/** Applies a model result: new blocks, re-render, caret, change event. */
-export function commit(ed, blocks, focus) {
+/** The caret as `{ index, offset }` when it is in a block, else null. */
+function caretState(ed) {
+  const active = globalThis.document?.activeElement;
+  const index = indexOf(ed, active);
+  const view = viewAt(ed, index);
+  if (!view) return null;
+  const offset = hasText(view.type)
+    ? (getOffsets(view.content)?.start ?? 0)
+    : 0;
+  return { index, offset };
+}
+
+/** Records the current state in the undo history before a change. */
+export function record(ed, { kind = "structure", blockId = null } = {}) {
+  const focus = kind === "typing" ? null : caretState(ed);
+  ed.history.record({ blocks: ed.state.blocks, focus }, { kind, blockId });
+}
+
+/**
+ * Applies a model result: new blocks, re-render, caret, change event. The
+ * replaced state is recorded for undo unless `record` is false.
+ */
+export function commit(ed, blocks, focus, { recordUndo = true } = {}) {
+  if (recordUndo) record(ed);
   ed.state.blocks = blocks;
   reconcile(ed);
   if (focus) focusAt(ed, focus);
   ed.onChange(blocks);
+}
+
+/** Undoes (`"undo"`) or redoes (`"redo"`) the last change of the doc. */
+export function undoRedo(ed, action) {
+  const current = { blocks: ed.state.blocks, focus: caretState(ed) };
+  const target =
+    action === "redo" ? ed.history.redo(current) : ed.history.undo(current);
+  if (!target) return;
+  const focus = target.focus ?? changedFocus(target.blocks, ed.state.blocks);
+  commit(ed, target.blocks, focus, { recordUndo: false });
 }
 
 /** Applies `{ blocks, focus }` from a model operation (null: nothing). */

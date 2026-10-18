@@ -6,18 +6,19 @@
  * A Workspace reached as the container of an accessible board or doc (a
  * shareable board for a guest, a doc shared into a closed workspace) shows
  * only its id, name, kind and color: description and members stay empty,
- * `my_access` reads "viewer" and its boards/docs lists hold only what the
- * caller can open anyway.
+ * `my_access` reads "viewer" (the field is non-null; `can_open` is false)
+ * and its boards/docs lists hold only what the caller can open anyway.
+ * `can_delete` is true only for owners of an empty workspace: content the
+ * caller cannot see blocks deletion too, as the store's rule says.
  */
 import {
-  boardAccess,
   docAccess,
   requireCapability,
   requireWorkspace,
   workspaceAccess,
 } from "../access.js";
 import {
-  allBoards,
+  accessibleBoards,
   memberRecords,
   notFound,
   read,
@@ -36,7 +37,7 @@ const accessOf = (ctx, workspace) =>
  * The workspace new boards and docs go to: `workspaceId`, or the default
  * (first) workspace; the caller needs editor access to it.
  */
-export function targetWorkspace(ctx, workspaceId) {
+export function requireTargetWorkspace(ctx, workspaceId) {
   const id = workspaceId ?? ctx.store.getDefaultWorkspace()?.id ?? null;
   if (id === null) notFound("Workspace", "default");
   return requireWorkspace(ctx, id, "editor");
@@ -58,14 +59,14 @@ const Workspace = {
       : memberRecords(ctx.store, "workspace", workspace),
   my_access: (workspace, _a, ctx) => accessOf(ctx, workspace) ?? "viewer",
   can_manage: (workspace, _a, ctx) => accessOf(ctx, workspace) === "owner",
-  boards: (workspace, _a, ctx) => {
-    const viewer = viewerOf(ctx);
-    return allBoards(ctx.store).filter(
-      (board) =>
-        board.workspace_id === workspace.id &&
-        boardAccess(ctx.store, viewer, board) !== null,
-    );
-  },
+  can_open: (workspace, _a, ctx) => accessOf(ctx, workspace) !== null,
+  can_delete: (workspace, _a, ctx) =>
+    accessOf(ctx, workspace) === "owner" &&
+    ctx.store.isWorkspaceEmpty(workspace.id),
+  boards: (workspace, _a, ctx) =>
+    accessibleBoards(ctx).filter(
+      (board) => board.workspace_id === workspace.id,
+    ),
   docs: (workspace, _a, ctx) => {
     const viewer = viewerOf(ctx);
     return ctx.store
@@ -109,7 +110,8 @@ export const definition = {
     Query: "workspaces:[Workspace!]!",
     Workspace: `id:ID! name:String! description:String kind:WorkspaceKind!
       color:String! members:[Member!]! my_access:AccessRole!
-      boards:[Board!]! docs:[Doc!]! can_manage:Boolean!`,
+      boards:[Board!]! docs:[Doc!]! can_manage:Boolean! can_open:Boolean!
+      can_delete:Boolean!`,
     Mutation: `create_workspace(name:String!,kind:WorkspaceKind="open",description:String):Workspace!
       update_workspace(workspace_id:ID!,name:String,description:String,kind:WorkspaceKind,color:String):Workspace!
       delete_workspace(workspace_id:ID!):Workspace!`,

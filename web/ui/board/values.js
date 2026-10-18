@@ -201,30 +201,46 @@ function isEmptyValue(value) {
 }
 
 /**
- * Encodes a UI value as `change_column_value` JSON text for `column`.
- * Text and numbers travel as JSON strings (the simple format), so the server
- * stays the only validator of number syntax and length limits.
+ * The value of a UI value for `column` as the API reads it (before JSON
+ * encoding): `{}` clears; text and numbers travel as strings (the simple
+ * format), so the server stays the only validator of number syntax and
+ * length limits. `create_item` sends several of these in one JSON object.
  */
-export function encodeValue(column, value) {
-  if (isEmptyValue(value)) return CLEAR_VALUE;
+export function valuePayload(column, value) {
+  if (isEmptyValue(value)) return {};
   switch (column.type) {
     case "status":
-      return JSON.stringify({ index: value });
+      return { index: value };
     case "people":
-      return JSON.stringify({
+      return {
         personsAndTeams: value.map((id) => ({
           id: Number(id),
           kind: "person",
         })),
-      });
+      };
     case "date":
-      return JSON.stringify({ date: value });
+      return { date: value };
     case "numbers":
     case "text":
-      return JSON.stringify(String(value));
+      return String(value);
     default:
       throw new TypeError(`Unsupported column type ${column.type}`);
   }
+}
+
+/** Encodes a UI value as `change_column_value` JSON text for `column`. */
+export const encodeValue = (column, value) =>
+  JSON.stringify(valuePayload(column, value));
+
+/**
+ * Whether status `index` of `column` marks work as finished: its label is
+ * "Done" (the default label at index 1, SPEC.md "Status settings"), in any
+ * case. The API has no completion flag, so this is the one place the UI
+ * decides it (My work and Home keep finished items out of Overdue).
+ */
+export function isDoneStatus(column, index) {
+  const label = statusOption(column, index)?.label ?? "";
+  return label.trim().toLowerCase() === "done";
 }
 
 /** Returns the status option for `index`, the blank option, or null. */

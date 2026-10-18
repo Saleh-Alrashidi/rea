@@ -120,11 +120,15 @@ function quickTiles(ctx, flows) {
 }
 
 function workPreview(items) {
-  const upcoming = items.slice(0, PREVIEW);
+  // The next due items: finished ones are left out.
+  const upcoming = items.filter((item) => !item.done).slice(0, PREVIEW);
   if (upcoming.length === 0) {
     return emptyState({
       icon: "myWork",
-      title: "Nothing assigned to you",
+      title:
+        items.length === 0
+          ? "Nothing assigned to you"
+          : "Everything assigned to you is done",
       text: "Items you’re added to appear here.",
       compact: true,
     });
@@ -149,7 +153,7 @@ function workPreview(items) {
   );
 }
 
-function notificationPreview(notifications) {
+function notificationPreview(notifications, ctx) {
   if (notifications.length === 0) {
     return emptyState({
       icon: "inbox",
@@ -171,7 +175,14 @@ function notificationPreview(notifications) {
           : h("span", { class: "preview-icon" }, icon("bell", { size: 14 })),
         h(
           hash ? "a" : "div",
-          { class: "preview-main", href: hash ?? null },
+          {
+            class: "preview-main",
+            href: hash ?? null,
+            // Opening it from Home reads it, as the bell does.
+            on: hash
+              ? { click: () => ctx.markNotificationRead(notification) }
+              : null,
+          },
           h("span", { class: "preview-title wrap" }, notification.text),
           h(
             "span",
@@ -335,7 +346,9 @@ function hero(ctx) {
 
 function renderHome(slots, ctx, { data, work }) {
   slots.work.replaceChildren(workPreview(work));
-  slots.notifications.replaceChildren(notificationPreview(data.notifications));
+  slots.notifications.replaceChildren(
+    notificationPreview(data.notifications, ctx),
+  );
   slots.boards.replaceChildren(boardTiles(ctx, data.boards));
   slots.docs.replaceChildren(docList(ctx, data.docs));
   slots.shared.replaceChildren(sharedPreview(data.shared_with_me));

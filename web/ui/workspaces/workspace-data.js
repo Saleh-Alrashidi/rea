@@ -11,7 +11,7 @@ import { normalizeMember } from "../components/share-model.js";
 
 export const WORKSPACE_QUERY = `query WorkspacePage {
   workspaces {
-    id name description kind color my_access can_manage
+    id name description kind color my_access can_manage can_delete
     members {
       kind id name role
       user { id name email initials color role status }
@@ -59,6 +59,7 @@ export function normalizeWorkspace(raw) {
     color: safeColor(raw.color, "#5b5bd6"),
     myAccess: raw.my_access,
     canManage: raw.can_manage === true,
+    canDelete: raw.can_delete === true,
     members: (raw.members ?? []).map(normalizeMember),
     boards,
     docs: raw.docs
@@ -82,12 +83,13 @@ export async function loadWorkspace(api, workspaceId) {
 }
 
 /**
- * Why the workspace can't be deleted from what the user can see, or null.
- * The server checks every board and doc, including ones the user can't
- * open, and refuses with its own message.
+ * Why the workspace can't be deleted, or null. The server's `can_delete`
+ * decides (it also counts boards and docs the user can't open); the
+ * visible ones only word the reason.
  */
 export function deleteReason(workspace) {
   if (!workspace.canManage) return "Only workspace owners can delete it";
+  if (workspace.canDelete) return null;
   const parts = [];
   if (workspace.boards.length > 0) {
     const n = workspace.boards.length;
@@ -98,8 +100,8 @@ export function deleteReason(workspace) {
     parts.push(`${n} ${n === 1 ? "doc" : "docs"}`);
   }
   return parts.length > 0
-    ? `Move or delete its ${parts.join(" and ")} first`
-    : null;
+    ? `Delete its ${parts.join(" and ")} first`
+    : "It still holds boards or docs shared only with others";
 }
 
 /**

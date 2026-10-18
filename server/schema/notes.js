@@ -8,6 +8,7 @@
 import { noteAccess, requireCapability, requireNote } from "../access.js";
 import {
   badInput,
+  lookupUser,
   memberRecords,
   notFound,
   read,
@@ -72,7 +73,7 @@ const Mutation = wrapAll(write, {
 });
 
 const Note = {
-  owner: (note, _a, { store }) => store.getUser(note.owner_id),
+  owner: (note, _a, ctx) => lookupUser(ctx, note.owner_id),
   shares: (note, _a, { store }) => memberRecords(store, "note", note),
   my_access: (note, _a, ctx) => noteAccess(ctx.store, viewerOf(ctx), note),
 };

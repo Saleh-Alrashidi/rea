@@ -171,12 +171,13 @@ function notify(r, route) {
   }
 }
 
-async function mountRoute(r, route, { initial }) {
+async function mountRoute(r, route, { initial, hash }) {
   const token = ++r.seq;
   const { outlet, ctx, loading, failed } = r.host;
   teardown(r);
+  r.guards.clear();
   const root = h("div", { class: "page-root" });
-  const entry = { key: route.key, root, cleanup: null };
+  const entry = { key: route.key, root, cleanup: null, hash };
   r.mounted = entry;
   outlet.dataset.page = route.name;
   outlet.replaceChildren(root);
@@ -198,6 +199,23 @@ async function mountRoute(r, route, { initial }) {
   if (!initial && token === r.seq) outlet.focus({ preventScroll: true });
 }
 
+/**
+ * Whether the mounted page may be left for `route`: a page's leave guard
+ * returns a question (unsaved changes) the user must confirm. Declining
+ * puts the page's own hash back.
+ */
+function mayLeave(r, route) {
+  if (!r.mounted || r.mounted.key === route.key) return true;
+  for (const guard of r.guards) {
+    const question = guard();
+    if (!question) continue;
+    if (r.win.confirm(question)) return true;
+    r.win.location.replace(r.mounted.hash);
+    return false;
+  }
+  return true;
+}
+
 function applyLocation(r, { initial = false } = {}) {
   const hash = r.win.location.hash;
   if (pathFromHash(hash) === "") {
@@ -205,16 +223,19 @@ function applyLocation(r, { initial = false } = {}) {
     if (!initial) return;
   }
   const route = resolveRoute(r, hash);
+  if (!mayLeave(r, route)) return;
   r.current = route;
   if (r.mounted && r.mounted.key === route.key) {
+    r.mounted.hash = hash;
     notify(r, route);
     return;
   }
-  mountRoute(r, route, { initial });
+  mountRoute(r, route, { initial, hash });
 }
 
 function reloadRoute(r) {
-  if (r.current) mountRoute(r, r.current, { initial: false });
+  const hash = r.mounted?.hash ?? r.win.location.hash;
+  if (r.current) mountRoute(r, r.current, { initial: false, hash });
 }
 
 /**
@@ -226,6 +247,7 @@ export function createRouter({ window: win = globalThis.window } = {}) {
     win,
     routes: [],
     listeners: new Set(),
+    guards: new Set(),
     fallback: null,
     current: null,
     mounted: null,
@@ -287,6 +309,15 @@ export function createRouter({ window: win = globalThis.window } = {}) {
     },
     /** Remounts the current page. */
     reload: () => reloadRoute(r),
+    /**
+     * Registers a leave guard for the mounted page: `guard()` returns a
+     * question to confirm before navigating to another page (unsaved
+     * changes) or null. Returns unregister; guards end with their page.
+     */
+    guard(guard) {
+      r.guards.add(guard);
+      return () => r.guards.delete(guard);
+    },
   };
   return router;
 }

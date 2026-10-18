@@ -17,6 +17,7 @@ import { setDocumentTitle } from "../ui/components/page-header.js";
 import { SHARE_MUTATIONS } from "../ui/components/share-model.js";
 import { skeletonBlock, skeletonLine } from "../ui/components/skeleton.js";
 import { emptyState } from "../ui/components/empty-state.js";
+import { guardUnsaved } from "../ui/components/leave-guard.js";
 import { createAutosave } from "../ui/docs/autosave.js";
 import { blocksToPlainText } from "../ui/docs/blocks.js";
 import { renderDocHeader } from "../ui/docs/doc-header.js";
@@ -410,22 +411,14 @@ async function refreshIfStale(page) {
 }
 
 function watchPage(page) {
-  const doc = globalThis.document;
-  const onVisibility = () => {
-    if (doc.visibilityState === "hidden") page.autosave.flush();
-    else refreshIfStale(page);
-  };
-  const onBeforeUnload = (event) => {
-    if (!page.autosave.snapshot().unsaved) return;
-    page.autosave.flush();
-    event.preventDefault();
-  };
-  doc.addEventListener("visibilitychange", onVisibility);
-  globalThis.addEventListener("beforeunload", onBeforeUnload);
+  const unguard = guardUnsaved({
+    unsaved: () => page.autosave.snapshot().unsaved,
+    flush: () => page.autosave.flush(),
+    onVisible: () => refreshIfStale(page),
+  });
   const timer = globalThis.setInterval(() => renderMeta(page), META_REFRESH_MS);
   return () => {
-    doc.removeEventListener("visibilitychange", onVisibility);
-    globalThis.removeEventListener("beforeunload", onBeforeUnload);
+    unguard();
     globalThis.clearInterval(timer);
   };
 }

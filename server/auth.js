@@ -12,7 +12,7 @@
  * are treated as unknown installs (`server/access.js` decides access).
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { boardAccess, isActive, isAdmin } from "./access.js";
+import { installAccess, isActive, isAdmin } from "./access.js";
 
 /** Every scope a principal can hold. */
 export const ALL_SCOPES = Object.freeze([
@@ -151,14 +151,30 @@ function tokenPrincipal(store, authorizationHeader) {
 const validSessionId = (sessionId) =>
   typeof sessionId === "string" && SESSION_ID_PATTERN.test(sessionId);
 
+function sessionPrincipal(user) {
+  return {
+    kind: "session",
+    userId: user.id,
+    role: user.role,
+    scopes: new Set(ALL_SCOPES),
+  };
+}
+
 function createSessionTable(store, now) {
   // Map order is least recently used first; every use moves an entry to the
   // end, so expired entries always sit at the front.
   const sessions = new Map();
+  // Told the ID of every session that ends, however it ends.
+  const listeners = new Set();
+  const remove = (id) => {
+    if (!sessions.delete(id)) return false;
+    for (const listener of Array.from(listeners)) listener(id);
+    return true;
+  };
   const prune = () => {
     for (const [id, entry] of sessions) {
       if (entry.expiresAt > now() && sessions.size < MAX_SESSIONS) break;
-      sessions.delete(id);
+      remove(id);
     }
   };
   const create = (userId) => {
@@ -170,23 +186,26 @@ function createSessionTable(store, now) {
     sessions.set(id, { userId, expiresAt: now() + SESSION_IDLE_MS });
     return id;
   };
+  /** The live entry and its active user, without extending it; or null. */
+  const live = (sessionId) => {
+    const entry = validSessionId(sessionId) ? sessions.get(sessionId) : null;
+    const user = entry ? activeUser(store, entry.userId) : null;
+    return user && entry.expiresAt > now() ? { entry, user } : null;
+  };
   return {
     create,
     get(sessionId) {
-      if (!validSessionId(sessionId)) return null;
-      const entry = sessions.get(sessionId);
-      if (!entry) return null;
+      const found = live(sessionId);
+      if (!found) {
+        if (validSessionId(sessionId)) remove(sessionId);
+        return null;
+      }
       sessions.delete(sessionId);
-      const user = activeUser(store, entry.userId);
-      if (entry.expiresAt <= now() || !user) return null;
-      sessions.set(sessionId, { ...entry, expiresAt: now() + SESSION_IDLE_MS });
-      return {
-        kind: "session",
-        userId: user.id,
-        role: user.role,
-        scopes: new Set(ALL_SCOPES),
-      };
+      const expiresAt = now() + SESSION_IDLE_MS;
+      sessions.set(sessionId, { ...found.entry, expiresAt });
+      return sessionPrincipal(found.user);
     },
+    isLive: (sessionId) => live(sessionId) !== null,
     /**
      * Ends `sessionId` and starts a session for `userId` (demo user
      * switching). An unknown or deactivated target → null, and the current
@@ -194,17 +213,21 @@ function createSessionTable(store, now) {
      */
     rotate(sessionId, userId) {
       if (!activeUser(store, userId)) return null;
-      if (validSessionId(sessionId)) sessions.delete(sessionId);
+      if (validSessionId(sessionId)) remove(sessionId);
       return create(userId);
     },
     end(sessionId) {
-      return validSessionId(sessionId) && sessions.delete(sessionId);
+      return validSessionId(sessionId) && remove(sessionId);
     },
     /** Drops every session of `userId` (deactivation). */
     revokeUser(userId) {
       for (const [id, entry] of sessions) {
-        if (entry.userId === userId) sessions.delete(id);
+        if (entry.userId === userId) remove(id);
       }
+    },
+    onEnded(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
     },
   };
 }
@@ -213,9 +236,8 @@ function createSessionTable(store, now) {
 function reachableInstall(store, user, installId) {
   const install = store.getInstall(installId);
   const app = install ? store.getApp(install.app_id) : null;
-  if (!app || !user) return null;
-  const board = store.getBoard(install.board_id);
-  return boardAccess(store, user, board) === null ? null : { install, app };
+  if (!app || installAccess(store, user, install) === null) return null;
+  return { install, app };
 }
 
 function appPrincipal(store, userPrincipal, installId) {
@@ -295,18 +317,24 @@ function issueSessionToken(store, now, options = {}) {
  * - `issueSessionToken({ userId, installId, ttlSeconds = 300 })` returns
  *   `{ token, expires_at }`, or null when the user or install is unknown
  *   (or unreachable, as above).
+ * - `sessionActive(id)` tells whether a session is live, without
+ *   extending it; `onSessionEnded(listener)` calls `listener(id)` whenever
+ *   a session ends (sign-out, switching, deactivation, expiry) and returns
+ *   an unsubscribe function.
+ * - `close()` stops listening to the store (deactivations).
  */
 export function createAuth({ store, now = () => Date.now() } = {}) {
   if (typeof store?.getUser !== "function") {
     throw new TypeError("createAuth requires a store");
   }
   const sessions = createSessionTable(store, now);
-  store.on?.((event) => {
-    if (event.type !== "user_updated") return;
-    for (const id of event.user_ids ?? []) {
-      if (!activeUser(store, id)) sessions.revokeUser(id);
-    }
-  });
+  const unsubscribe =
+    store.on?.((event) => {
+      if (event.type !== "user_updated") return;
+      for (const id of event.user_ids ?? []) {
+        if (!activeUser(store, id)) sessions.revokeUser(id);
+      }
+    }) ?? (() => {});
   return Object.freeze({
     authenticateApiToken: (header) => tokenPrincipal(store, header),
     createBrowserSession: (userId) => sessions.create(userId),
@@ -317,5 +345,8 @@ export function createAuth({ store, now = () => Date.now() } = {}) {
     appPrincipal: (principal, installId) =>
       appPrincipal(store, principal, installId),
     issueSessionToken: (options) => issueSessionToken(store, now, options),
+    sessionActive: (sessionId) => sessions.isLive(sessionId),
+    onSessionEnded: (listener) => sessions.onEnded(listener),
+    close: unsubscribe,
   });
 }

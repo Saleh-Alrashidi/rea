@@ -252,6 +252,11 @@ function groupMenu(ctx, group, anchor, titleInput) {
         label: "Delete group",
         danger: true,
         icon: "trash",
+        // The server refuses to delete a board's last group (last_group).
+        disabledReason:
+          ctx.board.groups.length <= 1
+            ? "A board keeps at least one group"
+            : null,
         onSelect: () => ctx.actions.deleteGroup(group),
       },
     ],

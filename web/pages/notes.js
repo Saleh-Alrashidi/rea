@@ -14,6 +14,7 @@ import { h } from "../dom.js";
 import { notesHash } from "../router.js";
 import { button } from "../ui/components/button.js";
 import { emptyState } from "../ui/components/empty-state.js";
+import { guardUnsaved } from "../ui/components/leave-guard.js";
 import { pageHeader, setDocumentTitle } from "../ui/components/page-header.js";
 import { REASONS, can } from "../ui/components/permissions.js";
 import { skeletonCards } from "../ui/components/skeleton.js";
@@ -362,6 +363,11 @@ export async function mount(container, ctx, params) {
   const offs = [
     offRoute,
     ctx.bus.on(BUS_EVENTS.notification, () => onNotification(page)),
+    // Edits typed within the autosave delay survive a reload or close.
+    guardUnsaved({
+      unsaved: () => page.editor?.unsaved() ?? false,
+      flush: () => page.editor?.flush(),
+    }),
   ];
   await reloadNotes(page);
   if (params.noteId && page.active) openNote(page, params.noteId);

@@ -19,6 +19,16 @@ const STORAGE = `query S($i: ID!) {
   app_storage(install_id: $i, segment: instance, key: "note") { value } }`;
 const SET_STORAGE = `mutation W($i: ID!) { set_app_storage(install_id: $i,
   segment: instance, key: "note", value: "hi") { success } }`;
+const WRITES = [
+  SET_STORAGE,
+  `mutation W($i: ID!) { set_app_storage(install_id: $i, segment: global,
+    key: "shared", value: "x") { success } }`,
+  `mutation D($i: ID!) { delete_app_storage(install_id: $i, segment: global,
+    key: "shared") { success } }`,
+  `mutation D($i: ID!) { delete_app_storage(install_id: $i,
+    segment: instance, key: "note") { success } }`,
+];
+const READ_ONLY = ["viewer"];
 
 async function setup(t) {
   const servers = await startTestServers();
@@ -54,8 +64,48 @@ test("app principals and session tokens exist only where the user sees the board
     await token.body?.cancel();
     assert.equal(token.status, canSee ? 200 : 404, `${user} session token`);
     if (!canSee) continue;
+    const role = seedRole("board", "roadmap", user);
+    if (READ_ONLY.includes(role)) continue;
     const stored = await client.data(SET_STORAGE, { i: install.id });
     assert.deepEqual(stored, { set_app_storage: { success: true } });
+  }
+});
+
+test("app storage writes need editor access to the install's board", async (t) => {
+  const { ids, app, as, store, install } = await setup(t);
+  const scope = `install:${install.id}`;
+  await app(ids.users.sam).data(SET_STORAGE, { i: install.id });
+  const global = `app:${install.app_id}`;
+  store.setAppStorage(global, "shared", "kept");
+  const refused = async (userId, label) => {
+    const client = app(userId);
+    for (const write of WRITES) {
+      const error = await client.error(write, { i: install.id });
+      assert.deepEqual(
+        [error?.extensions.code, error?.message],
+        ["FORBIDDEN", "This needs editor access to the board"],
+        label,
+      );
+    }
+    const read = await client.data(STORAGE, { i: install.id });
+    assert.deepEqual(read.app_storage, { value: "hi" }, `${label} reads`);
+  };
+  // A viewer account, then a member holding an explicit viewer grant.
+  await refused(ids.users.jordan, "jordan");
+  const share = `mutation S($b: ID!, $u: ID!) { share(resource_kind: board,
+    resource_id: $b, subject_kind: user, subject_ids: [$u], role: viewer) { id } }`;
+  await as(ids.users.alex).data(share, {
+    b: ids.boards.roadmap,
+    u: ids.users.noa,
+  });
+  await refused(ids.users.noa, "noa (viewer grant)");
+  assert.equal(store.getAppStorage(scope, "note").version, 1);
+  assert.equal(store.getAppStorage(global, "shared").value, "kept");
+  // Editors keep writing.
+  const sam = app(ids.users.sam);
+  for (const write of WRITES) {
+    const data = await sam.data(write, { i: install.id });
+    assert.equal(Object.values(data)[0].success, true);
   }
 });
 
