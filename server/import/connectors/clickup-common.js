@@ -16,6 +16,10 @@ import { idOf, isObject, str } from "./common.js";
 /** Failed requests in a row that end the scan (docs only stop reading). */
 export const MAX_FAILURES = 3;
 const FATAL = new Set(["INVALID_TOKEN", "ABORTED", "UPSTREAM_CONFIG"]);
+// ClickUp's "Team not authorized" codes (OAUTH_023, _026, _027, _029 to
+// _045) come with HTTP 401 too: the token works, but not for that team,
+// list or task.
+const TEAM_NOT_AUTHORIZED = /^OAUTH_0(?:2[367]|29|3\d|4[0-5])$/;
 const PATH_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const EPOCH_MS = /^\d{1,15}$/;
 // 9999-12-31T23:59:59.999Z: later times have no YYYY-MM-DD form.
@@ -29,6 +33,14 @@ export function pathId(value) {
   const id = idOf(value);
   return id !== null && PATH_ID.test(id) ? id : null;
 }
+
+/**
+ * Whether a ClickUp answer rejects the token (`createUpstream`'s
+ * `tokenRejected`): HTTP 401, unless its ECODE says the token's user may
+ * not read that team, list or task (then it is a failed read).
+ */
+export const tokenRejected = ({ status, json }) =>
+  status === 401 && !TEAM_NOT_AUTHORIZED.test(str(json?.ECODE));
 
 /**
  * GET `path` (under the API base, e.g. "/v2/team") with `query` (an object
@@ -70,13 +82,23 @@ function epochDate(value) {
 
 const absent = (value) => value === undefined || value === null || value === "";
 
+// ClickUp stores a due or start date without a time at 4 am in the time
+// zone of whoever set it, which the API does not give. That instant plus
+// 10 h falls on the day they chose in every zone from UTC−9:30 to UTC+14.
+const DATE_ONLY_SHIFT_MS = 10 * 3_600_000;
+
 /**
- * A ClickUp date (epoch ms) as the UTC day "YYYY-MM-DD"; anything else
- * passes through for the snapshot to report; absent → undefined.
+ * A ClickUp date (epoch ms) as the UTC day "YYYY-MM-DD", or with
+ * `dateOnly` (a date without a time) the day it shows (see
+ * DATE_ONLY_SHIFT_MS); anything else passes through for the snapshot to
+ * report; absent → undefined.
  */
-export function dateOf(value) {
+export function dateOf(value, { dateOnly = false } = {}) {
   if (absent(value)) return undefined;
-  return epochDate(value)?.toISOString().slice(0, 10) ?? value;
+  const date = epochDate(value);
+  if (date === null) return value;
+  const shift = dateOnly ? DATE_ONLY_SHIFT_MS : 0;
+  return new Date(date.getTime() + shift).toISOString().slice(0, 10);
 }
 
 /** A ClickUp time (epoch ms) as ISO text; other text passes through. */

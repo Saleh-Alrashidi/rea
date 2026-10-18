@@ -9,11 +9,13 @@
  *
  * `server.fail({ operation, match, kind, times, seconds, ms, bytes,
  * message })` queues a fault for requests whose operation name (and
- * `match` variables) fit: `complexity` (200, GraphQL ComplexityException
- * with `retry_in_seconds`), `complexity_legacy` (200, `error_code` and
- * "reset in N seconds"), `budget` (429, COMPLEXITY_BUDGET_EXHAUSTED with
- * `retry_in_seconds`), `rate_limit` (429 with `Retry-After`),
- * `unauthorized` (401), `forbidden` (403), `graphql_error` (200, errors and
+ * `match` variables) fit, in the shapes monday documents: `budget` (429,
+ * COMPLEXITY_BUDGET_EXHAUSTED with `retry_in_seconds` and the budget
+ * fields, API 2025-04 and later), `complexity_legacy` (200, top-level
+ * `error_code` ComplexityException and "reset in N seconds"),
+ * `rate_limit` (429 with `Retry-After`), `unauthorized` (401),
+ * `forbidden` (403), `user_unauthorized` (200, UserUnauthorizedException
+ * with `status_code` 403 and no data), `graphql_error` (200, errors and
  * no data), `server_error` (500), `oversized` (a streamed body of `bytes`,
  * default 10 MiB + 1 KiB), `slow` (answers after `ms`), `redirect` (302)
  * and `html`. `requests` records every request; `errors` records rejected
@@ -136,7 +138,12 @@ const RESOLVERS = {
   "Board.columns": (_, board, args) => byIds(board.columns, args.ids),
   "Item.updates": (_, item, args) =>
     page(item.updates ?? [], { limit: 25, ...args }),
-  "Document.blocks": (_, doc, args) => page(doc.blocks, { limit: 25, ...args }),
+  // `blockPageCap` (an option) answers fewer blocks per page than asked.
+  "Document.blocks": (state, doc, args) =>
+    page(doc.blocks, {
+      ...args,
+      limit: Math.min(args.limit ?? 25, state.blockPageCap),
+    }),
 };
 
 const errorBody = (message, extensions) => ({
@@ -182,18 +189,23 @@ const legacyComplexity = (seconds) => ({
 });
 
 const FAULTS = {
-  complexity: (res, { seconds }) => {
-    const ext = { code: "ComplexityException", retry_in_seconds: seconds };
-    sendJson(res, 200, errorBody("Complexity budget exhausted", ext));
-  },
   complexity_legacy: (res, { seconds }) =>
     sendJson(res, 200, legacyComplexity(seconds)),
   budget: (res, { seconds }) => {
     const ext = {
       code: "COMPLEXITY_BUDGET_EXHAUSTED",
+      complexity: 30_001,
+      complexity_budget_left: 6_895,
+      complexity_budget_limit: 1_000_000,
       retry_in_seconds: seconds,
+      status_code: 429,
     };
     sendJson(res, 429, errorBody("Complexity budget exhausted", ext));
+  },
+  user_unauthorized: (res) => {
+    const ext = { code: "UserUnauthorizedException", status_code: 403 };
+    const body = errorBody("User unauthorized to perform action", ext);
+    sendJson(res, 200, { data: null, ...body });
   },
   rate_limit: (res, { seconds }) => {
     const body = errorBody("Rate limit exceeded", {
@@ -300,7 +312,8 @@ async function handle(state, req, res) {
 }
 
 /**
- * Starts the fake on 127.0.0.1. Resolves to `{ endpoint, origin, token,
+ * Starts the fake on 127.0.0.1 (options: `data`, `token`, `blockPageCap`).
+ * Resolves to `{ endpoint, origin, token,
  * data, requests, errors, faults, fail(fault), close() }`; `endpoint` is
  * the value for `MM_IMPORT_MONDAY_URL`.
  */
@@ -312,6 +325,7 @@ export async function startMondayServer(options = {}) {
     errors: [],
     faults: [],
     cursors: new Map(),
+    blockPageCap: options.blockPageCap ?? Number.POSITIVE_INFINITY,
   };
   const http = createServer((req, res) => {
     handle(state, req, res).catch((error) => {

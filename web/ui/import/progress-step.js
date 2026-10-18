@@ -41,6 +41,7 @@ function draw(p, state) {
   p.count.textContent = view.countText;
   p.message.textContent = view.message;
   p.message.hidden = view.message === "";
+  p.message.classList.toggle("waiting", view.waiting);
   const known = view.percent !== null;
   p.bar.classList.toggle("indeterminate", !known);
   p.fill.style.setProperty("width", known ? `${view.percent}%` : "");

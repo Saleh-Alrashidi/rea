@@ -107,3 +107,36 @@ test("an admin imports through every step and the wizard outlives a visit elsewh
   assert.deepEqual(chosen, []);
   fourth.cleanup();
 });
+
+test("after a reload, a scan still running is offered and can be followed", async (t) => {
+  const doc = installImportDom(t);
+  let release;
+  const gate = () => new Promise((resolve) => (release = resolve));
+  await liveServer(t, { gate });
+  const ctx = context();
+  const before = await mounted(doc, ctx);
+  const monday = $$(before.container, "input.import-source-input")[0];
+  monday.checked = true;
+  fire(monday, "change");
+  $(before.container, "input.import-token").value = "tok-0123456789abcdef";
+  fire($(before.container, "form"), "submit");
+  await untilStep(before.container, "Scanning monday.com");
+  before.cleanup();
+  // A reload: a new page module with no session of its own.
+  const { mount: mountAgain } = await import("../web/pages/import.js?reload");
+  const container = doc.createElement("div");
+  doc.body.append(container);
+  const cleanup = await mountAgain(container, ctx);
+  t.after(() => cleanup?.());
+  assert.equal(titleOf(container), "Choose what to import");
+  for (let n = 0; n < 200 && !buttonNamed(container, "Follow it"); n += 1)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(
+    $(container, "div.import-banner").textContent,
+    /A scan from monday\.com that you started earlier is still running/,
+  );
+  buttonNamed(container, "Follow it").click();
+  await untilStep(container, "Scanning monday.com");
+  release();
+  await untilStep(container, "Review what to import");
+});

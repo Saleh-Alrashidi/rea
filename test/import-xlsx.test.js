@@ -12,12 +12,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { scan } from "../server/import/connectors/files.js";
 import { validateSnapshot } from "../server/import/snapshot.js";
-import {
-  XLSX_LIMITS,
-  openZip,
-  readXlsx,
-  walkXml,
-} from "../server/import/xlsx.js";
+import { XLSX_LIMITS, openZip, readXlsx } from "../server/import/xlsx.js";
+import { walkXml } from "../server/import/xml.js";
 import {
   malicious,
   mondayRows,

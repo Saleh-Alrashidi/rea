@@ -27,7 +27,7 @@ test("complexity and rate-limit errors wait and retry", async (t) => {
   server.fail({
     operation: "WorklaneItems",
     match: { board: "101" },
-    kind: "complexity",
+    kind: "budget",
     seconds: 2,
   });
   server.fail({
@@ -71,6 +71,14 @@ test("rejected tokens fail the scan; the token never leaks", async (t) => {
   await failure(run(), "INVALID_TOKEN");
   server.fail({ operation: "WorklaneAccount", kind: "graphql_error" });
   await failure(run(), "UPSTREAM_ERROR");
+  // monday's UserUnauthorizedException is an HTTP 200 application error.
+  server.fail({ operation: "WorklaneAccount", kind: "user_unauthorized" });
+  const denied = await run().then(assert.fail, (error) => error);
+  assert.equal(denied.code, "UPSTREAM_ERROR");
+  assert.equal(
+    denied.message,
+    "monday.com did not return the account: User unauthorized to perform action",
+  );
   const progress = [];
   const snapshot = await run({ onProgress: (event) => progress.push(event) });
   assert.ok(!leaks(snapshot) && !leaks(progress));
@@ -217,9 +225,19 @@ test("progress reports each phase; aborting stops the scan", async (t) => {
     "done",
   ]);
   const reading = progress.filter((event) => event.phase === "items");
-  assert.equal(reading.length, 29);
+  const boardsRead = new Set(reading.map((event) => event.done));
+  assert.equal(boardsRead.size, 29, "one step per board");
   assert.deepEqual([reading[0].done, reading[0].total], [0, 29]);
-  assert.match(reading[0].message, /Reading board "Roadmap"/);
+  assert.equal(reading[0].message, 'Reading board "Roadmap"');
+  // Within a board, each page of items (with subitems) says how many were read.
+  assert.deepEqual(
+    reading.slice(1, 4).map((event) => [event.done, event.message]),
+    [
+      [0, 'Reading board "Roadmap": 202 items so far'],
+      [0, 'Reading board "Roadmap": 402 items so far'],
+      [0, 'Reading board "Roadmap": 455 items so far'],
+    ],
+  );
   const { server, run } = await setup(t);
   const controller = new AbortController();
   const onProgress = (event) => event.phase === "items" && controller.abort();
@@ -228,4 +246,38 @@ test("progress reports each phase; aborting stops the scan", async (t) => {
   );
   assert.equal(error.code, "ABORTED");
   assert.ok(!operations(server).includes("WorklaneDocs"));
+});
+
+test("doc blocks are paged by the page size monday answers with", async (t) => {
+  const { server, run } = await setup(t, { blockPageCap: 25 });
+  const snapshot = await run({ options: { include_updates: false } });
+  const handbook = snapshot.workspaces
+    .flatMap((ws) => ws.docs)
+    .find((doc) => doc.title === "Big handbook");
+  assert.equal(handbook.blocks.length, 230, "every block, 25 per page");
+  assert.equal(handbook.blocks.at(-1).text, "Paragraph 230");
+  const pages = server.requests.filter(
+    (r) => r.operationName === "WorklaneDocBlocks",
+  );
+  assert.deepEqual(
+    pages.map((r) => [r.variables.limit, r.variables.page]),
+    Array.from({ length: 9 }, (_, n) => [25, n + 2]),
+  );
+});
+
+test("a UserUnauthorizedException on one board is a warning", async (t) => {
+  const { server, run } = await setup(t);
+  server.fail({
+    operation: "WorklaneItems",
+    match: { board: "101" },
+    kind: "user_unauthorized",
+  });
+  const snapshot = await run({ options: { include_docs: false } });
+  const [failed] = codes(snapshot, "read_failed");
+  assert.equal(
+    failed.message,
+    'Items of board "Roadmap" could not be fully read: User unauthorized to perform action',
+  );
+  assert.deepEqual(boardNamed(snapshot, "Roadmap").items, []);
+  assert.ok(boards(snapshot).some((board) => board.items.length > 0));
 });

@@ -176,6 +176,10 @@ test("the stepper marks the current step and the board badge links safely", (t) 
   assert.equal(linked.getAttribute("rel"), "noopener noreferrer");
   assert.equal(linked.getAttribute("target"), "_blank");
   assert.match(linked.textContent, /Imported from monday\.com/);
+  assert.equal(
+    linked.getAttribute("aria-label"),
+    "Imported from monday.com, open the original board (new tab)",
+  );
   const plain = importBadge({
     source: "clickup",
     source_url: "javascript:alert(1)",

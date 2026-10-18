@@ -12,6 +12,11 @@
  * (`keepLegacyCopy`) and saves the result in the current format, which
  * older versions refuse as unsupported. Temp files of interrupted saves
  * are removed before loading.
+ *
+ * The file is one compact JSON text, so the state can only grow as far as
+ * one string can be built and read back: MAX_DATA_BYTES (half of V8's
+ * longest string) is the size bulk writes (imports) must stay under, and
+ * the persistence tracks the state's size for them (`size()`, `grow()`).
  */
 import {
   chmod,
@@ -50,6 +55,7 @@ import { makeColumn } from "./boards.js";
 import { LEGACY_FORMAT, upgradeLegacyTexts } from "./legacy-texts.js";
 
 export const FORMAT = "mini-monday-store/3";
+export const MAX_DATA_BYTES = 256 * 1024 * 1024;
 const SAVE_DELAY_MS = 50;
 
 const oneOf = (list) => (v) => list.includes(v);
@@ -291,16 +297,20 @@ function readCollections(doc, fail) {
 
 /**
  * Loads and validates the data file: null when it does not exist, else
- * `{ state, upgraded }` where `upgraded` is true for a converted /2 file
- * (not yet saved). Invalid files throw instead of being replaced.
+ * `{ state, upgraded, bytes }` where `upgraded` is true for a converted
+ * /2 file (not yet saved) and `bytes` the file's length in characters.
+ * Invalid files throw instead of being replaced.
  */
 export async function loadState(file) {
   const fail = (detail) => {
     throw new Error(`Invalid mini-monday data file ${file}: ${detail}`);
   };
   let doc;
+  let bytes = 0;
   try {
-    doc = JSON.parse(await readFile(file, "utf8"));
+    const text = await readFile(file, "utf8");
+    bytes = text.length;
+    doc = JSON.parse(text);
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     if (error instanceof SyntaxError) fail(error.message);
@@ -321,7 +331,7 @@ export async function loadState(file) {
   checkItems(state, fail);
   checkReferences(state, fail);
   if (upgraded) upgradeLegacyTexts(state);
-  return { state, upgraded };
+  return { state, upgraded, bytes };
 }
 
 /**
@@ -341,9 +351,10 @@ export async function keepLegacyCopy(file) {
   return copy;
 }
 
+/** The state as file text: compact JSON (indentation would double it). */
 function serialize(state) {
   const columns = state.columns.map(({ settings_str: _derived, ...c }) => c);
-  return `${JSON.stringify({ ...state, columns }, null, 2)}\n`;
+  return `${JSON.stringify({ ...state, columns })}\n`;
 }
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -398,13 +409,17 @@ async function writeAtomic(file, text) {
  * first change starts a timer that later changes join; one write runs at a
  * time and changes made during a write start another. A failed write keeps
  * the changes dirty for the next change or `flush()` to retry; `flush()`
- * rejects with the failure.
+ * rejects with the failure. `size()` is the state's size in characters:
+ * the last saved text (`bytes` from loading it at first) plus what
+ * `grow(n)` added since.
  */
-export function createPersistence({ file, state, log }) {
+export function createPersistence({ file, state, log, bytes = 0 }) {
   let timer = null;
   let writing = null;
   let dirty = false;
   let failure = null;
+  let saved = bytes;
+  let grown = 0;
   const startTimer = () => {
     timer ??= setTimeout(write, SAVE_DELAY_MS);
   };
@@ -417,7 +432,14 @@ export function createPersistence({ file, state, log }) {
     clearTimeout(timer);
     timer = null;
     dirty = false;
-    writing = writeAtomic(file, serialize(state))
+    // Serializing inside the chain: a state that cannot be written (too
+    // large for one string) is a failed save, not an uncaught exception.
+    writing = Promise.resolve()
+      .then(() => {
+        const text = serialize(state);
+        [saved, grown] = [text.length, 0];
+        return writeAtomic(file, text);
+      })
       .then(() => {
         failure = null;
       }, failed)
@@ -428,6 +450,10 @@ export function createPersistence({ file, state, log }) {
     return writing;
   }
   return {
+    size: () => saved + grown,
+    grow(n) {
+      grown += Math.max(0, n);
+    },
     schedule() {
       if (file === null) return;
       dirty = true;

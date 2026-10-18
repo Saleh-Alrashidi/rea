@@ -7,7 +7,8 @@
  * state when only some is included.
  *
  * Boards imported before are flagged with the name the copy gets
- * ("<name> (imported again)") and a link to the earlier import.
+ * ("<name> (imported again)") and a link to the earlier import. A preview
+ * with nothing to import says so (and why that may be) instead.
  *
  * `reviewTree({ preview, selection, onChange })` → `{ element }`;
  * `onChange()` runs after every change to `selection`.
@@ -29,10 +30,8 @@ import {
   setWorkspace,
   workspaceState,
 } from "./plan-model.js";
+import { collapsibleList } from "./step-parts.js";
 
-/** Workspaces with more entries than this show SHOWN until expanded. */
-const COLLAPSE_AT = 8;
-const SHOWN = 5;
 const number = (value) => (value ?? 0).toLocaleString("en-US");
 const counted = (value, noun) =>
   `${number(value)} ${noun}${value === 1 ? "" : "s"}`;
@@ -162,6 +161,7 @@ function targetSelect(t, workspace) {
     {
       id,
       class: "input input-small import-target",
+      "aria-label": `Import “${workspace.name}” into`,
       value: current,
       on: {
         change: (event) => {
@@ -242,40 +242,36 @@ function workspaceBlock(t, workspace) {
   );
 }
 
-/**
- * The workspace's boards and docs; long lists show the first SHOWN
- * entries until "Show all" (hidden entries keep their checkboxes, so
- * the workspace checkbox and the summary still count them).
- */
+/** The workspace's boards and docs (long lists collapsed, see step-parts). */
 function entryList(workspace, entries) {
   if (entries.length === 0) {
     return h("p", { class: "import-empty muted" }, "Nothing to import here.");
   }
-  const list = h(
-    "ul",
-    { class: "import-entries", "aria-label": `${workspace.name} content` },
-    entries,
-  );
-  if (entries.length <= COLLAPSE_AT) return list;
-  const extra = entries.slice(SHOWN);
-  const toggle = button({
-    label: `Show all ${entries.length}`,
-    iconEnd: "chevronDown",
-    size: "sm",
-    variant: "ghost",
-    className: "import-entries-toggle",
-    onClick: () => {
-      const open = toggle.getAttribute("aria-expanded") !== "true";
-      for (const entry of extra) entry.hidden = !open;
-      toggle.setAttribute("aria-expanded", String(open));
-      toggle.querySelector(".btn-label").textContent = open
-        ? "Show fewer"
-        : `Show all ${entries.length}`;
-    },
+  return collapsibleList(entries, {
+    class: "import-entries",
+    "aria-label": `${workspace.name} content`,
   });
-  for (const entry of extra) entry.hidden = true;
-  toggle.setAttribute("aria-expanded", "false");
-  return [list, h("div", { class: "import-entries-more" }, toggle)];
+}
+
+/** Whether the preview lists any board or doc. */
+export const hasContent = (preview) =>
+  preview.workspaces.some((ws) => ws.boards.length + ws.docs.length > 0);
+
+function emptyTree() {
+  return h(
+    "div",
+    { class: "import-review-empty" },
+    h(
+      "p",
+      null,
+      h("strong", null, "This scan found no boards or docs to import."),
+    ),
+    h(
+      "p",
+      null,
+      "Check that the token belongs to the right account and that its user can open the boards (archived boards are skipped), or that the file has rows below its header. Then go back and scan again.",
+    ),
+  );
 }
 
 /** Puts every checkbox in step with the selection. */
@@ -293,6 +289,7 @@ function sync(t) {
 
 /** Builds the tree (see the module comment). */
 export function reviewTree({ preview, selection, onChange }) {
+  if (!hasContent(preview)) return { element: emptyTree() };
   const t = { preview, selection, onChange, workspaceBoxes: [] };
   // Element IDs from a counter: source IDs are arbitrary text.
   let ids = 0;

@@ -10,7 +10,10 @@
  * are reported, not applied. People values keep only users who can open
  * the board (`access.canBeAssigned`, as on every write path); the ones
  * left out are reported. Activity entries name the importer as actor with
- * the import's label ("Import from monday.com").
+ * the import's label ("Import from monday.com"). A board that would grow
+ * the data past what one save can write (`ctx.maxDataBytes`, at most
+ * `persistence.js` MAX_DATA_BYTES, from an estimate of its records) is
+ * refused as invalid.
  */
 import {
   GRANT_REFUSALS,
@@ -43,6 +46,14 @@ const MAX_SOURCE_ID = 255;
 const MAX_URL = 2048;
 const MAX_LABELS = 200;
 const WEB_URL = /^https?:\/\/\S+$/i;
+// Saved characters of an item or update record besides its texts and
+// values (IDs, positions, states, timestamps), and of the board's other
+// records; estimates a little above what `persistence.js` writes.
+const ITEM_BYTES = 240;
+const UPDATE_BYTES = 140;
+const BOARD_BYTES = 4096;
+const COLUMN_BYTES = 200;
+const MIB = 1024 * 1024;
 
 /** `base`, else `base_2`, `base_3`… not in `taken` (which it joins). */
 function freshId(base, taken) {
@@ -239,6 +250,41 @@ function readItems(ctx, { items, groups, columns, assignable }) {
   return { prepared, unassigned };
 }
 
+/** About how many characters stored value `value` adds to the data file. */
+function valueBytes(key, value) {
+  let size = key.length + 4;
+  if (typeof value === "string") size += value.length + 2;
+  else if (Array.isArray(value))
+    for (const id of value) size += String(id).length + 3;
+  else size += 24; // numbers and `{ index }` labels
+  return size;
+}
+
+/** About how many characters `prepared`'s records add to the data file. */
+function estimateBytes(prepared) {
+  let size = BOARD_BYTES;
+  size += prepared.columns.prepared.length * COLUMN_BYTES;
+  size += prepared.groups.prepared.length * COLUMN_BYTES;
+  for (const item of prepared.items.prepared) {
+    size += ITEM_BYTES + item.name.length;
+    for (const key in item.values) size += valueBytes(key, item.values[key]);
+    for (const update of item.updates)
+      size += UPDATE_BYTES + update.body.length;
+  }
+  return size;
+}
+
+/** Refuses a board the data file could not hold (see the module comment). */
+function checkCapacity(ctx, bytes) {
+  const now = ctx.persist.size();
+  const max = ctx.maxDataBytes;
+  if (now + bytes <= max) return;
+  const shown = (n) => Math.ceil(n / MIB).toLocaleString("en-US");
+  invalid(
+    `the data would grow past ${shown(max)} MiB (it holds about ${shown(now)} MiB and this board adds about ${shown(bytes)} MiB)`,
+  );
+}
+
 /** Checks a whole `importBoard` spec; nothing is written yet. */
 function prepareBoard(ctx, spec) {
   const { state } = ctx;
@@ -271,7 +317,10 @@ function prepareBoard(ctx, spec) {
     assignable,
   });
   const summary = readText(spec.summary ?? null, "Summary", LIMITS.name);
-  return { ...access, meta, label, groups, columns, items, summary };
+  const prepared = { ...access, meta, label, groups, columns, items, summary };
+  prepared.bytes = estimateBytes(prepared);
+  checkCapacity(ctx, prepared.bytes);
+  return prepared;
 }
 
 function insertRecords(ctx, board, prepared) {
@@ -355,6 +404,7 @@ function writeBoard(ctx, prepared, importerId) {
   });
   const updates = insertRecords(ctx, board, prepared);
   logImport(ctx, { board, prepared, importerId });
+  ctx.persist.grow(prepared.bytes);
   const result = Object.freeze({
     board,
     counts: Object.freeze({

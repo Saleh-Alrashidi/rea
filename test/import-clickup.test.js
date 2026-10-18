@@ -250,6 +250,10 @@ test("groups follow the status type; standard-field losses are reported", async 
   assert.match(one("time_dropped").message, /"Due date" .*: 1$/);
   assert.equal(one("time_dropped").path, "workspaces[0].boards[0].columns[2]");
   assert.match(
+    one("date_only").message,
+    /^Dates without a time in "Start date" were read as the day ClickUp shows; .*: 1$/,
+  );
+  assert.match(
     one("teams_dropped").message,
     /Team assignments in "Assignees".*: 1$/,
   );

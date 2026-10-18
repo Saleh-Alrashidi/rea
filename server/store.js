@@ -31,6 +31,7 @@ import { itemApi } from "./store/items.js";
 import { noteApi } from "./store/notes.js";
 import { peopleApi } from "./store/people.js";
 import {
+  MAX_DATA_BYTES,
   createPersistence,
   emptyState,
   keepLegacyCopy,
@@ -63,12 +64,15 @@ const DOMAINS = [
  * `seed` is true and saves the result. `file: null` (or `":memory:"`) keeps data in memory.
  * Writes are debounced (50 ms) and atomic; `flush()` awaits them. `now`
  * returns a Date; `log.error` receives background save and listener errors.
+ * `maxDataBytes` (default and at most MAX_DATA_BYTES) bounds what imports
+ * may grow the data to.
  */
 export async function createStore({
   file = null,
   now = () => new Date(),
   seed = true,
   log = console,
+  maxDataBytes = MAX_DATA_BYTES,
 } = {}) {
   const memory = file === null || file === ":memory:";
   const target = memory ? null : path.resolve(file);
@@ -85,9 +89,11 @@ export async function createStore({
     reader: createReader(state),
     pending: [],
     revision: 0,
+    maxDataBytes: Math.min(maxDataBytes, MAX_DATA_BYTES),
   };
   if (!loaded && seed) seedState(ctx);
-  ctx.persist = createPersistence({ file: target, state, log });
+  const bytes = loaded ? loaded.bytes : 0;
+  ctx.persist = createPersistence({ file: target, state, log, bytes });
   // New and upgraded state is saved right away (in the current format).
   if (!loaded || loaded.upgraded) ctx.persist.schedule();
   const on = (listener) => {

@@ -11,6 +11,9 @@
  *   `Content-Type: application/octet-stream`, `X-Import-Filename` (may be
  *   percent-encoded UTF-8), `X-Import-Kind: csv | xlsx`, optional
  *   `X-Import-Options` (a JSON object), at most 20 MiB. → 202 `{ job_id }`.
+ * - `GET /import/jobs` → `{ jobs }`: the caller's running and recent jobs
+ *   (`source`, `state`, `progress`, times; no previews or reports), so a
+ *   reloaded page can follow or cancel a job it lost track of.
  * - `GET /import/jobs/<id>` → the job (its creator only; others 404).
  * - `POST /import/jobs/<id>/cancel` → the job, cancelled or stopping.
  * - `POST /import/run`: JSON `{ scan_job_id, plan }` → 202 `{ job_id }`;
@@ -265,6 +268,12 @@ export async function postImportRun(req, res, cfg) {
   const { scan_job_id: scanJobId, plan = {} } = await readJsonObject(req);
   if (typeof scanJobId !== "string") fail(400, "scan_job_id must be a job ID");
   started(res, cfg.imports.startImport({ userId: user.id, scanJobId, plan }));
+}
+
+/** `GET /import/jobs` (see the module comment). */
+export function getImportJobs(req, res, cfg) {
+  const user = importer(req, cfg, { read: true });
+  sendJson(res, 200, { jobs: cfg.imports.list(user.id) });
 }
 
 /** `{ id, cancel }` for `/import/jobs/<id>[/cancel]`, or null. */

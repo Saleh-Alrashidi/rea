@@ -14,6 +14,7 @@ import {
   createUpstream,
   headerDelaySeconds,
   redact,
+  secretForms,
   upstreamBase,
   upstreamUrl,
 } from "../server/import/upstream.js";
@@ -194,6 +195,41 @@ test("tokens are checked, never echoed, and redacted from upstream text", async 
   );
 });
 
+test("a 'Bearer <token>' value is redacted as sent and as its bare credential", async (t) => {
+  const bearer = `Bearer ${TOKEN}`;
+  const server = await serve(t, (req, res) =>
+    json(res, 400, {
+      errors: [
+        {
+          message: `Not a valid API key: ${TOKEN} (${req.headers.authorization})`,
+        },
+      ],
+    }),
+  );
+  const error = await rejectsWith(
+    client(server, { token: bearer }).request({}),
+    "UPSTREAM_HTTP",
+  );
+  assert.equal(
+    server.requests[0].headers.authorization,
+    bearer,
+    "sent as given",
+  );
+  assert.equal(
+    error.message,
+    "monday.com answered HTTP 400: Not a valid API key: [redacted] ([redacted])",
+  );
+  assert.deepEqual(secretForms(bearer), [`Bearer%20${TOKEN}`, bearer, TOKEN]);
+  assert.deepEqual(secretForms("Bearer short"), [
+    "Bearer%20short",
+    "Bearer short",
+  ]);
+  assert.equal(
+    redact(`a ${encodeURIComponent(TOKEN)} b`, `Bearer ${TOKEN}`),
+    "a [redacted] b",
+  );
+});
+
 test("401 rejects the token at once; 403 only when configured", async (t) => {
   const server = await serve(t, (req, res, n) =>
     json(res, n === 1 ? 401 : 403, { errors: ["Not Authenticated"] }),
@@ -204,7 +240,9 @@ test("401 rejects the token at once; 403 only when configured", async (t) => {
   );
   assert.equal(invalid.status, 401);
   await rejectsWith(client(server).request({}), "UPSTREAM_HTTP");
-  const strict = client(server, { tokenRejectedStatuses: [401, 403] });
+  const strict = client(server, {
+    tokenRejected: ({ status }) => status === 401 || status === 403,
+  });
   await rejectsWith(strict.request({}), "INVALID_TOKEN");
   assert.equal(server.requests.length, 3, "no retries");
 });
@@ -438,4 +476,40 @@ test("perMinute keeps a sliding minute budget", async (t) => {
   assert.equal(server.requests.length, 5);
   assert.equal(server.requests[0].url, "/api/v2/team");
   assert.equal(upstream.label, "ClickUp");
+});
+
+test("waits of a second or more are told to onWait first", async (t) => {
+  const server = await serve(t, (req, res, n) => {
+    if (n === 1) return json(res, 429, {}, { "Retry-After": "3" });
+    if (n === 2) return json(res, 503, {});
+    return json(res, 200, {});
+  });
+  const waits = [];
+  const clock = fakeClock();
+  const upstream = createUpstream({
+    source: "clickup",
+    token: TOKEN,
+    env: { MM_IMPORT_CLICKUP_URL: `${server.origin}/api` },
+    perMinute: 3,
+    clock,
+    limits: { baseDelayMs: 2000 },
+    onWait: (wait) => waits.push(wait),
+  });
+  await upstream.request({ path: "/v2/team" });
+  await upstream.request({ path: "/v2/team" });
+  assert.deepEqual(clock.sleeps, [3000, 4000, 53_000]);
+  assert.deepEqual(waits, [
+    { seconds: 3, perMinute: 3, reason: "rate_limit", status: 429 },
+    { seconds: 4, perMinute: 3, reason: "retry", status: 503 },
+    { seconds: 53, perMinute: 3, reason: "throttle", status: null },
+  ]);
+  const quiet = [];
+  const fast = await serve(t, (req, res, n) =>
+    n === 1 ? json(res, 500, {}) : json(res, 200, {}),
+  );
+  await client(fast, {
+    limits: { baseDelayMs: 10 },
+    onWait: (wait) => quiet.push(wait),
+  }).request({});
+  assert.deepEqual(quiet, [], "a short backoff is not announced");
 });

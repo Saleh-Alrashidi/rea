@@ -12,6 +12,9 @@
  * pass source values through for it and report only what their own
  * conversion loses.
  */
+import { COLUMN_LIMITS } from "../snapshot-columns.js";
+import { SNAPSHOT_LIMITS } from "../snapshot.js";
+
 const MAX_WARNINGS = 1000;
 
 export const isObject = (value) =>
@@ -61,6 +64,40 @@ export function createReport() {
   return { add, count, finish };
 }
 
+/**
+ * The progress message while the upstream client waits (`upstream.js`
+ * `onWait`), so a long pause never looks like a hang.
+ */
+export function waitMessage(label, { seconds, reason, status, perMinute }) {
+  if (reason === "throttle")
+    return `Waiting ${seconds} s: ${label} allows ${perMinute} requests a minute…`;
+  if (reason === "retry")
+    return `${label} answered HTTP ${status}; trying again in ${seconds} s…`;
+  return `${label} asked to wait ${seconds} s (rate limit)…`;
+}
+
+/**
+ * A connector's progress reporter: `progress(phase, done, total,
+ * message)` reports to `onProgress`, and `wait(info)` re-reports the last
+ * progress with the wait's message and `wait_seconds`.
+ */
+export function createProgress(onProgress, label) {
+  const last = { phase: "starting", done: null, total: null, message: null };
+  const send = (event) => {
+    if (typeof onProgress === "function") onProgress(event);
+  };
+  return {
+    progress(phase, done, total, message) {
+      Object.assign(last, { phase, done, total, message });
+      send({ ...last, wait_seconds: null });
+    },
+    wait(info) {
+      const message = waitMessage(label, info);
+      send({ ...last, message, wait_seconds: info.seconds });
+    },
+  };
+}
+
 /** `add`/`count` bound to one snapshot path. */
 export function scopeAt(report, path) {
   return {
@@ -85,12 +122,38 @@ export function hexColor(value, fallback) {
   return str(value);
 }
 
-/** Records reaching scan limit `kind` once (and stops reading updates). */
-export function limitHit(ctx, kind, path) {
+/**
+ * Records reaching scan limit `kind` (`limit`, default `ctx.limits[kind]`)
+ * once, and stops reading updates at the update limit.
+ */
+export function limitHit(ctx, kind, path, limit = ctx.limits[kind]) {
   if (ctx.stopped.has(kind)) return;
   ctx.stopped.add(kind);
   if (kind === "updates") ctx.flags.updates = false;
-  const limit = ctx.limits[kind].toLocaleString("en-US");
-  const message = `Stopped at the scan limit of ${limit} ${kind}; the rest was not read`;
+  const shown = limit.toLocaleString("en-US");
+  const message = `Stopped at the scan limit of ${shown} ${kind}; the rest was not read`;
   ctx.report.add(`limit_${kind}`, message, path);
+}
+
+/**
+ * Whether the scan may read one more item: not past the item limit, and
+ * one more item (at most COLUMN_LIMITS.columns values) keeps
+ * `ctx.counts.values` within SNAPSHOT_LIMITS.values, what one import can
+ * store. Records the limit that stops it.
+ */
+export function itemRoom(ctx, path) {
+  if (ctx.counts.items >= ctx.limits.items) {
+    limitHit(ctx, "items", path);
+    return false;
+  }
+  if (ctx.counts.values + COLUMN_LIMITS.columns > SNAPSHOT_LIMITS.values) {
+    limitHit(ctx, "values", path, SNAPSHOT_LIMITS.values);
+    return false;
+  }
+  return true;
+}
+
+/** Counts item `item`'s values toward the scan's value budget. */
+export function countValues(ctx, item) {
+  ctx.counts.values += Object.keys(item.values).length;
 }

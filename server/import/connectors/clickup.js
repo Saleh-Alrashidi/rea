@@ -21,14 +21,21 @@
  * items, updates, docs }`, which can only lower CLICKUP_LIMITS (comments
  * are updates). `transport` (`{ env, limits, clock }`) is a test seam for
  * the upstream client; routes never set it. Failures are UpstreamError:
- * INVALID_TOKEN (no token, HTTP 401), ABORTED, UPSTREAM_CONFIG,
+ * INVALID_TOKEN (no token, HTTP 401 other than "Team not authorized"),
+ * ABORTED, UPSTREAM_CONFIG,
  * UPSTREAM_ERROR (no ClickUp workspaces in the answer), or the transport
  * code once three requests in a row have failed. Other failures become
  * `read_failed` warnings and the scan continues.
  */
 import { SNAPSHOT_LIMITS } from "../snapshot.js";
 import { UpstreamError, createUpstream } from "../upstream.js";
-import { get, guarded, pathId, userOf } from "./clickup-common.js";
+import {
+  get,
+  guarded,
+  pathId,
+  tokenRejected,
+  userOf,
+} from "./clickup-common.js";
 import { readDocs } from "./clickup-docs.js";
 import {
   addDetail,
@@ -38,9 +45,11 @@ import {
   readComments,
 } from "./clickup-tasks.js";
 import {
+  createProgress,
   createReport,
   idOf,
   isObject,
+  itemRoom,
   limitHit,
   listOf,
   str,
@@ -208,10 +217,7 @@ async function readTasks(ctx, state) {
   const what = `Tasks of list "${state.board.name}"`;
   const maxPages = Math.ceil(ctx.limits.items / TASK_PAGE) + 1;
   for (let page = 0; page < maxPages; page += 1) {
-    if (ctx.counts.items >= ctx.limits.items) {
-      limitHit(ctx, "items", state.path);
-      return;
-    }
+    if (!itemRoom(ctx, state.path)) return;
     const query = {
       page: String(page),
       include_closed: "true",
@@ -225,6 +231,10 @@ async function readTasks(ctx, state) {
     for (const added of addTasks(state, rows)) {
       await readComments(state, added);
     }
+    const { index, total } = ctx.at;
+    const read = state.board.items.length.toLocaleString("en-US");
+    const message = `Reading list "${state.board.name}": ${read} tasks so far`;
+    ctx.progress("items", index, total, message);
     if (json.last_page === true || rows.length < TASK_PAGE) return;
   }
   const message = `${what}: stopped after ${maxPages} pages`;
@@ -253,14 +263,12 @@ async function readList(ctx, state) {
 /** Reads the listed lists in order; the upstream client stops on abort. */
 async function readBoards(ctx, found) {
   for (const [index, entry] of found.entries()) {
-    if (ctx.counts.items >= ctx.limits.items) {
-      limitHit(ctx, "items", "workspaces");
-      return;
-    }
+    if (!itemRoom(ctx, "workspaces")) return;
     const { target } = entry;
     const path = `${target.path}.boards[${target.ws.boards.length}]`;
     const state = createBoard(ctx, entry, path);
     const message = `Reading list "${state.board.name}"`;
+    ctx.at = { index, total: found.length };
     ctx.progress("items", index, found.length, message);
     await readList(ctx, state);
     target.ws.boards.push(state.board);
@@ -285,27 +293,25 @@ function readOptions(options) {
 }
 
 function createContext({ token, signal, onProgress, transport }, settings) {
+  const reporter = createProgress(onProgress, "ClickUp");
   const client = createUpstream({
     source: "clickup",
     token,
     signal,
     perMinute: CLICKUP_PER_MINUTE,
-    tokenRejectedStatuses: [401],
+    tokenRejected,
+    onWait: reporter.wait,
     env: transport?.env,
     limits: transport?.limits,
     clock: transport?.clock,
   });
-  const progress = (phase, done, total, message) => {
-    if (typeof onProgress === "function") {
-      onProgress({ phase, done, total, message });
-    }
-  };
+  const { progress } = reporter;
   const ctx = {
     client,
     report: createReport(),
     limits: settings.limits,
     flags: { updates: settings.comments, subitems: settings.subitems },
-    counts: { items: 0, updates: 0, docs: 0, commentReads: 0 },
+    counts: { items: 0, values: 0, updates: 0, docs: 0, commentReads: 0 },
     users: new Map(),
     workspaces: [],
     spaces: new Map(),

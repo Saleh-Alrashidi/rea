@@ -3,7 +3,9 @@
  * workspaces, boards and docs, what was not imported and why, the full
  * warning list (grouped, and downloadable as a `.txt` made in the browser
  * from a Blob URL that is revoked once the download started) and
- * "Import more".
+ * "Import more". Long lists of links and of what was not imported show
+ * their first entries until "Show all" (`collapsibleList`), and the
+ * actions sit under the summary as well as at the end.
  *
  * `doneStep({ state, onMore })` → `{ element, focusTarget }`.
  */
@@ -17,7 +19,12 @@ import {
   linkSections,
   skippedSections,
 } from "./report-model.js";
-import { importPanel, messageBanner, stepHeading } from "./step-parts.js";
+import {
+  collapsibleList,
+  importPanel,
+  messageBanner,
+  stepHeading,
+} from "./step-parts.js";
 import { warningsFileName, warningsText } from "./warnings.js";
 import { warningsList } from "./warnings-view.js";
 
@@ -78,22 +85,22 @@ function linksBody(report) {
       "div",
       { class: "import-link-section" },
       h("h4", { class: "import-link-heading" }, section.title),
-      h(
-        "ul",
-        { class: "import-links" },
+      collapsibleList(
         section.links.map((link) =>
           h(
             "li",
             null,
             h(
               "a",
-              { class: "import-link", href: link.href },
+              // Long titles are cut with an ellipsis; the title shows all.
+              { class: "import-link", href: link.href, title: link.title },
               icon(section.icon, { size: 14 }),
               h("span", null, link.title),
               icon("arrowRight", { size: 14, className: "import-link-arrow" }),
             ),
           ),
         ),
+        { class: "import-links" },
       ),
     ),
   );
@@ -129,9 +136,7 @@ function skippedPanel(report) {
             String(section.entries.length),
           ),
         ),
-        h(
-          "ul",
-          { class: "import-warning-items" },
+        collapsibleList(
           section.entries.map((entry) =>
             h(
               "li",
@@ -143,6 +148,7 @@ function skippedPanel(report) {
               ),
             ),
           ),
+          { class: "import-warning-items" },
         ),
       ),
     ),
@@ -170,33 +176,7 @@ export function doneStep({ state, onMore }) {
   });
   const first = linkSections(report.links).find((s) => s.kind === "board")
     ?.links[0];
-  const element = h(
-    "section",
-    {
-      class: "import-step import-step-done",
-      "aria-labelledby": "import-step-title",
-    },
-    heading,
-    messageBanner({
-      tone: report.cancelled ? "warning" : "success",
-      text: summary.text,
-    }),
-    tiles(report),
-    importPanel({
-      id: "import-links",
-      title: "Open what was imported",
-      iconName: "open",
-      body: linksBody(report),
-    }),
-    skippedPanel(report),
-    importPanel({
-      id: "import-done-warnings",
-      title: "Warnings",
-      iconName: "alert",
-      count: String(report.warnings.length),
-      tools: report.warnings.length > 0 ? download : null,
-      body: warningsList({ warnings: report.warnings, preview }),
-    }),
+  const actions = () =>
     h(
       "div",
       { class: "import-actions" },
@@ -213,7 +193,36 @@ export function doneStep({ state, onMore }) {
         variant: "primary",
         onClick: onMore,
       }),
-    ),
+    );
+  const element = h(
+    "section",
+    {
+      class: "import-step import-step-done",
+      "aria-labelledby": "import-step-title",
+    },
+    heading,
+    messageBanner({
+      tone: report.cancelled ? "warning" : "success",
+      text: summary.text,
+    }),
+    actions(),
+    tiles(report),
+    importPanel({
+      id: "import-links",
+      title: "Open what was imported",
+      iconName: "open",
+      body: linksBody(report),
+    }),
+    skippedPanel(report),
+    importPanel({
+      id: "import-done-warnings",
+      title: "Warnings",
+      iconName: "alert",
+      count: String(report.warnings.length),
+      tools: report.warnings.length > 0 ? download : null,
+      body: warningsList({ warnings: report.warnings, preview }),
+    }),
+    actions(),
   );
   return { element, focusTarget: heading };
 }

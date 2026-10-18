@@ -1,0 +1,82 @@
+/*
+ * The importer's notices and shortcuts (SPEC-4 §6): the banners that offer
+ * an earlier scan or a job still running, the source's wait message, the
+ * review's "Skip to Import" button, the empty review and the room the
+ * sticky review footer leaves for focus. Every color is a
+ * token from tokens.css, so light and dark themes need no rules here.
+ */
+
+/* A banner's actions ("Return to the review", "Follow it", "Cancel it"). */
+.import-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.import-banner:focus {
+  outline: none;
+}
+
+.import-banner:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* The source asked the scan to wait (a rate limit). */
+.import-progress-message.waiting {
+  color: var(--color-warning);
+}
+
+/* Shown only while it has keyboard focus, like "Skip to content". */
+.import-skip {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.import-skip:focus-visible {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+  align-self: flex-start;
+}
+
+.import-field-error[hidden] {
+  display: none;
+}
+
+.import-limits[open] .input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+/* A review with nothing to import. */
+.import-review-empty {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  color: var(--color-text-secondary);
+}
+
+.import-review-empty p {
+  margin: 0;
+}
+
+/* "Show all" under a collapsed list of links or entries. */
+.import-collapse-more {
+  margin-top: var(--space-2);
+}
+
+/* The sticky review footer must not cover the focused control. */
+.page:has(.import-step-review) {
+  scroll-padding-bottom: 8rem;
+}
+
+@media (max-width: 640px) {
+  .page:has(.import-step-review) {
+    scroll-padding-bottom: 12rem;
+  }
+}

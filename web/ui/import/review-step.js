@@ -4,7 +4,9 @@
  * the warnings grouped by code, and "Import" with a sentence that sums
  * up the plan. The plan's choices live in `selection` (`plan-model.js`);
  * a refused or failed import shows its message and, for an invalid plan,
- * each problem with its path.
+ * each problem with its path. A scan that stopped at a limit says so
+ * first; a scan that found nothing says so instead of offering Import.
+ * "Skip to Import" (shown on keyboard focus) jumps past the long lists.
  *
  * `reviewStep({ state, selection, people, onImport, onBack })` →
  * `{ element, update(state), focusTarget }`.
@@ -14,8 +16,9 @@ import { h } from "../../dom.js";
 import { button } from "../components/button.js";
 import { peopleTable } from "./people-table.js";
 import { summarize, summaryText } from "./plan-model.js";
-import { reviewTree } from "./review-tree.js";
+import { hasContent, reviewTree } from "./review-tree.js";
 import { importPanel, messageBanner, stepHeading } from "./step-parts.js";
+import { limitWarnings } from "./warnings.js";
 import { warningsList } from "./warnings-view.js";
 
 const number = (value) => (value ?? 0).toLocaleString("en-US");
@@ -35,7 +38,9 @@ function foundText(preview) {
     counted(totals.docs, "doc"),
     counted(totals.users, "person", "people"),
   );
-  return `${preview.source_label}: found ${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}.`;
+  const cut = limitWarnings(preview.warnings).length > 0;
+  const found = `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `${preview.source_label}: found ${found}${cut ? " (the scan stopped at a limit)" : ""}.`;
 }
 
 function errorBanner(error) {
@@ -43,12 +48,26 @@ function errorBanner(error) {
   const details = (error.errors ?? [])
     .slice(0, 10)
     .map((entry) => `${entry.path}: ${entry.message}`);
+  if (error.detail) details.unshift(error.detail);
   return messageBanner({ tone: "danger", text: error.message, details });
+}
+
+/** The scan stopped before it read everything: say so before anything. */
+function limitBanner(preview) {
+  const cut = limitWarnings(preview.warnings);
+  if (cut.length === 0) return null;
+  return messageBanner({
+    tone: "warning",
+    text: "The scan stopped at a limit, so this is only part of the source. Scan again with higher limits, or import it in parts.",
+    details: cut.slice(0, 3).map((warning) => warning.message),
+  });
 }
 
 function drawFooter(r) {
   const summary = summarize(r.selection, r.state.preview);
-  r.summary.textContent = summaryText(summary);
+  r.summary.textContent = r.empty
+    ? "There is nothing to import from this scan."
+    : summaryText(summary);
   const label = r.importButton.querySelector(".btn-label");
   label.textContent = r.state.pending ? "Starting…" : "Import";
   const blocked = summary.empty || r.state.pending;
@@ -62,8 +81,8 @@ function drawFooter(r) {
 
 /** Builds the step (see the module comment). */
 export function reviewStep({ state, selection, people, onImport, onBack }) {
-  const r = { state, selection, blocked: false };
   const { preview } = state;
+  const r = { state, selection, blocked: false, empty: !hasContent(preview) };
   const heading = stepHeading("Review what to import");
   const onChange = () => drawFooter(r);
   const tree = reviewTree({ preview, selection, onChange });
@@ -86,8 +105,17 @@ export function reviewStep({ state, selection, people, onImport, onBack }) {
   r.back = button({
     label: "Back",
     icon: "chevronLeft",
-    variant: "ghost",
+    // With nothing to import, going back is the way on.
+    variant: r.empty ? "primary" : "ghost",
     onClick: () => onBack(),
+  });
+  r.importButton.hidden = r.empty;
+  const skip = button({
+    label: r.empty ? "Skip to Back" : "Skip to Import",
+    size: "sm",
+    variant: "secondary",
+    className: "import-skip",
+    onClick: () => (r.empty ? r.back : r.importButton).focus(),
   });
   const element = h(
     "section",
@@ -96,7 +124,9 @@ export function reviewStep({ state, selection, people, onImport, onBack }) {
       "aria-labelledby": "import-step-title",
     },
     heading,
+    skip,
     h("p", { class: "import-step-text" }, foundText(preview)),
+    limitBanner(preview),
     r.banner,
     importPanel({
       id: "import-content",

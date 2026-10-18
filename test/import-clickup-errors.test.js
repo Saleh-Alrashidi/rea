@@ -102,6 +102,36 @@ test("rejected tokens fail the scan; the token never leaks", async (t) => {
   );
 });
 
+test("a 'Team not authorized' 401 on one list is a warning, not a rejected token", async (t) => {
+  const { server, run } = await setup(t);
+  server.fail({
+    route: "tasks",
+    match: { list: "901102" },
+    kind: "team_unauthorized",
+  });
+  const snapshot = await run();
+  const [failed] = codes(snapshot, "read_failed");
+  assert.equal(
+    failed.message,
+    'Tasks of list "Engineering / Backlog" could not be read: ClickUp answered HTTP 401: Team not authorized',
+  );
+  assert.deepEqual(boardNamed(snapshot, "Engineering / Backlog").items, []);
+  assert.equal(boardNamed(snapshot, SPRINT).items.length, 230, "others read");
+  assert.equal(
+    server.requests.filter(
+      (r) => r.route === "tasks" && r.params.list === "901102",
+    ).length,
+    1,
+    "not retried",
+  );
+  server.fail({ route: "teams", kind: "unauthorized" });
+  assert.equal(
+    (await failure(run())).code,
+    "INVALID_TOKEN",
+    "a token code still is",
+  );
+});
+
 test("a failing list, page or comment read becomes a warning", async (t) => {
   const { server, run } = await setup(t);
   server.fail({ route: "list", match: { list: "901102" }, kind: "not_found" });
@@ -328,17 +358,35 @@ test("progress reports each phase; aborting stops the scan", async (t) => {
     "docs",
     "done",
   ]);
-  const reading = progress.filter((event) => event.phase === "items");
-  assert.deepEqual(
-    reading.map((event) => [event.done, event.total]),
-    [0, 1, 2, 3, 4, 5].map((done) => [done, 6]),
+  const reading = progress.filter(
+    (event) => event.phase === "items" && event.wait_seconds === null,
   );
+  assert.deepEqual(
+    [...new Set(reading.map((event) => event.done))],
+    [0, 1, 2, 3, 4, 5],
+    "one step per list",
+  );
+  assert.ok(reading.every((event) => event.total === 6));
   assert.equal(reading[0].message, `Reading list "${SPRINT}"`);
+  assert.equal(
+    reading.find((event) => event.message.endsWith("230 tasks so far")).message,
+    `Reading list "${SPRINT}": 230 tasks so far`,
+    "each page of tasks says how many were read",
+  );
+  // Waits for the 90-a-minute budget repeat the progress with a message.
+  const waits = progress.filter((event) => event.wait_seconds !== null);
+  assert.ok(waits.length > 0, "the full scan waits for the budget");
+  assert.match(
+    waits[0].message,
+    /^Waiting \d+ s: ClickUp allows 90 requests a minute…$/,
+  );
+  assert.equal(waits[0].phase, "items", "the phase stays");
   assert.deepEqual(progress.at(-1), {
     phase: "done",
     done: 6,
     total: 6,
     message: "Scan finished",
+    wait_seconds: null,
   });
   const { server, run } = await setup(t);
   const controller = new AbortController();

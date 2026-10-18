@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { preview, run } from "../server/import/engine.js";
+import { finishedText } from "../server/import/report.js";
 import { sampleSnapshot, seededStore } from "./import-engine-fixtures.js";
 
 const kinds = (report) =>
@@ -203,5 +204,16 @@ test("importing a board again makes a new copy and the preview says so", async (
   assert.deepEqual(
     store.listImportedBoards("monday", "b-roadmap").map((b) => b.id),
     [original.id, copy.id],
+  );
+});
+
+test("the finished notification groups thousands like the done step", () => {
+  const report = {
+    created: { boards: 46, items: 11_500, docs: 0 },
+    cancelled: true,
+  };
+  assert.equal(
+    finishedText(report, "Import from monday.com"),
+    "Import from monday.com was stopped after 46 boards, 11,500 items and 0 docs",
   );
 });

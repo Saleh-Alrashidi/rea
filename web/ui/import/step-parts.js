@@ -5,8 +5,13 @@
  */
 
 import { h } from "../../dom.js";
+import { button } from "../components/button.js";
 import { icon } from "../components/icon.js";
 import { STEPS, stepIndex } from "./wizard.js";
+
+/** Lists longer than this show SHOWN items until "Show all" is pressed. */
+export const COLLAPSE_AT = 8;
+const SHOWN = 5;
 
 const TONES = Object.freeze({
   danger: { icon: "alert", role: "alert" },
@@ -16,10 +21,16 @@ const TONES = Object.freeze({
 });
 
 /**
- * A banner with an icon, `text` and optional `details` (a list of
- * lines). Errors are `role="alert"`, so they are announced when shown.
+ * A banner with an icon, `text`, optional `details` (a list of lines) and
+ * `actions` (buttons). Errors are `role="alert"`, so they are announced
+ * when shown.
  */
-export function messageBanner({ tone = "info", text, details = [] }) {
+export function messageBanner({
+  tone = "info",
+  text,
+  details = [],
+  actions = [],
+}) {
   const info = TONES[tone] ?? TONES.info;
   return h(
     "div",
@@ -36,6 +47,9 @@ export function messageBanner({ tone = "info", text, details = [] }) {
             details.map((line) => h("li", null, line)),
           )
         : null,
+      actions.length > 0
+        ? h("div", { class: "import-banner-actions" }, actions)
+        : null,
     ),
   );
 }
@@ -47,6 +61,36 @@ export function stepHeading(text) {
     { class: "import-step-title", tabindex: "-1", id: "import-step-title" },
     text,
   );
+}
+
+/**
+ * `items` (list items) in a `<ul>` with `props`; a list of more than
+ * COLLAPSE_AT shows the first SHOWN until "Show all N" (the hidden items
+ * stay in the list, so their checkboxes still count). → `[list, toggle?]`.
+ */
+export function collapsibleList(items, props = {}) {
+  const list = h("ul", props, items);
+  if (items.length <= COLLAPSE_AT) return [list];
+  const extra = items.slice(SHOWN);
+  const all = `Show all ${items.length.toLocaleString("en-US")}`;
+  const toggle = button({
+    label: all,
+    iconEnd: "chevronDown",
+    size: "sm",
+    variant: "ghost",
+    className: "import-entries-toggle",
+    onClick: () => {
+      const open = toggle.getAttribute("aria-expanded") !== "true";
+      for (const item of extra) item.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.querySelector(".btn-label").textContent = open
+        ? "Show fewer"
+        : all;
+    },
+  });
+  for (const item of extra) item.hidden = true;
+  toggle.setAttribute("aria-expanded", "false");
+  return [list, h("div", { class: "import-collapse-more" }, toggle)];
 }
 
 /** A panel with a header (title, optional count and tools) and a body. */

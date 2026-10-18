@@ -356,3 +356,34 @@ test("running jobs are limited per admin, and cancelling ends a scan", async (t)
     202,
   );
 });
+
+test("GET /import/jobs lists the caller's own jobs without their data", async (t) => {
+  const s = await setup(t);
+  const list = (headers = s.admin) =>
+    s.send("/import/jobs", { method: "GET", headers, type: {} });
+  assert.deepEqual(await (await list()).json(), { jobs: [] });
+  const started = await s.scanJson({ source: "clickup", token: TOKEN });
+  const { job_id } = await started.json();
+  for (let n = 0; n < 50; n += 1) {
+    if ((await (await s.job(job_id)).json()).state !== "running") break;
+    await pause();
+  }
+  const { jobs } = await (await list()).json();
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].id, job_id);
+  assert.equal(jobs[0].kind, "scan");
+  assert.equal(jobs[0].source, "clickup");
+  assert.equal(jobs[0].state, "done");
+  assert.ok(!("preview" in jobs[0]), "the list holds no source data");
+  assert.doesNotMatch(JSON.stringify(jobs), new RegExp(TOKEN));
+  const view = await (await s.job(job_id)).json();
+  assert.equal(view.source, "clickup", "job views name their source");
+  const { ids } = s;
+  s.store.updateUser(ids.users.sam, { role: "admin" });
+  const other = await list(s.sessionFor(ids.users.sam));
+  assert.deepEqual(await other.json(), { jobs: [] }, "creator only");
+  const member = await list(s.sessionFor(ids.users.jordan));
+  assert.equal(member.status, 403);
+  const post = await s.send("/import/jobs", { method: "POST", body: {} });
+  assert.equal(post.status, 405);
+});

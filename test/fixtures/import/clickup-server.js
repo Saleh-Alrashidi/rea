@@ -9,7 +9,8 @@
  *   per 0-based page, `last_page`), `/task/{id}/comment` (25 per page,
  *   newest first, older pages by `start` + `start_id`) and
  *   `/comment/{id}/reply`;
- * - v3 `GET /workspaces/{team}/docs?limit&deleted&archived&next_cursor`
+ * - v3 `GET /workspaces/{team}/docs?limit&deleted&archived&cursor` (the
+ *   answer's `next_cursor` is the next request's `cursor`)
  *   and `/workspaces/{team}/docs/{doc}/pages?max_page_depth&content_format`.
  *
  * Routes, query checks and shapes are `clickup-api.js`. The token must be
@@ -22,9 +23,13 @@
  * `server.fail({ route, match, kind, times, seconds, ms, bytes })` queues
  * a fault for requests of `route` whose params and query fit `match`:
  * `rate_limit` (429 with `X-RateLimit-Reset`, epoch seconds), `retry_after`
- * (429 with `Retry-After`), `unauthorized` (401), `not_found` (404),
+ * (429 with `Retry-After`), `unauthorized` (401 "Token invalid"),
+ * `team_unauthorized` (401 OAUTH_027 "Team not authorized", which ClickUp
+ * also answers for a list or task the token's user may not read),
+ * `not_found` (404),
  * `server_error` (500), `echo_token` (400 quoting the token), `empty`
- * (200 `{}`), `edit` (200 with `fault.edit(body)` of the normal answer),
+ * (200 `{}`), `edit` (200 with `fault.edit(body, record)` of the normal
+ * answer),
  * `slow` (answers after `ms`), `oversized` (a streamed body of `bytes`, default
  * 10 MiB + 1 KiB), `redirect` (302) and `html` (200, not JSON).
  */
@@ -84,6 +89,8 @@ const FAULTS = {
     ),
   unauthorized: (state, res) =>
     sendJson(res, 401, { err: "Token invalid", ECODE: "OAUTH_025" }),
+  team_unauthorized: (state, res) =>
+    sendJson(res, 401, { err: "Team not authorized", ECODE: "OAUTH_027" }),
   not_found: (state, res) =>
     sendJson(res, 404, { err: "List not found", ECODE: "ITEM_013" }),
   server_error: (state, res) =>
@@ -137,7 +144,8 @@ function answer(state, record, res) {
         record.params,
         record.query,
       );
-      sendJson(res, 200, fault?.kind === "edit" ? fault.edit(body) : body);
+      const edited = fault?.kind === "edit" ? fault.edit(body, record) : body;
+      sendJson(res, 200, edited);
     } catch (error) {
       if (!(error instanceof FakeError)) throw error;
       sendJson(res, error.status, { err: error.message, ECODE: error.ecode });

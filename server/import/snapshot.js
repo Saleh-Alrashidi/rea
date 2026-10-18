@@ -24,6 +24,10 @@
  * Beyond SPEC-4 §2, a Doc may say `visibility: "workspace" | "private"`;
  * it defaults to "private" (only the importer), because a source doc's
  * audience is unknown unless the connector knows it.
+ *
+ * `validateSnapshotSliced(snapshot, { signal })` is the same check run in
+ * time slices (`slices.js`): it resolves with the same result, or rejects
+ * with ABORTED once `signal` fires.
  */
 import { LIMITS } from "../input.js";
 import {
@@ -35,6 +39,7 @@ import {
   deepFreeze,
 } from "../store-state.js";
 import { readEmail } from "../store/people.js";
+import { drain, drainSliced } from "./slices.js";
 import { readBoard } from "./snapshot-board.js";
 import {
   createChecker,
@@ -56,6 +61,8 @@ export const SNAPSHOT_LIMITS = Object.freeze({
   boards: 1_000,
   docs: 1_000,
   items: 100_000,
+  // Item values in all: what one import can store (about 50 MiB of data).
+  values: 2_000_000,
   updates: 50_000,
   // Blocks a source doc may list (Worklane keeps LIMITS.blocks of them).
   blocks: 20_000,
@@ -184,7 +191,8 @@ function readBlock(c, entry, { path, scope }) {
     : block;
 }
 
-function readDoc(c, entry, { path, seen }) {
+function* readDoc(c, entry, { path, seen }) {
+  yield;
   if (!readObject(c, entry, path)) return null;
   const id = readSourceId(c, entry.source_id, `${path}.source_id`);
   const title = readName(c, entry.title, {
@@ -246,7 +254,15 @@ function readEach(raw, path, read) {
   return list.includes(null) ? null : list;
 }
 
-function readContent(c, raw, { path, ctx }) {
+/** `readEach` for a generator `read` (boards, docs, workspaces). */
+function* readEachSteps(raw, path, read) {
+  const list = [];
+  for (const [index, entry] of raw.entries())
+    list.push(yield* read(entry, `${path}[${index}]`));
+  return list.includes(null) ? null : list;
+}
+
+function* readContent(c, raw, { path, ctx }) {
   const { totals, seen, users } = ctx;
   const boardList = readArray(c, raw.boards, {
     path: `${path}.boards`,
@@ -272,27 +288,31 @@ function readContent(c, raw, { path, ctx }) {
     );
     return null;
   }
-  const boards = readEach(boardList, `${path}.boards`, (entry, at) => {
-    const board = readBoard(c, entry, { path: at, users, totals });
-    if (board === null) return null;
-    if (seen.boards.has(board.source_id)) {
-      c.error(
-        `${at}.source_id`,
-        "duplicate_id",
-        `Board ${shown(board.source_id)} appears twice`,
-      );
-      return null;
-    }
-    seen.boards.add(board.source_id);
-    return board;
-  });
-  const docs = readEach(docList, `${path}.docs`, (entry, at) =>
+  const boards = yield* readEachSteps(
+    boardList,
+    `${path}.boards`,
+    function* (entry, at) {
+      const board = yield* readBoard(c, entry, { path: at, users, totals });
+      if (board === null) return null;
+      if (seen.boards.has(board.source_id)) {
+        c.error(
+          `${at}.source_id`,
+          "duplicate_id",
+          `Board ${shown(board.source_id)} appears twice`,
+        );
+        return null;
+      }
+      seen.boards.add(board.source_id);
+      return board;
+    },
+  );
+  const docs = yield* readEachSteps(docList, `${path}.docs`, (entry, at) =>
     readDoc(c, entry, { path: at, seen: seen.docs }),
   );
   return boards === null || docs === null ? null : { boards, docs };
 }
 
-function readWorkspace(c, raw, { path, ctx }) {
+function* readWorkspace(c, raw, { path, ctx }) {
   if (!readObject(c, raw, path)) return null;
   const id = readSourceId(c, raw.source_id, `${path}.source_id`);
   const name = readName(c, raw.name, {
@@ -307,7 +327,7 @@ function readWorkspace(c, raw, { path, ctx }) {
     path: `${path}.kind`,
     choices: WORKSPACE_KINDS,
   });
-  const content = readContent(c, raw, { path, ctx });
+  const content = yield* readContent(c, raw, { path, ctx });
   if (id === null || name === undefined || description === undefined)
     return null;
   if (kind === null || content === null) return null;
@@ -356,6 +376,16 @@ const NORMALIZED = new WeakSet();
 /** Checks and normalizes `snapshot` (see the module comment). */
 export function validateSnapshot(snapshot) {
   if (NORMALIZED.has(snapshot)) return { ok: true, snapshot, errors: [] };
+  return drain(validateSteps(snapshot));
+}
+
+/** `validateSnapshot` in time slices (see the module comment). */
+export async function validateSnapshotSliced(snapshot, { signal = null } = {}) {
+  if (NORMALIZED.has(snapshot)) return { ok: true, snapshot, errors: [] };
+  return drainSliced(validateSteps(snapshot), { signal });
+}
+
+function* validateSteps(snapshot) {
   const c = createChecker();
   const failed = () => ({ ok: false, snapshot: null, errors: c.errors });
   if (!readObject(c, snapshot, "")) return failed();
@@ -382,15 +412,16 @@ export function validateSnapshot(snapshot) {
     max: SNAPSHOT_LIMITS.workspaces,
   });
   if (spaces === null) return failed();
-  const totals = { boards: 0, docs: 0, items: 0, updates: 0 };
+  const totals = { boards: 0, docs: 0, items: 0, values: 0, updates: 0 };
   Object.assign(totals, {
     maxItems: SNAPSHOT_LIMITS.items,
+    maxValues: SNAPSHOT_LIMITS.values,
     maxUpdates: SNAPSHOT_LIMITS.updates,
   });
   const seen = { workspaces: new Set(), boards: new Set(), docs: new Set() };
   // Without users, boards are still checked (for their own errors).
   const ctx = { totals, seen, users: people?.ids ?? new Set() };
-  const workspaces = readEach(spaces, "workspaces", (entry, path) =>
+  const workspaces = yield* readEachSteps(spaces, "workspaces", (entry, path) =>
     readWorkspace(c, entry, { path, ctx }),
   );
   const broken = [workspaces, incoming, people].includes(null);

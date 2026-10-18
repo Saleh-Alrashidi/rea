@@ -286,7 +286,8 @@ export function roadmapItems(columns) {
     column_values: valuesFor(columns, {
       status: ["Stuck", { index: 2 }],
       person: ["Dana, Platform, Former", people([1], [51, "team"], [900])],
-      date4: ["2025-05-02 14:30", { date: "2025-05-02", time: "14:30:00" }],
+      // `value` is UTC; `text` is in the token user's zone (here UTC+9).
+      date4: ["2025-05-03 08:30", { date: "2025-05-02", time: "23:30:00" }],
       text: ["x".repeat(2100), "x".repeat(2100)],
     }),
   });

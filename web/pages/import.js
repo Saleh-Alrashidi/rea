@@ -15,7 +15,11 @@
  * imported board, say — shows the same step and follows a running job,
  * and a scan or import request still in flight when the page was left
  * lands in it. The source token is never part of it: it lives only in the
- * scan request (`ui/import/source-step.js`).
+ * scan request (`ui/import/source-step.js`). A fresh wizard (after a
+ * reload) asks the server for this admin's jobs and offers to follow or
+ * cancel one still running, or to return to a finished scan. The scan
+ * choices of each source (flags and limits, never the token) stay in the
+ * session too, so a retry after a failure starts from them.
  */
 
 import { h } from "../dom.js";
@@ -28,6 +32,7 @@ import { doneStep } from "../ui/import/done-step.js";
 import {
   cancelJob,
   getJob,
+  listJobs,
   runImport,
   scanFile,
   scanWithToken,
@@ -49,11 +54,20 @@ import {
 import { adminTabs } from "./admin.js";
 
 /**
- * `{ state, selection, people, page }`: the wizard, the review's choices
- * (`plan-model.js`), the Worklane users offered as matches (null until
- * loaded) and the mounted page, if any.
+ * `{ state, selection, parkedSelection, people, choices, page }`: the
+ * wizard, the review's choices (`plan-model.js`; those of a parked scan
+ * are kept for its return), the Worklane users offered as matches (null
+ * until loaded), the scan choices per source and the mounted page, if any.
  */
 let session = null;
+
+const newSession = () => ({
+  state: initialState(),
+  selection: null,
+  parkedSelection: null,
+  people: null,
+  choices: {},
+});
 
 function adminsOnly() {
   return h(
@@ -76,11 +90,43 @@ function dispatch(s, event) {
   if (next === previous) return;
   s.state = next;
   if (next.preview !== previous.preview) {
-    // A new scan: new choices, and invites may have added people.
-    s.selection = next.preview ? createSelection(next.preview) : null;
+    s.selection = selectionFor(s, previous, next);
+    // Invites may have added people since the list was read.
     s.people = null;
   }
   s.page?.render();
+}
+
+/** The review's choices for `next`: a parked scan keeps its own. */
+function selectionFor(s, previous, next) {
+  if (next.parked && next.parked.preview === previous.preview) {
+    s.parkedSelection = s.selection;
+    return null;
+  }
+  const back = next.preview && next.preview === previous.parked?.preview;
+  const kept = back ? s.parkedSelection : null;
+  s.parkedSelection = null;
+  if (kept) return kept;
+  return next.preview ? createSelection(next.preview) : null;
+}
+
+/**
+ * Offers the job a fresh wizard lost track of: one still running, else
+ * the newest job when it is a finished scan (not yet imported, so its
+ * review can be opened again).
+ */
+function findEarlier(s) {
+  listJobs().then(
+    (jobs) => {
+      const running = jobs.find((job) => job.state === "running");
+      const [newest] = jobs;
+      const ready =
+        newest?.kind === "scan" && newest.state === "done" ? newest : null;
+      const job = running ?? ready;
+      if (job) dispatch(s, { type: "earlier", job });
+    },
+    () => {},
+  );
 }
 
 // ------------------------------------------------------------- actions
@@ -89,8 +135,38 @@ function startScan(s, request, label) {
   dispatch(s, { type: "submit" });
   request.then(
     (jobId) => dispatch(s, { type: "scan-started", jobId, label }),
-    (error) =>
-      dispatch(s, { type: "submit-failed", error: requestFailure(error) }),
+    (error) => {
+      dispatch(s, { type: "submit-failed", error: requestFailure(error) });
+      // Refused because a job of this admin runs: offer it.
+      if (error?.code === "RATE_LIMITED") findEarlier(s);
+    },
+  );
+}
+
+/** Follows (or opens the review of) the job offered as `earlier`. */
+function adoptEarlier(s) {
+  const { earlier } = s.state;
+  if (!earlier) return;
+  getJob(earlier.id).then(
+    (job) => dispatch(s, { type: "adopt", job }),
+    () => dispatch(s, { type: "gone", jobId: earlier.id }),
+  );
+}
+
+/** Cancels the job offered as `earlier`. */
+function cancelEarlier(s, toast) {
+  const { earlier } = s.state;
+  if (!earlier) return;
+  cancelJob(earlier.id).then(
+    () => {
+      dispatch(s, { type: "earlier", job: null });
+      toast.success("The earlier job was cancelled");
+    },
+    (error) => {
+      if (error?.status === 404)
+        dispatch(s, { type: "gone", jobId: earlier.id });
+      else toast.error(error, "Couldn’t cancel");
+    },
   );
 }
 
@@ -134,6 +210,10 @@ const actions = {
     );
   },
   back: (s) => dispatch(s, { type: "back" }),
+  resume: (p) => {
+    dispatch(p.s, { type: "resume" });
+    if (p.s.state.step === "review") checkScan(p);
+  },
   more: (s) => dispatch(s, { type: "reset" }),
 };
 
@@ -190,9 +270,13 @@ function buildView(p) {
   if (state.step === "source") {
     return sourceStep({
       state,
+      choices: s.choices,
       onChoose: (source) => actions.choose(s, source),
       onScanToken: (input) => actions.scanToken(s, input),
       onScanFile: (input) => actions.scanFile(s, input),
+      onResume: () => actions.resume(p),
+      onFollow: () => adoptEarlier(s),
+      onCancelEarlier: () => cancelEarlier(s, p.ctx.toast),
     });
   }
   if (state.step === "scanning" || state.step === "importing") {
@@ -256,7 +340,8 @@ export async function mount(container, ctx) {
     container.append(adminsOnly());
     return undefined;
   }
-  session ??= { state: initialState(), selection: null, people: null };
+  const fresh = session === null;
+  session ??= newSession();
   const p = {
     ctx,
     s: session,
@@ -287,6 +372,7 @@ export async function mount(container, ctx) {
     ),
   );
   if (session.state.step === "review") checkScan(p);
+  if (fresh) findEarlier(session);
   p.render();
   return () => {
     p.active = false;
@@ -294,9 +380,10 @@ export async function mount(container, ctx) {
     closeEvents();
     const { s } = p;
     if (s.page === p) s.page = null;
-    const { step, pending } = s.state;
+    const { step, pending, parked } = s.state;
     // The source step holds nothing worth keeping (and never the token),
-    // unless a scan request is still on its way.
-    if (session === s && step === "source" && !pending) session = null;
+    // unless a scan request is still on its way or a review is parked.
+    const idle = step === "source" && !pending && !parked;
+    if (session === s && idle) session = null;
   };
 }

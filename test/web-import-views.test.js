@@ -67,11 +67,16 @@ test("the token is a password field, read once on submit and cleared", (t) => {
   const scan = $(view.element, "button.import-scan");
   assert.equal(scan.disabled, true);
   assert.equal(label(scan), "Starting…");
+  assert.equal(view.focusTarget.id, "import-step-title");
   view.update({ ...state, error: { message: "Token refused" } });
   const banner = $(view.element, "div.import-banner");
   assert.equal(banner.getAttribute("role"), "alert");
   assert.match(banner.textContent, /Token refused/);
-  assert.equal(view.focusTarget.id, "import-step-title");
+  assert.equal(
+    view.focusTarget,
+    banner,
+    "a failure is focused, not the heading",
+  );
 });
 
 test("files over the limit or of the wrong type are refused before any request", (t) => {
@@ -221,6 +226,13 @@ test("the people table sets one action per person and for everyone unmatched", (
   selects[0].value = "skip";
   fire(selects[0], "change");
   $(bulk, "button").click();
+  assert.equal(selection.users.get("u1"), "skip", "set by hand, so kept");
+  assert.equal(
+    $(bulk, "span.import-people-bulk-status").textContent,
+    "Nothing changed. 1 person you set by hand was kept.",
+  );
+  selection.manual.clear();
+  $(bulk, "button").click();
   assert.equal(selection.users.get("u1"), "invite:viewer");
   assert.equal(
     $(bulk, "span.import-people-bulk-status").textContent,
@@ -231,7 +243,15 @@ test("the people table sets one action per person and for everyone unmatched", (
     "invite:viewer",
     "the rows show the new choice",
   );
-  assert.equal(onChange.calls.length, 4);
+  assert.equal(onChange.calls.length, 5);
+  const named = $(table.element, "table.import-people-table");
+  assert.equal(named.getAttribute("aria-label"), "People");
+  assert.equal(
+    $(table.element, "div.import-people-tools select").getAttribute(
+      "aria-label",
+    ),
+    "Show people",
+  );
 });
 
 test("long people lists draw 100 rows until Show all", (t) => {
@@ -270,5 +290,37 @@ test("long people lists draw 100 rows until Show all", (t) => {
   assert.equal(
     $(table.element, "span.import-people-status").textContent,
     "Showing 0 of 130 people",
+  );
+  const many = {
+    ...PREVIEW,
+    users: [
+      ...users,
+      ...users,
+      ...users,
+      ...users,
+      ...users,
+      ...users,
+      ...users,
+      ...users,
+    ],
+  };
+  many.users = many.users.map((user, index) => ({
+    ...user,
+    source_id: `m${index}`,
+  }));
+  const big = peopleTable({
+    preview: many,
+    selection: createSelection(many),
+    people: [],
+    onChange() {},
+  });
+  assert.equal(
+    $(big.element, "span.import-people-status").textContent,
+    "1,040 people",
+    "counts use the same grouping as the summary",
+  );
+  assert.equal(
+    label($(big.element, "div.import-people-foot button")),
+    "Show all 1,040",
   );
 });

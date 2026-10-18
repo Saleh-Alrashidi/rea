@@ -393,7 +393,11 @@ test("a running job can be cancelled and a second one is refused", async (t) => 
     W.transition(W.initialState("monday"), { type: "submit" }),
     { type: "submit-failed", error: W.requestFailure(busy) },
   );
-  assert.equal(refused.error.message, "You already have an import job running");
+  assert.match(
+    refused.error.message,
+    /^A scan or import of yours is still running/,
+  );
+  assert.equal(refused.error.detail, "You already have an import job running");
   const cancelled = await A.cancelJob(id);
   assert.equal(cancelled.state, "cancelled");
   const state = W.transition(

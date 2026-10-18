@@ -10,6 +10,7 @@ import {
   JOB_TTL_MS,
   MAX_KEPT_PER_USER,
   createImportJobs,
+  redactDeep,
 } from "../server/import/jobs.js";
 import { recordingLog } from "./helpers.js";
 import { sampleSnapshot, seededStore } from "./import-engine-fixtures.js";
@@ -18,6 +19,14 @@ const TOKEN = "monday-token-0123456789abcdef";
 const settled = () => new Promise((resolve) => setTimeout(resolve, 5));
 /** Lets a started job reach its connector (loading it is asynchronous). */
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+/** Waits until job `id` of `userId` has ended (validation runs in slices). */
+async function finished(jobs, id, userId) {
+  for (let turn = 0; turn < 1000; turn += 1) {
+    if (jobs.get(id, userId)?.state !== "running") return;
+    await settled();
+  }
+  throw new Error(`job ${id} is still running`);
+}
 
 /** A connector whose scans wait until `release()` (or their signal). */
 function gatedConnector(result = sampleSnapshot) {
@@ -132,6 +141,36 @@ test("the token is redacted from everything a connector returns", async (t) => {
   await settled();
   const report = jobs.get(run.job.id, admin).report;
   assert.doesNotMatch(JSON.stringify(report), new RegExp(TOKEN));
+});
+
+test("a 'Bearer <token>' scan redacts the bare credential too", async (t) => {
+  const echo = {
+    scan: async () => {
+      const snapshot = sampleSnapshot();
+      snapshot.warnings[0].message = `Not a valid API key: ${TOKEN}`;
+      return snapshot;
+    },
+  };
+  const connectors = { monday: echo, clickup: echo, files: echo };
+  const { jobs, admin } = await registry(t, { connectors });
+  const scan = jobs.startScan({
+    userId: admin,
+    source: "monday",
+    token: `Bearer ${TOKEN}`,
+  });
+  await finished(jobs, scan.job.id, admin);
+  const view = jobs.get(scan.job.id, admin);
+  assert.equal(
+    view.preview.warnings[0].message,
+    "Not a valid API key: [redacted]",
+  );
+  assert.doesNotMatch(JSON.stringify(view), new RegExp(TOKEN));
+  assert.equal(
+    redactDeep({ a: [`x ${TOKEN}`] }, `Bearer ${TOKEN}`).a[0],
+    "x [redacted]",
+  );
+  assert.equal(redactDeep("Bearer short", "Bearer short"), "[redacted]");
+  assert.equal(redactDeep("short", "Bearer short"), "short", "too short alone");
 });
 
 test("one running job per admin and two per server", async (t) => {
@@ -286,7 +325,7 @@ test("imports run from a finished scan of the same admin and can be cancelled", 
     "not done yet",
   );
   monday.release();
-  await settled();
+  await finished(jobs, scan.job.id, admin);
   const bad = jobs.startImport({
     userId: admin,
     scanJobId: scan.job.id,
@@ -312,7 +351,7 @@ test("imports run from a finished scan of the same admin and can be cancelled", 
   });
   assert.equal(started.ok, true);
   jobs.cancel(started.job.id, admin);
-  await settled();
+  await finished(jobs, started.job.id, admin);
   const job = jobs.get(started.job.id, admin);
   assert.equal(job.state, "cancelled");
   assert.equal(job.report.cancelled, true);
@@ -322,7 +361,7 @@ test("imports run from a finished scan of the same admin and can be cancelled", 
     scanJobId: scan.job.id,
     plan: {},
   });
-  await settled();
+  await finished(jobs, again.job.id, admin);
   assert.equal(jobs.get(again.job.id, admin).state, "done");
   assert.equal(jobs.get(again.job.id, admin).report.created.boards, 3);
 });

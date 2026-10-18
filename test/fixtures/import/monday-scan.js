@@ -18,9 +18,12 @@ export function fakeClock() {
   return clock;
 }
 
-/** A fresh fake server (closed after `t`) and `run(extra)` scanning it. */
-export async function setup(t) {
-  const server = await startMondayServer();
+/**
+ * A fresh fake server (closed after `t`, started with `serverOptions`) and
+ * `run(extra)` scanning it.
+ */
+export async function setup(t, serverOptions = {}) {
+  const server = await startMondayServer(serverOptions);
   t.after(() => server.close());
   const run = (extra = {}) =>
     scan({

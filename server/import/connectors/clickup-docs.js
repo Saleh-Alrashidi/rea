@@ -199,7 +199,8 @@ function docWorkspace(ctx, team, parent, title) {
 
 async function addDoc(ctx, docs, team, raw) {
   const id = pathId(raw.id);
-  if (id === null) return;
+  if (id === null || docs.seen.has(id)) return;
+  docs.seen.add(id);
   const title = str(raw.name);
   const target = docWorkspace(ctx, team, raw.parent, title);
   const path = `${target.path}.docs[${target.ws.docs.length}]`;
@@ -218,8 +219,13 @@ async function addDoc(ctx, docs, team, raw) {
   ctx.counts.docs += 1;
 }
 
-/** Reads the docs of `team` until done, failed or at the doc limit. */
+/**
+ * Reads the docs of `team` until done, failed or at the doc limit: the
+ * answer's `next_cursor` is sent as the documented `cursor` parameter, a
+ * cursor seen before ends the listing, and a doc listed twice is read once.
+ */
 async function readTeamDocs(ctx, docs, team) {
+  const cursors = new Set();
   let cursor = null;
   const where = { path: "workspaces", what: `Docs of "${team.name}"` };
   const maxPages = Math.ceil(ctx.limits.docs / DOC_PAGE) + 1;
@@ -229,11 +235,10 @@ async function readTeamDocs(ctx, docs, team) {
       deleted: "false",
       archived: "false",
     };
-    if (cursor !== null) query.next_cursor = cursor;
+    if (cursor !== null) query.cursor = cursor;
     const url = `/v3/workspaces/${team.id}/docs`;
     const json = await softly(ctx, docs, where, () => get(ctx, url, query));
-    const rows = listOf(json?.docs);
-    for (const raw of rows) {
+    for (const raw of listOf(json?.docs)) {
       if (docs.stopped) return;
       if (ctx.counts.docs >= ctx.limits.docs) {
         limitHit(ctx, "docs", "workspaces");
@@ -243,14 +248,15 @@ async function readTeamDocs(ctx, docs, team) {
     }
     ctx.progress("docs", ctx.counts.docs, null, `Read ${ctx.counts.docs} docs`);
     cursor = idOf(json?.next_cursor);
-    if (cursor === null) return;
+    if (cursor === null || cursors.has(cursor)) return;
+    cursors.add(cursor);
   }
 }
 
 /** Reads the docs of every team (SPEC-4 §3.2 "Docs"). */
 export async function readDocs(ctx, teams) {
   ctx.progress("docs", 0, null, "Reading docs");
-  const docs = { failures: 0, stopped: false };
+  const docs = { failures: 0, stopped: false, seen: new Set() };
   for (const team of teams) {
     if (ctx.stopped.has("docs")) return;
     await readTeamDocs(ctx, docs, team);

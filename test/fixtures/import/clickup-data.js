@@ -289,7 +289,8 @@ function sprintTasks(list) {
       assignees: [ref(101), ref(102)],
       due_date: String(T0),
       due_date_time: true,
-      start_date: String(T0 - 2 * DAY),
+      // A date without a time: 12 November 2023, 4 am in Tokyo (UTC+9).
+      start_date: String(Date.UTC(2023, 10, 11, 19)),
       start_date_time: false,
       priority: priority("urgent"),
       time_estimate: 5_400_000,
