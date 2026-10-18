@@ -39,6 +39,38 @@ const CONTINUED = new Set(["bulleted", "numbered", "todo"]);
 const ID_PATTERN = /^[\w-]{1,64}$/;
 const GENERATED_ID = /^b(\d{1,12})$/;
 
+const fold = (text) =>
+  String(text ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * The block types the "/" menu offers for `query`, best first: types whose
+ * markdown shortcut is `query` ("#", "1.", ">"), then those whose shortcut
+ * starts with it ("-" also finds "---"), then, in menu order, those whose
+ * label, type or glyph contains it, ignoring case, spaces and punctuation
+ * ("h1", "todo" and "bul" all match). Punctuation that is no shortcut
+ * matches nothing.
+ */
+export function matchBlockTypes(query) {
+  const raw = String(query ?? "").trim();
+  if (!raw) return [...BLOCK_TYPES];
+  const term = fold(raw);
+  const shortcut = (entry) => entry.shortcut ?? "";
+  const exact = BLOCK_TYPES.filter((entry) => shortcut(entry) === raw);
+  const prefix = BLOCK_TYPES.filter(
+    (entry) => shortcut(entry) !== raw && shortcut(entry).startsWith(raw),
+  );
+  const named = term
+    ? BLOCK_TYPES.filter((entry) =>
+        [entry.label, entry.type, entry.glyph].some((field) =>
+          fold(field).includes(term),
+        ),
+      )
+    : [];
+  return [...new Set([...exact, ...prefix, ...named])];
+}
+
 /** The menu entry of `type` (paragraph for unknown types). */
 export function blockTypeInfo(type) {
   return BLOCK_TYPES.find((entry) => entry.type === type) ?? BLOCK_TYPES[0];

@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createStore } from "../server/store.js";
+import { plainEntry, plainText } from "./helpers.js";
 
 // ID generation (store-state.js), data-file loading and persistence
 // (server/store/persistence.js), exercised through createStore. The seed
@@ -227,7 +228,7 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
   const made = touchEverything(first);
   await first.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(saved.format, "mini-monday-store/2", "SPEC-2 data format");
+  assert.equal(saved.format, "mini-monday-store/3", "SPEC-2 data format");
   assert.equal(
     "settings_str" in saved.columns[0],
     false,
@@ -366,6 +367,11 @@ test("an invalid data file is rejected and left untouched", async (t) => {
     broken((doc) => (doc.notifications[0].kind = "mention")),
     broken((doc) => (doc.activity[0].board_id = "999")),
     broken((doc) => (doc.workspaces[0].color = "indigo")),
+    // Rich text: a string or non-empty parts { text } / { user_id }.
+    broken((doc) => (doc.notifications[0].text = [])),
+    broken((doc) => (doc.notifications[0].text = [{ user_id: "x" }])),
+    broken((doc) => (doc.notifications[0].text = [{ text: 1 }])),
+    broken((doc) => (doc.activity[0].to_text = [{ text: "a", user_id: "1" }])),
   );
   for (const text of cases) {
     await writeFile(file, text);
@@ -375,6 +381,37 @@ test("an invalid data file is rejected and left untouched", async (t) => {
     );
     assert.equal(await readFile(file, "utf8"), text);
   }
+});
+
+test("rich texts persist, and plain texts of earlier files still load", async (t) => {
+  const { file } = await tempFile(t, "data.json");
+  const store = await createStore({ file });
+  await store.flush();
+  const saved = JSON.parse(await readFile(file, "utf8"));
+  const [rich] = saved.notifications;
+  assert.deepEqual(rich.text[0], { user_id: rich.actor_id }, "names by ID");
+  // Files written before rich text keep names in strings and labels.
+  rich.text = "Sam Lee posted an update";
+  const [entry] = saved.activity;
+  Object.assign(entry, {
+    actor_label: "Old name",
+    from_text: "A",
+    to_text: "B",
+  });
+  await writeFile(file, JSON.stringify(saved));
+  const reloaded = await createStore({ file });
+  const note = reloaded.getNotification(rich.id);
+  assert.equal(plainText(reloaded, note.text), "Sam Lee posted an update");
+  const [shown] = reloaded
+    .listActivity(entry.board_id, { limit: 1000 })
+    .filter((each) => each.id === entry.id)
+    .map((each) => plainEntry(reloaded, each));
+  const actor = reloaded.getUser(entry.actor_id);
+  assert.deepEqual(
+    [shown.actor_label, shown.from_text, shown.to_text],
+    [actor.name, "A", "B"],
+    "a user actor is named from their ID",
+  );
 });
 
 test("a failed write keeps changes and a later flush retries", async (t) => {

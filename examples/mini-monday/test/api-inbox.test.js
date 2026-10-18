@@ -108,9 +108,12 @@ test("assignments and updates notify the people involved, never the actor", asyn
     (await client.data(INBOX)).notifications.map((n) => n.kind);
   assert.deepEqual((await kinds(users.noa)).slice(0, 2), ["update", "assign"]);
   assert.equal((await kinds(users.alex))[0], "update");
-  // People without board access are never notified (Chris is a guest).
+  // People without board access cannot be assigned, so they are never
+  // notified (Chris is a guest; the roadmap is a Main board).
   const guest = { ...vars, v: ids.users.chris };
-  await users.alex.data(assign, guest);
+  const refused = await users.alex.error(assign, guest);
+  assert.equal(refused.extensions.code, "BAD_USER_INPUT");
+  assert.equal(refused.message, "Chris Taylor cannot access this board");
   assert.deepEqual(await kinds(users.chris), []);
 });
 

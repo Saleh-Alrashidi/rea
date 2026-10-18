@@ -7,6 +7,7 @@
  * change a doc.
  */
 
+import { SOMEONE } from "../components/labels.js";
 import { hasRole } from "../components/permissions.js";
 import { normalizeMember } from "../components/share-model.js";
 import { parseBlocksJson, serializeBlocks } from "./blocks.js";
@@ -46,6 +47,16 @@ export const DELETE_DOC_MUTATION = `mutation DeleteDoc($id: ID!) {
 
 const person = (record) =>
   record ? { ...record, id: String(record.id) } : null;
+
+/**
+ * How the doc pages name the creator or last editor of a doc: "you", their
+ * name, or "Someone" when the API leaves the person out because the
+ * viewer may not see them (every doc records both).
+ */
+export function personLabel(record, meId) {
+  if (!record) return SOMEONE;
+  return record.id === String(meId) ? "you" : record.name;
+}
 
 /** Normalizes an API Doc (IDs as strings, parsed blocks when present). */
 export function normalizeDoc(doc) {

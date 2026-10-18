@@ -11,6 +11,7 @@ import { accessBadge } from "../components/badge.js";
 import { emptyState } from "../components/empty-state.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
+import { SOMEONE } from "../components/labels.js";
 import { findByFocusKey } from "../components/focus.js";
 import { closePopover, isPopoverOpen } from "../components/popover.js";
 import { skeletonList } from "../components/skeleton.js";
@@ -100,6 +101,26 @@ function person(users, user) {
   return users?.get(String(user?.id)) ?? user;
 }
 
+/**
+ * "Created by Sam · time". Without a creator the API either hides who it
+ * was (people outside a guest's directory) or nobody was (form responses),
+ * so only the time is shown.
+ */
+function createdLine(users, creator, created) {
+  if (!creator) {
+    return created
+      ? h("span", { class: "card-created" }, `Created ${created}`)
+      : null;
+  }
+  return h(
+    "span",
+    { class: "card-created" },
+    avatar(person(users, creator), { size: "sm" }),
+    h("span", null, `Created by ${creator.name}`),
+    created ? h("span", null, ` · ${created}`) : null,
+  );
+}
+
 function metaRow(props) {
   const { detail } = props;
   const created = detail?.createdAt ? formatTime(detail.createdAt) : "";
@@ -107,15 +128,7 @@ function metaRow(props) {
     "div",
     { class: "card-meta" },
     groupSelect(props),
-    detail?.creator
-      ? h(
-          "span",
-          { class: "card-created" },
-          avatar(person(props.users, detail.creator), { size: "sm" }),
-          h("span", null, `Created by ${detail.creator.name}`),
-          created ? h("span", null, ` · ${created}`) : null,
-        )
-      : null,
+    createdLine(props.users, detail?.creator, created),
   );
 }
 
@@ -143,6 +156,7 @@ function fieldsSection(props) {
                   column,
                   value: item.values[column.id] ?? null,
                   users,
+                  assignable: board.assignableUsers,
                   itemName: item.name,
                   focusKey: `card-cell:${column.id}`,
                   placeholder: "Set status",
@@ -203,7 +217,8 @@ function composer(props) {
 }
 
 function updateEntry(update, users) {
-  const author = update.creator ?? { id: "0", name: "Unknown", initials: "?" };
+  // The API hides authors outside a guest's directory.
+  const author = update.creator ?? { id: "0", name: SOMEONE, initials: "?" };
   return h(
     "li",
     { class: ["update", update.pending && "pending"] },

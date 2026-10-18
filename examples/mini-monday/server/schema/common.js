@@ -10,22 +10,28 @@
 import {
   actingUser,
   boardAccess,
+  canManageMembers,
+  directoryName,
+  directoryUser,
+  effectiveOwnerIds,
+  memberVerdicts,
   membersOf,
   notFoundError,
   teamVisible,
   visibleUserIds,
 } from "../access.js";
 import { GraphQLError } from "../graphql/errors.js";
+import { LIMITS } from "../input.js";
+import {
+  InputError,
+  readName as readStoreName,
+  readText,
+} from "../store-state.js";
 import { API_VERSIONS } from "../versions.js";
 
-export const MAX_NAME_LENGTH = 255;
-const MAX_DESCRIPTION_LENGTH = 2000;
 // Unspecified in the specs: every `limit` and `ids` argument is capped at
 // the items_page maximum so that one request cannot ask for unbounded work.
 const MAX_LIMIT = 500;
-
-export const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Throws a GraphQLError; usable as an expression (`x ?? fail(…)`). */
 export const fail = (code, message, extensions) => {
@@ -40,21 +46,27 @@ export const notFound = (what, id) => {
 
 // ------------------------------------------------------------- validation
 
-export function readName(value, label) {
-  const name = value.trim();
-  const valid = name.length > 0 && name.length <= MAX_NAME_LENGTH;
-  return valid ? name : badInput(`${label} must be 1-${MAX_NAME_LENGTH} chars`);
+/** Runs a store-state reader; the rule it breaks becomes BAD_USER_INPUT. */
+function asInput(reader) {
+  try {
+    return reader();
+  } catch (error) {
+    if (error instanceof InputError) badInput(error.message);
+    throw error;
+  }
 }
 
+/** A trimmed name of 1-255 characters (the store's name rule). */
+export const readName = (value, label) =>
+  asInput(() => readStoreName(value, label));
+
 /**
- * Optional description text, at most 2,000 chars. null and undefined are
- * returned as they are (undefined means "unchanged" for updates).
+ * Optional description text, at most 2,000 characters. null and undefined
+ * are returned as they are (undefined means "unchanged" for updates).
  */
 export function readDescription(value) {
   if (value === undefined || value === null) return value;
-  return value.length <= MAX_DESCRIPTION_LENGTH
-    ? value
-    : badInput(`Descriptions must be at most ${MAX_DESCRIPTION_LENGTH} chars`);
+  return asInput(() => readText(value, "Description", LIMITS.description));
 }
 
 export function readLimit(value, max = MAX_LIMIT, label = "limit") {
@@ -166,6 +178,15 @@ export function perRequest(ctx, key, compute) {
 const directoryOf = (ctx) =>
   perRequest(ctx, "directory", () => visibleUserIds(ctx.store, viewerOf(ctx)));
 
+/**
+ * `nameOf(userId)` for texts the caller reads: names inside their
+ * directory, "Someone" outside it (SPEC-2 §6).
+ */
+export function namesFor(ctx) {
+  const directory = directoryOf(ctx);
+  return (id) => directoryName(ctx.store, directory, id);
+}
+
 /** The users the caller may see, in store order. */
 export function visibleUsers(ctx) {
   const ids = directoryOf(ctx);
@@ -180,8 +201,7 @@ export function visibleUsers(ctx) {
  */
 export function lookupUser(ctx, id) {
   if (id === null || id === undefined) return null;
-  const ids = directoryOf(ctx);
-  return ids === null || ids.has(id) ? ctx.store.getUser(id) : null;
+  return directoryUser(ctx.store, directoryOf(ctx), id);
 }
 
 /** Boards the caller can access, in store order. */
@@ -196,19 +216,45 @@ export const accessibleBoards = (ctx) =>
 // ---------------------------------------------------------------- members
 
 /**
- * The grants of `resource` as Member records `{ kind, id, name, role }`;
- * grants whose user or team no longer exists are skipped. `Member.user`
- * and `Member.team` resolve through the caller's directory.
+ * The grants of `resource` as Member records `{ kind, id, name, role }`
+ * plus the resource they belong to (for the verdict fields). User grants
+ * outside the caller's directory and grants whose user or team no longer
+ * exists are skipped; `Member.team` resolves only for visible teams.
  */
-export function memberRecords(store, resourceKind, resource) {
+export function memberRecords(ctx, resourceKind, resource) {
   return membersOf(resourceKind, resource).flatMap((grant) => {
     const isUser = grant.kind === "user";
-    const record = isUser ? store.getUser(grant.id) : store.getTeam(grant.id);
+    const record = isUser
+      ? lookupUser(ctx, grant.id)
+      : ctx.store.getTeam(grant.id);
     if (!record) return [];
     const { kind, id, role } = grant;
-    return [{ kind, id, role, name: record.name }];
+    return [{ kind, id, role, name: record.name, resourceKind, resource }];
   });
 }
+
+/**
+ * `access.memberVerdicts` for the caller, once per member and request; the
+ * resource's effective owners and whether the caller manages it are
+ * computed once per resource and request, so a member list costs one pass
+ * over the grants rather than one per member.
+ */
+const verdictsOf = (ctx, member) => {
+  const { resourceKind, resource, kind, id } = member;
+  const scope = `${resourceKind}\u0000${resource.id}`;
+  return perRequest(ctx, `member\u0000${scope}\u0000${kind}\u0000${id}`, () => {
+    const viewer = viewerOf(ctx);
+    const owners = perRequest(ctx, `owners\u0000${scope}`, () =>
+      effectiveOwnerIds(ctx.store, resourceKind, resource),
+    );
+    const manages = perRequest(ctx, `manages\u0000${scope}`, () =>
+      canManageMembers(ctx.store, viewer, resourceKind, resource),
+    );
+    const grant = member;
+    const target = { viewer, resourceKind, resource, grant, owners, manages };
+    return memberVerdicts(ctx.store, target);
+  });
+};
 
 const Member = {
   user: (member, _a, ctx) =>
@@ -217,6 +263,11 @@ const Member = {
     const team = member.kind === "team" ? ctx.store.getTeam(member.id) : null;
     return teamVisible(viewerOf(ctx), team) ? team : null;
   },
+  can_remove: (member, _a, ctx) => verdictsOf(ctx, member).canRemove,
+  can_change_role: (member, _a, ctx) => verdictsOf(ctx, member).canChangeRole,
+  role_options: (member, _a, ctx) => verdictsOf(ctx, member).roleOptions,
+  effective_role: (member, _a, ctx) => verdictsOf(ctx, member).effectiveRole,
+  reason: (member, _a, ctx) => verdictsOf(ctx, member).reason,
 };
 
 export function initials(name) {
@@ -231,6 +282,9 @@ export function initials(name) {
 /** Every board record, in store order (the store pages by default). */
 export const allBoards = (store) =>
   store.listBoards({ limit: Number.MAX_SAFE_INTEGER });
+
+/** "1 member", "3 members". */
+export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** Case-insensitive title order (for search results and directories). */
 export const byTitle = (a, b) =>
@@ -261,7 +315,8 @@ export const definition = {
     Query: "version:Version! versions:[Version!]!",
     Version: "value:String! kind:String!",
     Member: `kind:SubjectKind! id:ID! name:String! role:AccessRole!
-      user:User team:Team`,
+      user:User team:Team can_remove:Boolean! can_change_role:Boolean!
+      role_options:[AccessRole!]! effective_role:AccessRole reason:String`,
   },
   resolvers: {
     Query: {
@@ -273,5 +328,13 @@ export const definition = {
   },
   extras: {
     "Query.version": { description: "The API version of this request." },
+    "Member.effective_role": {
+      description:
+        "The role this grant really gives: viewer accounts are capped at viewer; null when it gives no access.",
+    },
+    "Member.reason": {
+      description:
+        "For owners: why this member's controls are off or its role is limited, when anything does.",
+    },
   },
 };

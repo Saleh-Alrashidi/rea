@@ -31,7 +31,7 @@ function actorAvatar(actor) {
   return h(
     "span",
     { class: "avatar avatar-sm activity-bot", "aria-hidden": "true" },
-    icon("forms", { size: 14 }),
+    icon(actor.kind === "form" ? "forms" : "person", { size: 14 }),
   );
 }
 

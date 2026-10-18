@@ -25,6 +25,7 @@ import {
   DELETE_DOC_MUTATION,
   docCapabilities,
   loadDoc,
+  personLabel,
   saveDoc,
 } from "../ui/docs/doc-data.js";
 import { createBlockEditor } from "../ui/docs/editor.js";
@@ -60,23 +61,13 @@ function loadingView() {
 
 // ------------------------------------------------------------- display
 
-function personName(ctx, person) {
-  if (!person) return null;
-  return person.id === String(ctx.me.id) ? "you" : person.name;
-}
-
 function renderMeta(page) {
   const { doc, ctx } = page;
-  const parts = [];
-  const creator = personName(ctx, doc.created_by);
-  if (creator) {
-    const day = formatDay(todayString(new Date(doc.created_at)));
-    parts.push(`Created by ${creator} on ${day}`);
-  }
-  const editor = personName(ctx, doc.updated_by);
-  const edited = `Edited ${timeAgo(doc.updated_at)}`;
-  parts.push(editor ? `${edited} by ${editor}` : edited);
-  page.dom.meta.textContent = parts.join(" · ");
+  const day = formatDay(todayString(new Date(doc.created_at)));
+  page.dom.meta.textContent = [
+    `Created by ${personLabel(doc.created_by, ctx.me.id)} on ${day}`,
+    `Edited ${timeAgo(doc.updated_at)} by ${personLabel(doc.updated_by, ctx.me.id)}`,
+  ].join(" · ");
 }
 
 function renderHeader(page) {

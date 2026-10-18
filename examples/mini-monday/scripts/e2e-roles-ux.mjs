@@ -12,7 +12,7 @@
  * Steps that change shared seed data (the roadmap's kind, Sam's role) put
  * it back before they end.
  */
-import { check, dataAs, signedIn, waitUntil } from "./e2e-lib.mjs";
+import { check, dataAs, screenshot, signedIn, waitUntil } from "./e2e-lib.mjs";
 import { UX_STEPS_2 } from "./e2e-roles-ux2.mjs";
 
 const itemsOf = (run, boardId) =>
@@ -148,22 +148,67 @@ async function docUndoAndSlashMenu(run) {
       [...converted, "block-bulleted:"].join("|"),
     "redo",
   );
-  // "/" in the empty bullet opens the type menu; typing picks by label.
+  await slashMenuFilters(run, page);
+  await context.close();
+}
+
+/** The active option of the "/" menu's combobox (aria-activedescendant). */
+const activeSlashOption = (page) =>
+  page.evaluate(() => {
+    const input = document.querySelector(".slash-menu .slash-input");
+    const id = input?.getAttribute("aria-activedescendant");
+    const option = id ? document.getElementById(id) : null;
+    return {
+      focused: document.activeElement === input,
+      label: option?.querySelector(".menu-label")?.textContent ?? null,
+      selected: option?.getAttribute("aria-selected") ?? null,
+    };
+  });
+
+/**
+ * "/" in an empty block opens a combobox that filters block types as you
+ * type; Enter picks the active one; Escape gives the block back what was
+ * typed with the caret after it.
+ */
+async function slashMenuFilters(run, page) {
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/");
-  await page.locator(".block-menu [role=menuitemradio]").first().waitFor();
+  const options = page.locator(".slash-menu [role=option]");
+  await options.first().waitFor();
+  check((await options.count()) === 10, "every block type at first");
   await page.keyboard.type("quo");
-  const picked = await page.evaluate(
-    () => document.activeElement?.querySelector(".menu-label")?.textContent,
-  );
-  check(picked === "Quote", `typeahead by label: ${picked}`);
+  await waitUntil(async () => (await options.count()) === 1, "one match");
+  const quote = await activeSlashOption(page);
+  check(quote.focused, "typing stays in the filter");
+  check(quote.label === "Quote" && quote.selected === "true", quote.label);
   await page.keyboard.press("Enter");
   await waitUntil(
     async () => (await blockTexts(page)).at(-1) === "block-quote:",
     "a quote block",
   );
-  await context.close();
+  await page.keyboard.type("/");
+  await options.first().waitFor();
+  await page.keyboard.type("hea");
+  await waitUntil(async () => (await options.count()) === 2, "two headings");
+  await page.keyboard.press("ArrowDown");
+  const second = await activeSlashOption(page);
+  check(second.label === "Heading 2", `arrow down: ${second.label}`);
+  await screenshot(run, page, "doc-slash-menu.png");
+  await page.keyboard.press("Escape");
+  await waitUntil(
+    async () => (await options.count()) === 0,
+    "the menu to close",
+  );
+  check(
+    (await blockTexts(page)).at(-1) === "block-quote:/hea",
+    "Escape keeps the typed text",
+  );
+  await page.keyboard.type("d");
+  check(
+    (await blockTexts(page)).at(-1) === "block-quote:/head",
+    "the caret is back after the text",
+  );
 }
 
 async function cardFocusReturns(run) {
@@ -221,7 +266,7 @@ export const UX_STEPS = [
   ["the Status summary note is read-only for viewers", appNoteReadOnly],
   ["a mistyped number keeps the saved value", numberTypoKeepsValue],
   ["note edits survive an immediate reload", noteSurvivesReload],
-  ["doc undo follows the doc; slash menu typeahead", docUndoAndSlashMenu],
+  ["doc undo follows the doc; the / menu filters", docUndoAndSlashMenu],
   ["closing the item card returns focus", cardFocusReturns],
   ["danger buttons stay readable in dark mode", darkDangerContrast],
   ...UX_STEPS_2,

@@ -1,5 +1,6 @@
 import { boardHash, docHash, noteHash, workspaceHash } from "../../router.js";
 import {
+  ACCESS_ROLES,
   BOARD_KINDS,
   DOC_VISIBILITIES,
   WORKSPACE_KINDS,
@@ -7,11 +8,16 @@ import {
 } from "./labels.js";
 
 /**
- * Data and rules of the share dialog (no DOM): the GraphQL documents for
- * each resource kind, the normalized resource record, the roles a resource
- * accepts, the last-owner guard and guest eligibility hints. The server
- * (`access.canGrant`) enforces all of it; these rules only keep the UI
- * from offering choices the server will refuse.
+ * Data of the share dialog (no DOM): the GraphQL documents for each
+ * resource kind, the normalized resource and member records and the
+ * invite choices. Every rule comes from the server (SPEC-2 §6): each
+ * Member carries `can_remove`, `can_change_role`, `role_options`, the role
+ * its grant really gives (`effective_role`) and the server's explanation
+ * of the row (`reason`), and `share_candidates` lists who could be added
+ * with the `canGrant` verdict (`eligible`, `reason`, `role_options`) and a
+ * `note` on limits that would apply. Nothing here re-derives which roles a
+ * resource accepts, who is the last owner, who may join or whose role is
+ * capped.
  */
 
 /** The visibility control per resource kind (notes have none). */
@@ -36,9 +42,20 @@ export const SHARE_SETTINGS = Object.freeze({
   },
 });
 
-const MEMBER_FIELDS = `kind id name role
+const MEMBER_FIELDS = `kind id name role can_remove can_change_role role_options
+    effective_role reason
     user { id name email initials color role status }
     team { id name member_count }`;
+
+/** Candidates per request: the picker shows 8 beside up to 8 chosen. */
+export const CANDIDATE_LIMIT = 16;
+
+export const SHARE_CANDIDATES_QUERY = `query ShareCandidates($kind: ResourceKind!, $id: ID!, $query: String, $limit: Int) {
+  share_candidates(resource_kind: $kind, resource_id: $id, query: $query, limit: $limit) {
+    kind id name subtitle eligible reason role_options note
+    user { role }
+  }
+}`;
 
 export const SHARE_QUERIES = Object.freeze({
   board: `query ShareBoard($id: ID!) {
@@ -86,19 +103,13 @@ export const SHARE_MUTATIONS = Object.freeze({
 }`,
 });
 
-/** Roles a resource kind accepts (SPEC-2 §1.2 `canGrant`), highest first. */
-export function roleOptions(resourceKind) {
-  if (resourceKind === "note") return ["editor", "viewer"];
-  if (resourceKind === "workspace") return ["owner", "editor"];
-  return ["owner", "editor", "viewer"];
-}
+/** Display order of access roles (highest first), from `labels.js`. */
+const ROLE_ORDER = Object.keys(ACCESS_ROLES);
+const byRank = (roles) => ROLE_ORDER.filter((role) => roles.includes(role));
+const roleList = (value) =>
+  Array.isArray(value) ? value.filter((role) => typeof role === "string") : [];
 
-/** The default role for new members of a resource kind. */
-export function defaultRole(resourceKind) {
-  return resourceKind === "note" ? "viewer" : "editor";
-}
-
-/** Normalizes one Member record. */
+/** Normalizes one Member record with its server verdicts. */
 export function normalizeMember(member) {
   return {
     kind: member.kind === "team" ? "team" : "user",
@@ -107,10 +118,68 @@ export function normalizeMember(member) {
     role: member.role,
     email: member.user?.email ?? null,
     accountRole: member.user?.role ?? null,
+    status: member.user?.status ?? null,
     color: member.user?.color ?? null,
     initials: member.user?.initials ?? null,
     memberCount: member.team?.member_count ?? null,
+    canRemove: member.can_remove === true,
+    canChangeRole: member.can_change_role === true,
+    roleOptions: roleList(member.role_options),
+    effectiveRole: member.effective_role ?? null,
+    reason: member.reason ?? null,
   };
+}
+
+/** Normalizes one ShareCandidate (a picker suggestion with its verdict). */
+export function normalizeCandidate(candidate) {
+  return {
+    kind: candidate.kind === "team" ? "team" : "user",
+    id: String(candidate.id),
+    name: candidate.name,
+    subtitle: candidate.subtitle ?? "",
+    eligible: candidate.eligible === true,
+    reason: candidate.eligible === true ? null : (candidate.reason ?? null),
+    note: candidate.note ?? null,
+    accountRole: candidate.user?.role ?? null,
+    roleOptions: roleList(candidate.role_options),
+  };
+}
+
+/**
+ * The roles the invite select offers: those the server accepts for every
+ * selected subject, or before a selection those it accepts for any
+ * suggestion on offer. Highest first.
+ */
+export function inviteRoles(selection, suggestions) {
+  if (selection.length > 0) {
+    const [first, ...rest] = selection.map((subject) => subject.roleOptions);
+    return byRank(first.filter((role) => rest.every((r) => r.includes(role))));
+  }
+  const offered = suggestions.filter((subject) => subject.eligible);
+  return byRank(offered.flatMap((subject) => subject.roleOptions));
+}
+
+/**
+ * The role to preselect among `roles`: the previous choice when still
+ * offered, else editor (viewer for notes), else the first.
+ */
+export function preferredRole(resourceKind, roles, previous = null) {
+  if (previous && roles.includes(previous)) return previous;
+  const wanted = resourceKind === "note" ? "viewer" : "editor";
+  return roles.includes(wanted) ? wanted : (roles[0] ?? null);
+}
+
+/** The server's distinct reasons for suggestions that can't be added. */
+export function ineligibleReasons(suggestions) {
+  const reasons = suggestions
+    .filter((subject) => !subject.eligible && subject.reason)
+    .map((subject) => subject.reason);
+  return [...new Set(reasons)];
+}
+
+/** The server's distinct notes on the chosen subjects (viewer accounts). */
+export function selectionNotes(selection) {
+  return [...new Set(selection.map((subject) => subject.note).filter(Boolean))];
 }
 
 /** The in-app hash of a resource, from the router's hash builders. */
@@ -184,26 +253,6 @@ export function normalizeResource(kind, data, id) {
 }
 
 /**
- * Why `member` cannot be removed or demoted, or null. A resource always
- * keeps at least one owner (notes keep theirs outside shares). Only people
- * count: the server never counts team owner grants (`access.keepsAnOwner`),
- * so removing a team is never blocked here and a user owner stays the last
- * one even beside owner teams. The server also discounts owners whose
- * account cannot use the role (deactivated, viewer accounts, guests off
- * Shareable boards); this guard cannot see that and leaves it to the
- * server's refusal.
- */
-export function lastOwnerReason(resource, member) {
-  if (resource.kind === "note" || member.role !== "owner") return null;
-  if (member.kind !== "user") return null;
-  const owners = resource.members.filter(
-    (entry) => entry.kind === "user" && entry.role === "owner",
-  );
-  if (owners.length > 1) return null;
-  return `This ${resource.kind} needs at least one owner. Make someone else an owner first.`;
-}
-
-/**
  * The confirmation shown before a board changes kind, the same from the
  * board header and the share dialog: what the new kind means, which guests
  * lose access (only Shareable boards keep guest grants) and, for a Main
@@ -233,26 +282,4 @@ export function boardKindConfirmation(board, kind) {
     confirmButton: "Change board type",
     danger: losing,
   };
-}
-
-/** Whether a subject may be invited to `resource`: `{ ok, reason? }`. */
-export function subjectEligibility(resource, subject) {
-  if (subject.kind !== "user" || subject.role !== "guest") return { ok: true };
-  if (resource.kind === "workspace") {
-    return { ok: false, reason: "Guests can’t join workspaces" };
-  }
-  if (resource.kind === "board" && resource.setting !== "share") {
-    return { ok: false, reason: "Guests can join only Shareable boards" };
-  }
-  return { ok: true };
-}
-
-/** A hint shown under the picker for the resource's guest rules. */
-export function guestHint(resource) {
-  if (resource.kind === "workspace")
-    return "Guests can’t join workspaces; share a Shareable board with them instead.";
-  if (resource.kind === "board" && resource.setting !== "share") {
-    return "Guests can join only Shareable boards. Make this board Shareable to invite them.";
-  }
-  return "Guests can be invited here.";
 }

@@ -15,6 +15,9 @@
  * | `workspace`    | a workspace ID: pages announce the     | pages (board, doc, …) |
  * |                | workspace they show; the sidebar       |                       |
  * |                | switches to it                         |                       |
+ * | `live`         | `{ key, paused }`: a stream ("me",     | `main.js`, the board  |
+ * |                | "board:<id>") was refused or ended     | page                  |
+ * |                | for good, or no longer matters         |                       |
  */
 
 const ID_PATTERN = /^\d{1,20}$/;
@@ -26,6 +29,7 @@ export const BUS_EVENTS = Object.freeze({
   theme: "theme",
   shell: "shell",
   workspace: "workspace",
+  live: "live",
 });
 
 function safeCall(listener, data) {

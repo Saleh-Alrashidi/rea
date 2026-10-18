@@ -6,10 +6,17 @@
  * grants, team members, doc blocks and form questions, the shared ID
  * counter and cross-record references. Invalid files throw and are never
  * overwritten, so data is never silently lost. Part-1 files
- * (`mini-monday-store/1`) are rejected as an unsupported format. Temp
- * files of interrupted saves are removed before loading.
+ * (`mini-monday-store/1`) are rejected as an unsupported format.
+ * `mini-monday-store/2` files, which wrote people's names into texts, are
+ * upgraded once (`legacy-texts.js`): the store keeps a copy of the old file
+ * (`keepLegacyCopy`) and saves the result in the current format, which
+ * older versions refuse as unsupported. Temp files of interrupted saves
+ * are removed before loading.
  */
 import {
+  chmod,
+  constants,
+  copyFile,
   mkdir,
   readFile,
   readdir,
@@ -22,14 +29,13 @@ import path from "node:path";
 import { ACCESS_ROLES, ACCOUNT_ROLES, RESOURCE_KINDS } from "../access.js";
 import { ALL_SCOPES } from "../auth.js";
 import { isValidStoredValue } from "../column-values.js";
+import { ID_PATTERN, isColor, isPlainObject } from "../input.js";
 import {
   BLOCK_TYPES,
   BOARD_KINDS,
-  COLOR_PATTERN,
   COLUMN_TYPES,
   DOC_VISIBILITIES,
   FORM_ACCESS,
-  ID_PATTERN,
   NOTIFICATION_KINDS,
   SCOPE_KEY,
   TEAM_ROLES,
@@ -37,17 +43,19 @@ import {
   WORKSPACE_KINDS,
   byId,
   deepFreeze,
-  isObject,
   onBoard,
 } from "../store-state.js";
 import { makeColumn } from "./boards.js";
+import { LEGACY_FORMAT, upgradeLegacyTexts } from "./legacy-texts.js";
 
-export const FORMAT = "mini-monday-store/2";
+export const FORMAT = "mini-monday-store/3";
 const SAVE_DELAY_MS = 50;
 
 const oneOf = (list) => (v) => list.includes(v);
 const exact = (keys, check) => (v) =>
-  isObject(v) && Object.keys(v).every((key) => keys.includes(key)) && check(v);
+  isPlainObject(v) &&
+  Object.keys(v).every((key) => keys.includes(key)) &&
+  check(v);
 const listOf = (check) => (v) => Array.isArray(v) && v.every(check);
 const isId = (v) => typeof v === "string" && ID_PATTERN.test(v);
 const isStr = (v) => typeof v === "string";
@@ -69,13 +77,24 @@ const CHECKS = {
   bool: (v) => typeof v === "boolean",
   int: (v) => Number.isSafeInteger(v) && v >= 0,
   num: (v) => Number.isFinite(v),
-  obj: isObject,
+  obj: isPlainObject,
   active: (v) => v === "active",
   type: (v) => v === "name" || COLUMN_TYPES.includes(v),
   scopes: (v) => Array.isArray(v) && v.every((s) => ALL_SCOPES.includes(s)),
   scope: (v) => typeof v === "string" && SCOPE_KEY.test(v),
   token: (v) => typeof v === "string" && /^[\w-]{1,512}$/.test(v),
-  color: (v) => typeof v === "string" && COLOR_PATTERN.test(v),
+  color: isColor,
+  // Rich text (`store/activity.js`): a string or parts { text } / { user_id };
+  // version 2 kept names in strings (`legacy-texts.js` converts them).
+  rich: (v) =>
+    isStr(v) ||
+    (Array.isArray(v) &&
+      v.length > 0 &&
+      v.every(
+        (part) =>
+          exact(["text"], (p) => isStr(p.text))(part) ||
+          exact(["user_id"], (p) => isId(p.user_id))(part),
+      )),
   accountRole: oneOf(ACCOUNT_ROLES),
   userStatus: oneOf(USER_STATUSES),
   workspaceKind: oneOf(WORKSPACE_KINDS),
@@ -147,11 +166,11 @@ const SHAPES = {
     "target_group_id:slug? access:formAccess token:token submit_message:str? response_count:int " +
     "created_by:id? created_at:str updated_at:str",
   notifications:
-    "id:id user_id:id kind:notificationKind text:str url:str read:bool actor_id:id? " +
+    "id:id user_id:id kind:notificationKind text:rich url:str read:bool actor_id:id? " +
     "resource_kind:resourceKind? resource_id:id? created_at:str",
   activity:
     "id:id board_id:id actor_id:id? actor_label:str? kind:str item_id:id? item_name:str? " +
-    "column_id:slug? from_text:str? to_text:str? created_at:str",
+    "column_id:slug? from_text:rich? to_text:rich? created_at:str",
   tokens: "token:token user_id:id scopes:scopes label:str",
   storage: "scope:scope key:str value:str? version:int",
 };
@@ -243,7 +262,7 @@ function readCollections(doc, fail) {
     const checks = fieldChecks(shape);
     if (!Array.isArray(doc[name])) fail(`${name} must be an array`);
     state[name] = doc[name].map((record, index) => {
-      if (!isObject(record) || !checks.every(([f, ok]) => ok(record[f])))
+      if (!isPlainObject(record) || !checks.every(([f, ok]) => ok(record[f])))
         fail(`${name}[${index}] is malformed`);
       const fields = checks.map(([field]) => [field, record[field]]);
       return deepFreeze(Object.fromEntries(fields));
@@ -253,8 +272,9 @@ function readCollections(doc, fail) {
 }
 
 /**
- * Loads and validates the data file; null when it does not exist. Invalid
- * files throw instead of being replaced.
+ * Loads and validates the data file: null when it does not exist, else
+ * `{ state, upgraded }` where `upgraded` is true for a converted /2 file
+ * (not yet saved). Invalid files throw instead of being replaced.
  */
 export async function loadState(file) {
   const fail = (detail) => {
@@ -268,7 +288,8 @@ export async function loadState(file) {
     if (error instanceof SyntaxError) fail(error.message);
     throw error;
   }
-  if (!isObject(doc) || doc.format !== FORMAT) {
+  const upgraded = isPlainObject(doc) && doc.format === LEGACY_FORMAT;
+  if (!isPlainObject(doc) || (doc.format !== FORMAT && !upgraded)) {
     fail(
       `unsupported format (expected ${FORMAT}; move the old file away to reseed)`,
     );
@@ -281,7 +302,25 @@ export async function loadState(file) {
   checkCounters(state, fail);
   checkItems(state, fail);
   checkReferences(state, fail);
-  return state;
+  if (upgraded) upgradeLegacyTexts(state);
+  return { state, upgraded };
+}
+
+/**
+ * Copies a /2 `file` to `<file>.v2.bak` (private, like the data file)
+ * before its first save in the current format, so a rollback can still
+ * use it. An existing copy is kept. Returns the copy's path.
+ */
+export async function keepLegacyCopy(file) {
+  const copy = `${file}.v2.bak`;
+  try {
+    await copyFile(file, copy, constants.COPYFILE_EXCL);
+  } catch (error) {
+    if (error?.code === "EEXIST") return copy;
+    throw error;
+  }
+  await chmod(copy, 0o600);
+  return copy;
 }
 
 function serialize(state) {

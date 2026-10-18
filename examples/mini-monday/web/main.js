@@ -22,7 +22,8 @@
  *   body, `api.subscribeBoardEvents`, `api.subscribeMyEvents`.
  * @property {object} me
  *   The signed-in user: `{ id, name, email, initials, is_admin, role,
- *   title, color, status }`. Replaced (not mutated) by `refreshShell()`;
+ *   title, color, status, capabilities }` (`capabilities` is the server's
+ *   `access.can` list; read it through `permissions.can`). Replaced (not mutated) by `refreshShell()`;
  *   read `ctx.me` each time instead of keeping a copy.
  * @property {object} account
  *   `{ id, name, user_count, role_counts_json }`, refreshed like `me`.
@@ -53,8 +54,9 @@
  *   Event emitter: `on(type, listener)` → off, `emit(type, data)`,
  *   `watchBoard(boardId, listener, onEnd)` → unwatch (board SSE; `onEnd`
  *   runs when the server ends the stream). Events:
- *   "notification", "board-change", "theme", "shell", "workspace" (see
- *   `ui/shell/bus.js`).
+ *   "notification", "board-change", "theme", "shell", "workspace", "live"
+ *   (see `ui/shell/bus.js`; "live" `{ key, paused }` drives the "Live
+ *   updates paused" banner, `ui/shell/live-status.js`).
  */
 
 import * as api from "./api.js";
@@ -72,6 +74,7 @@ import { openShareDialog } from "./ui/components/share-dialog.js";
 import { skeletonPage } from "./ui/components/skeleton.js";
 import { mountToasts, toast } from "./ui/components/toast.js";
 import { BUS_EVENTS, createBus } from "./ui/shell/bus.js";
+import { createLiveStatus } from "./ui/shell/live-status.js";
 import { createShell } from "./ui/shell/shell.js";
 import { loadShellData } from "./ui/shell/shell-data.js";
 import { initTheme } from "./ui/shell/theme.js";
@@ -233,8 +236,15 @@ async function start() {
     router,
     actions: () => paletteActions(ctx, shell.flows),
   });
+  const live = createLiveStatus({
+    element: doc().getElementById("live-status"),
+  });
+  bus.on(BUS_EVENTS.live, ({ key, paused }) => live.set(key, paused));
   try {
-    api.subscribeMyEvents((event) => bus.emit(BUS_EVENTS.notification, event));
+    api.subscribeMyEvents(
+      (event) => bus.emit(BUS_EVENTS.notification, event),
+      () => bus.emit(BUS_EVENTS.live, { key: "me", paused: true }),
+    );
   } catch (error) {
     globalThis.console?.error?.("Notification stream unavailable", error);
   }

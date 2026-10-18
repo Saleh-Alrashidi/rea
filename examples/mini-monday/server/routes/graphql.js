@@ -9,11 +9,10 @@ import { execute } from "../graphql/execute.js";
 import { parse } from "../graphql/parse.js";
 import { printSchema } from "../graphql/schema.js";
 import { resolveApiVersion } from "../versions.js";
+import { ID_PATTERN, isPlainObject } from "../input.js";
 import {
   HttpError,
-  ID_PATTERN,
   fail,
-  isPlainObject,
   readJsonObject,
   readSessionCookie,
   requestPrincipal,

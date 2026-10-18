@@ -2,14 +2,19 @@
  * Column value editors shared by the table, kanban cards and the item card:
  * status pills with a label picker, people avatars with a picker, date,
  * numbers and text inputs. Editors receive decoded UI values (`values.js`)
- * and report changes through `onChange(nextValue)`.
+ * and report changes through `onChange(nextValue)`, which may return a
+ * promise of `false` when the server refused the change.
  *
  * View-only users get the same values as static elements (`readOnly`), so
  * a board looks the same whether or not it can be edited.
  *
  * People columns hold users only: the API rejects teams in column values,
  * so the people picker lists users (teams are offered where the API allows
- * them, such as the share dialog).
+ * them, such as the share dialog). It offers the board's
+ * `assignable_users`, the server's list of who may be named on this board
+ * (SPEC-2 §6); people already assigned who no longer qualify stay listed
+ * only so they can be removed. The picker sends one change at a time and
+ * undoes a toggle the server refused, so later toggles do not resend it.
  */
 
 import { h } from "../../dom.js";
@@ -19,14 +24,17 @@ import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { onMenuKeydown } from "../components/menu.js";
 import { openPopover } from "../components/popover.js";
-import { statusOption, textColorOn } from "./values.js";
+import { personOf, statusOption, textColorOn } from "./values.js";
 
-/** User records for `ids` (unknown IDs get a placeholder name). */
+const ASSIGN_HINT = "Only people who can open this board can be assigned.";
+
+/** User records for `ids` (unknown IDs read "Someone"). */
 function peopleFor(ids, users) {
-  return ids.map(
-    (id) => users.get(id) ?? { id, name: `User ${id}`, initials: "?" },
-  );
+  return ids.map((id) => personOf(users, id));
 }
+
+const peopleNames = (ids, users) =>
+  peopleFor(ids, users).map((user) => user.name);
 
 /** Avatar stack for the user IDs of a people value. */
 export function peopleStack(ids, users) {
@@ -128,8 +136,25 @@ export function statusPill(options) {
   return pill;
 }
 
+/**
+ * The people the picker lists: everyone the server says can be assigned,
+ * then people still assigned who no longer can (removable only).
+ * Exported for tests.
+ */
+export function personChoices({ ids, assignable, users }) {
+  const offered = new Set(assignable.map((user) => user.id));
+  const stale = ids
+    .filter((id) => !offered.has(id))
+    .map((id) => ({ ...personOf(users, id), assignable: false }));
+  return [
+    ...assignable.map((user) => ({ ...user, assignable: true })),
+    ...stale,
+  ];
+}
+
 function personHint(user) {
   if (user.status === "deactivated") return "Deactivated";
+  if (!user.assignable) return "No access to this board";
   return user.title || null;
 }
 
@@ -137,13 +162,27 @@ function personRow({ user, checked, onToggle }) {
   const checkbox = h("input", {
     type: "checkbox",
     checked,
-    on: { change: (event) => onToggle(user.id, event.currentTarget.checked) },
+    on: {
+      change(event) {
+        const box = event.currentTarget;
+        // Someone without access can be removed but not added back. The
+        // box stays focusable (aria-disabled), so focus stays in the list.
+        if (box.getAttribute("aria-disabled") === "true") {
+          box.checked = false;
+          return;
+        }
+        if (!user.assignable && !box.checked) {
+          box.setAttribute("aria-disabled", "true");
+        }
+        onToggle(user.id, box.checked, box);
+      },
+    },
   });
   const hint = personHint(user);
   return h(
     "label",
     {
-      class: ["person-option", user.status === "deactivated" && "inactive"],
+      class: ["person-option", !user.assignable && "inactive"],
       dataset: { name: user.name.toLowerCase() },
     },
     checkbox,
@@ -165,14 +204,16 @@ function filterPeople(list, term) {
 }
 
 /**
- * People avatars; clicking opens a checklist of users. Each toggle reports
- * the full new list of user IDs.
- * @param {{ column: object, value: string[], users: Map, label: string,
- *   onChange(ids: string[]): void, focusKey?: string }} options
+ * People avatars; clicking opens a checklist of the people who can be
+ * assigned. Each toggle reports the full new list of user IDs.
+ * @param {{ column: object, value: string[], users: Map,
+ *   assignable: object[], label: string, onChange(ids: string[]): void,
+ *   focusKey?: string }} options
  */
-function peopleButton({ column, value, users, label, onChange, focusKey }) {
+function peopleButton(options) {
+  const { column, value, users, label, onChange, focusKey } = options;
   const ids = Array.isArray(value) ? value : [];
-  const names = ids.map((id) => users.get(id)?.name ?? `User ${id}`);
+  const names = peopleNames(ids, users);
   const button = h(
     "button",
     {
@@ -191,23 +232,31 @@ function peopleButton({ column, value, users, label, onChange, focusKey }) {
 
   function openPicker() {
     const selected = new Set(ids);
-    // Deactivated users stay listed only while they are still assigned.
-    const choices = [...users.values()].filter(
-      (user) => user.status !== "deactivated" || selected.has(user.id),
-    );
+    const choices = personChoices({
+      ids,
+      assignable: options.assignable ?? [],
+      users,
+    });
+    // One change at a time, each sending the selection as it is then.
+    let queue = Promise.resolve();
+    const toggle = (id, on, box) => {
+      if (on) selected.add(id);
+      else selected.delete(id);
+      queue = queue.then(async () => {
+        const accepted = await onChange([...selected]);
+        if (accepted !== false) return;
+        // Refused (the toast says why): undo it so it is not resent.
+        if (on) selected.delete(id);
+        else selected.add(id);
+        box.checked = selected.has(id);
+        box.removeAttribute("aria-disabled");
+      });
+    };
     const list = h(
       "div",
       { class: "people-list" },
       choices.map((user) =>
-        personRow({
-          user,
-          checked: selected.has(user.id),
-          onToggle(id, on) {
-            if (on) selected.add(id);
-            else selected.delete(id);
-            onChange([...selected]);
-          },
-        }),
+        personRow({ user, checked: selected.has(user.id), onToggle: toggle }),
       ),
     );
     const search = h("input", {
@@ -221,7 +270,18 @@ function peopleButton({ column, value, users, label, onChange, focusKey }) {
     openPopover({
       anchor: button,
       label: `Choose ${column.title}`,
-      content: h("div", { class: "people-picker" }, search, list),
+      content: h(
+        "div",
+        { class: "people-picker" },
+        search,
+        list,
+        h(
+          "p",
+          { class: "people-hint" },
+          icon("info", { size: 12 }),
+          ASSIGN_HINT,
+        ),
+      ),
     });
   }
 
@@ -264,7 +324,7 @@ export function statusLabel(column, value) {
 /** Static people avatars (view-only boards). */
 function peopleView({ value, users, label }) {
   const ids = Array.isArray(value) ? value : [];
-  const names = ids.map((id) => users.get(id)?.name ?? `User ${id}`);
+  const names = peopleNames(ids, users);
   return h(
     "span",
     {
@@ -307,9 +367,10 @@ function cellView({ column, value, users, label }) {
  * Returns the editor element for `column` showing `value`, or with
  * `readOnly` its static view. `placeholder` is shown in an empty status
  * pill.
+ * `assignable` is the board's `assignable_users` (people columns).
  * @param {{ column: object, value: unknown, users: Map, itemName: string,
- *   onChange(next: unknown): void, focusKey?: string,
- *   placeholder?: string, readOnly?: boolean }} options
+ *   assignable?: object[], onChange(next: unknown): void,
+ *   focusKey?: string, placeholder?: string, readOnly?: boolean }} options
  */
 export function cellEditor(options) {
   const { column, value, users, itemName, onChange, focusKey } = options;
@@ -326,7 +387,7 @@ export function cellEditor(options) {
         placeholder: options.placeholder,
       });
     case "people":
-      return peopleButton({ column, value, users, label, onChange, focusKey });
+      return peopleButton({ ...options, label });
     case "date":
       return dateInput({ value, label, onChange, focusKey });
     case "numbers":

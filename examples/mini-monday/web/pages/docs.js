@@ -26,6 +26,7 @@ import {
   docWorkspaces,
   docsView,
   loadDocsList,
+  personLabel,
 } from "../ui/docs/doc-data.js";
 import { BUS_EVENTS } from "../ui/shell/bus.js";
 import { createFlows } from "../ui/shell/create.js";
@@ -36,11 +37,13 @@ const EMPTY_FILTER_TEXT = {
   all: "Nothing matches these filters.",
 };
 
+/** The doc's last edit; never attributed to its creator instead. */
 function editedBy(ctx, doc) {
-  const person = doc.updated_by ?? doc.created_by;
-  const who = person?.id === String(ctx.me.id) ? "you" : person?.name;
-  const when = timeAgo(doc.updated_at);
-  return { person, text: who ? `${when} by ${who}` : when };
+  const who = personLabel(doc.updated_by, ctx.me.id);
+  return {
+    person: doc.updated_by,
+    text: `${timeAgo(doc.updated_at)} by ${who}`,
+  };
 }
 
 function docRow(ctx, doc) {

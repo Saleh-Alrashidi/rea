@@ -10,8 +10,8 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ACCOUNT_ROLES, isActive, teamManagers } from "../access.js";
+import { LIMITS } from "../input.js";
 import {
-  LIMITS,
   TEAM_ROLES,
   byId,
   commit,
@@ -28,7 +28,7 @@ import {
   replace,
   withChanges,
 } from "../store-state.js";
-import { notify } from "./activity.js";
+import { byActor, notify } from "./activity.js";
 import { dropSubjectGrants } from "./grants.js";
 
 /** Avatar colors, assigned in turn to new users and workspaces. */
@@ -153,12 +153,12 @@ function userApi(ctx) {
       }
       const next = withChanges(user, changes);
       if (roleChanged) {
-        const who = byId(state.users, actorId)?.name ?? "An admin";
+        const rest = ` changed your account role to ${next.role}`;
         notify(ctx, {
           userIds: [user.id],
           actorId,
           kind: "role",
-          text: `${who} changed your account role to ${next.role}`,
+          text: byActor(actorId, rest, "An admin"),
           url: "#/home",
         });
       }

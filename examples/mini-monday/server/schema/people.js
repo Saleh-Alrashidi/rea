@@ -5,10 +5,11 @@
  * are reported exactly like unknown IDs, in lists, counts, search, as
  * share subjects and in every User-valued field (`lookupUser`).
  */
+import { describe } from "../input.js";
 import {
   can,
   canManageTeam,
-  describe,
+  capabilitiesOf,
   isAdmin,
   requireCapability,
   teamRole,
@@ -195,6 +196,9 @@ const Mutation = wrapAll(write, {
 const User = {
   is_admin: (user) => isAdmin(user),
   initials: (user) => initials(user.name),
+  // The caller's own account capabilities; other users show none.
+  capabilities: (user, _a, ctx) =>
+    user.id === viewerOf(ctx).id ? capabilitiesOf(user) : [],
   teams: (user, _a, ctx) => {
     const viewer = viewerOf(ctx);
     return ctx.store
@@ -203,15 +207,16 @@ const User = {
   },
 };
 
-const teamMemberRecords = (team, store) =>
+/** The team's members the caller may see. */
+const teamMemberRecords = (team, ctx) =>
   team.members.flatMap((member) => {
-    const user = store.getUser(member.user_id);
+    const user = lookupUser(ctx, member.user_id);
     return user ? [{ user, role: member.role }] : [];
   });
 
 const Team = {
-  members: (team, _a, { store }) => teamMemberRecords(team, store),
-  member_count: (team, _a, { store }) => teamMemberRecords(team, store).length,
+  members: (team, _a, ctx) => teamMemberRecords(team, ctx),
+  member_count: (team, _a, ctx) => teamMemberRecords(team, ctx).length,
   my_role: (team, _a, ctx) => teamRole(team, viewerOf(ctx)),
   can_manage: (team, _a, ctx) => canManageTeam(viewerOf(ctx), team),
 };
@@ -223,7 +228,7 @@ export const definition = {
     Account: "id:ID! name:String! user_count:Int! role_counts_json:String!",
     User: `id:ID! name:String! email:String! is_admin:Boolean! initials:String!
       role:AccountRole! title:String status:UserStatus! color:String!
-      created_at:String! teams:[Team!]!`,
+      created_at:String! teams:[Team!]! capabilities:[String!]!`,
     Team: `id:ID! name:String! description:String members:[TeamMember!]!
       member_count:Int! my_role:String can_manage:Boolean!`,
     TeamMember: "user:User! role:String!",
@@ -242,6 +247,14 @@ export const definition = {
   extras: {
     "Query.me": { description: "The calling user." },
     "Query.users": { description: "Users the caller may see." },
+    "User.capabilities": {
+      description:
+        "The caller's account capabilities (from access.can) on `me`; [] for everyone else.",
+    },
+    "Team.can_manage": {
+      description:
+        "Admins and team owners; a viewer account that owns the team cannot.",
+    },
     "Mutation.set_team_member_role": {
       description: 'Makes a team member "owner" or "member" in one change.',
     },

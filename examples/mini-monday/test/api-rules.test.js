@@ -99,6 +99,51 @@ test("bad inputs are BAD_USER_INPUT, never masked internal errors", async (t) =>
   );
 });
 
+test("one name, description and color rule for the API, the store and column values", async (t) => {
+  const { users, ids, store } = await setup(t);
+  const message = async (query, variables) =>
+    (await users.alex.error(query, variables))?.message ?? null;
+  const longName = "n".repeat(256);
+  const board = `mutation B($n: String!, $d: String) { create_board(board_name: $n,
+    description: $d) { id } }`;
+  assert.equal(
+    await message(board, { n: longName }),
+    "Board name must be 1-255 characters",
+  );
+  assert.equal(await message(board, { n: "n".repeat(255) }), null);
+  assert.equal(
+    store.createTeam({ name: longName }).message,
+    "Team name must be 1-255 characters",
+  );
+  const [item] = store.listItems({ boardId: ids.boards.roadmap }).items;
+  const rename = `mutation R($b: ID!, $i: ID!, $v: String) { change_simple_column_value(
+    board_id: $b, item_id: $i, column_id: "name", value: $v) { id } }`;
+  const vars = { b: ids.boards.roadmap, i: item.id };
+  assert.equal(
+    await message(rename, { ...vars, v: longName }),
+    "Column name: Item name must be 1-255 characters",
+  );
+  assert.equal(
+    await message(board, { n: "Ok", d: "d".repeat(2001) }),
+    "Description must be at most 2000 characters",
+  );
+  assert.equal(
+    store.createTeam({ name: "Ok", description: "d".repeat(2001) }).message,
+    "Description must be at most 2000 characters",
+  );
+  const group = `mutation G($b: ID!, $c: String) { create_group(board_id: $b,
+    group_name: "Colors", group_color: $c) { color } }`;
+  const roadmap = { b: ids.boards.roadmap };
+  assert.equal(
+    await users.alex.code(group, { ...roadmap, c: "#12345" }),
+    "BAD_USER_INPUT",
+  );
+  const kept = await users.alex.data(group, { ...roadmap, c: "#A25DDC" });
+  assert.equal(kept.create_group.color, "#A25DDC", "part 1 keeps the case");
+  const plain = await users.alex.data(group, roadmap);
+  assert.equal(plain.create_group.color, "#579bfc", "the store's default");
+});
+
 test("workspaces tell whether the caller can open and delete them", async (t) => {
   const { users, ids } = await setup(t);
   const fields = "{ id can_open can_delete can_manage }";

@@ -5,7 +5,9 @@
  * refresh on each change). Board renames and deletions refresh the shell.
  * When the server ends the stream (the user lost access, the board was
  * deleted) the board reloads at once, so the page shows what is left,
- * and the shell refreshes its board lists.
+ * and the shell refreshes its board lists. When the board is still there
+ * afterwards, its stream was refused (too many open streams) or ended for
+ * another reason: `onLivePaused()` reports that live updates stopped.
  */
 
 import { showError } from "../components/toast.js";
@@ -34,7 +36,7 @@ function refreshFailed(state, render, error) {
  *   forwardEvent(change: object): void,
  *   watchBoard(boardId: string, listener: (change: object) => void,
  *     onEnd: () => void): () => void,
- *   refreshShell(): void }} options
+ *   refreshShell(): void, onLivePaused?(): void }} options
  */
 export function createBoardSync(options) {
   const { state, render, forwardEvent, watchBoard, refreshShell } = options;
@@ -121,13 +123,15 @@ export function createBoardSync(options) {
     events.close?.();
     events = { boardId, close: null };
     if (!boardId) return;
-    const ended = () => {
+    const ended = async () => {
       if (events.boardId !== boardId) return;
       // A later subscribe() may open a new stream.
       events = { boardId: null, close: null };
       if (destroyed) return;
       refreshShell();
-      refresh();
+      await refresh();
+      const open = state.boardId === boardId && state.boardStatus === "ready";
+      if (!destroyed && open) options.onLivePaused?.();
     };
     try {
       events.close = watchBoard(boardId, onBoardEvent, ended);

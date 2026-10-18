@@ -8,6 +8,7 @@ import {
 } from "../server/access.js";
 import { ALL_SCOPES } from "../server/auth.js";
 import { createStore } from "../server/store.js";
+import { plainEntry } from "./helpers.js";
 
 // The seed (server/store/seed.js and seed-data.js): part-1 content with its
 // IDs, and the SPEC-2 §2.1 people, teams, workspaces, boards, docs, notes,
@@ -368,7 +369,8 @@ test("SPEC-2 seed: activity, inbox and coherent access", async () => {
     for (const entry of store.listActivity(board.id)) {
       const actor = store.getUser(entry.actor_id);
       assert.ok(boardAccess(store, actor, board), "actors can see the board");
-      assert.equal(entry.actor_label, actor.name);
+      assert.equal(entry.actor_label, null, "user actors are kept by ID");
+      assert.equal(plainEntry(store, entry).actor_label, actor.name);
     }
     const { items } = store.listItems({ boardId: board.id, limit: 100 });
     for (const item of items) {

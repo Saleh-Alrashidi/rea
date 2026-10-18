@@ -9,7 +9,11 @@
  * workspaces, a screenshot tour of every page (light; dark and 360 px
  * for the main pages) into `e2e-output/`, and then the interaction checks
  * of `e2e-roles-ux.mjs` (focus, keyboard, undo, unsaved work, live access
- * changes).
+ * changes), of `e2e-roles-verdicts.mjs` (the server's verdicts in the
+ * share dialog and people picker, "Someone" for hidden people, the "Live
+ * updates paused" banner) and of `e2e-roles-ux3.mjs` (share dialog and
+ * pickers by keyboard, refused assignees, the "/" menu by its block, the
+ * banner and the share dialog at 360 px).
  *
  * Each step signs in the demo users it needs in their own browser
  * contexts and confirms every change through the public GraphQL API as
@@ -32,6 +36,8 @@ import {
 import { CONTENT_STEPS } from "./e2e-roles-content.mjs";
 import { TOUR_STEPS } from "./e2e-roles-tour.mjs";
 import { UX_STEPS } from "./e2e-roles-ux.mjs";
+import { UX_STEPS_3 } from "./e2e-roles-ux3.mjs";
+import { VERDICT_STEPS } from "./e2e-roles-verdicts.mjs";
 
 const BOARD_ACCESS = `query Board($id: ID!) {
   boards(ids: [$id]) { id name board_kind my_access }
@@ -315,5 +321,7 @@ runE2E({
     ...CONTENT_STEPS,
     ...TOUR_STEPS,
     ...UX_STEPS,
+    ...VERDICT_STEPS,
+    ...UX_STEPS_3,
   ],
 });

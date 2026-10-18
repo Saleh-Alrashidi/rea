@@ -218,16 +218,23 @@ export function openSlash(ed, index, view) {
     anchor: view.content,
     current: view.type,
     onSelect: (type) => changeType(ed, index, type),
-    onDismiss() {
-      // Escape keeps the typed "/" as text, like any other character.
+    onDismiss(filter) {
+      // Closing without a choice gives the block what was typed: the "/"
+      // and the filter, as plain text with the caret after it. Null: the
+      // "/" was deleted too, and the block stays empty.
       if (!view.content.isConnected || view.content.textContent !== "") return;
+      if (filter === null) {
+        focusAt(ed, { index, offset: 0 });
+        return;
+      }
       apply(
         ed,
         insertPlainText(ed.state.blocks, index, {
           start: 0,
           end: 0,
-          text: "/",
+          text: `/${filter}`,
         }),
+        LIMIT_MESSAGE,
       );
     },
   });

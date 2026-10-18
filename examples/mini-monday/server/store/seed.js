@@ -12,7 +12,12 @@
 import { randomBytes } from "node:crypto";
 import { ALL_SCOPES } from "../auth.js";
 import { byId, nextId, push, randomToken, replace } from "../store-state.js";
-import { insertNotification, recordActivity, resourceUrl } from "./activity.js";
+import {
+  byActor,
+  insertNotification,
+  recordActivity,
+  resourceUrl,
+} from "./activity.js";
 import { insertBoard, insertContent, insertView } from "./boards.js";
 import { insertDoc, readBlocks } from "./docs.js";
 import { insertForm } from "./forms.js";
@@ -255,9 +260,9 @@ function seedActivity(ctx, seed) {
 }
 
 const TEXTS = {
-  update: (who, title) => `${who} posted an update on “${title}”`,
-  assign: (who, title) => `${who} assigned you to “${title}”`,
-  share: (who, title) => `${who} shared the note “${title}” with you (viewer)`,
+  update: (title) => ` posted an update on “${title}”`,
+  assign: (title) => ` assigned you to “${title}”`,
+  share: (title) => ` shared the note “${title}” with you (viewer)`,
 };
 
 function inboxTarget(ctx, seed, target) {
@@ -278,7 +283,7 @@ function seedInbox(ctx, seed) {
   for (const [user, actor, kind, target] of rows(INBOX)) {
     const actorId = seed.users[actor];
     const { title, url, resource } = inboxTarget(ctx, seed, target);
-    const text = TEXTS[kind](byId(ctx.state.users, actorId).name, title);
+    const text = byActor(actorId, TEXTS[kind](title));
     const userId = seed.users[user];
     insertNotification(ctx, { userId, actorId, kind, text, url, resource });
   }

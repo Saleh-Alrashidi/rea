@@ -11,14 +11,13 @@
  * Answer parsing and access checks belong to the HTTP route.
  */
 import { explicitOwners } from "../access.js";
+import { LIMITS, isPlainObject } from "../input.js";
 import {
   FORM_ACCESS,
-  LIMITS,
   byId,
   commit,
   failure,
   invalid,
-  isObject,
   nextId,
   onBoard,
   optional,
@@ -46,7 +45,7 @@ const newToken = () => randomToken(16);
 function readQuestion(state, { board, raw, index }) {
   const where = `Question ${index + 1}`;
   if (
-    !isObject(raw) ||
+    !isPlainObject(raw) ||
     !Object.keys(raw).every((key) => QUESTION_KEYS.has(key))
   ) {
     invalid(`${where} must be { id?, column_id, label, help?, required? }`);

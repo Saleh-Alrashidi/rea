@@ -6,14 +6,21 @@
  * `"YYYY-MM-DD"`, people `string[]` of user IDs. A missing value means empty.
  * The store validates with `isValidStoredValue` and the GraphQL layer parses
  * and formats with the functions below, so no other module reinterprets raw
- * column input.
+ * column input. Limits, the ID format and the name rule come from
+ * `input.js`; formatting people takes the viewer's lookup (`getUser`), so
+ * people outside a guest's directory read as `hiddenName`.
  */
+import {
+  ID_PATTERN,
+  LIMITS,
+  describe,
+  isPlainObject,
+  nameRule,
+  validName,
+} from "./input.js";
 
-const MAX_TEXT_LENGTH = 2000;
-const MAX_NAME_LENGTH = 255;
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-const USER_ID_PATTERN = /^[1-9]\d{0,15}$/;
 const INDEX_PATTERN = /^\d{1,4}$/;
 const STATUS_HINT =
   'Status values must be {"index":<n>} or {"label":"<label>"}';
@@ -33,10 +40,6 @@ export const DEFAULT_STATUS_SETTINGS = Object.freeze({
 
 const ok = (value) => ({ ok: true, value });
 const fail = (message) => ({ ok: false, message });
-const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const quote = (text) =>
-  JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}…` : text);
 
 function statusLabels(column) {
   const labels = column?.settings?.labels;
@@ -99,7 +102,7 @@ function statusFromLabel(column, raw) {
     entries.find(([, label]) => label.toLowerCase() === folded);
   return match
     ? ok({ index: Number(match[0]) })
-    : fail(`Unknown status label ${quote(wanted)}`);
+    : fail(`Unknown status label ${describe(wanted)}`);
 }
 
 function numberResult(number) {
@@ -111,7 +114,7 @@ function dateResult(text) {
   const date = text.trim();
   return isRealDate(date)
     ? ok(date)
-    : fail(`Invalid date ${quote(date)}; expected a real YYYY-MM-DD date`);
+    : fail(`Invalid date ${describe(date)}; expected a real YYYY-MM-DD date`);
 }
 
 /** Returns the user ID string of a person entry, or null when invalid. */
@@ -119,7 +122,7 @@ function personId(entry) {
   if (!isPlainObject(entry)) return null;
   if (entry.kind !== undefined && entry.kind !== "person") return null;
   const raw = typeof entry.id === "number" ? String(entry.id) : entry.id;
-  return typeof raw === "string" && USER_ID_PATTERN.test(raw) ? raw : null;
+  return typeof raw === "string" && ID_PATTERN.test(raw) ? raw : null;
 }
 
 function peopleResult(ids, getUser) {
@@ -131,7 +134,7 @@ function peopleResult(ids, getUser) {
       : undefined;
   return unknown === undefined
     ? ok(unique)
-    : fail(`Unknown user ID ${quote(unknown)}`);
+    : fail(`Unknown user ID ${describe(unknown)}`);
 }
 
 function peopleFromJson(value, getUser) {
@@ -151,10 +154,10 @@ function peopleFromText(text, getUser) {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
-  const invalid = ids.find((id) => !USER_ID_PATTERN.test(id));
+  const invalid = ids.find((id) => !ID_PATTERN.test(id));
   return invalid === undefined
     ? peopleResult(ids, getUser)
-    : fail(`Invalid user ID ${quote(invalid)}`);
+    : fail(`Invalid user ID ${describe(invalid)}`);
 }
 
 /**
@@ -178,9 +181,9 @@ const PARSERS = Object.freeze({
   text: {
     json: () => fail("Text values must be JSON strings"),
     simple: (text) =>
-      text.length <= MAX_TEXT_LENGTH
+      text.length <= LIMITS.textValue
         ? ok(text)
-        : fail(`Text values must be at most ${MAX_TEXT_LENGTH} characters`),
+        : fail(`Text values must be at most ${LIMITS.textValue} characters`),
   },
   numbers: {
     json: (value) =>
@@ -191,7 +194,7 @@ const PARSERS = Object.freeze({
       const trimmed = text.trim();
       return NUMBER_PATTERN.test(trimmed)
         ? numberResult(Number(trimmed))
-        : fail(`Invalid number ${quote(trimmed)}`);
+        : fail(`Invalid number ${describe(trimmed)}`);
     },
   },
   date: {
@@ -220,7 +223,7 @@ function parserFor(column) {
 }
 
 function unsupported(column) {
-  return fail(`Unsupported column type ${quote(String(column?.type))}`);
+  return fail(`Unsupported column type ${describe(String(column?.type))}`);
 }
 
 function decodeJson(json) {
@@ -236,11 +239,8 @@ function decodeJson(json) {
 }
 
 function parseName(text) {
-  const name = typeof text === "string" ? text.trim() : "";
-  if (name === "") return fail("Item name must not be empty");
-  return name.length <= MAX_NAME_LENGTH
-    ? ok(name)
-    : fail(`Item names must be at most ${MAX_NAME_LENGTH} characters`);
+  const name = validName(text);
+  return name === null ? fail(nameRule("Item name")) : ok(name);
 }
 
 /**
@@ -287,7 +287,7 @@ const STORED_CHECKS = Object.freeze({
   text: (value) =>
     typeof value === "string" &&
     value.trim() !== "" &&
-    value.length <= MAX_TEXT_LENGTH,
+    value.length <= LIMITS.textValue,
   numbers: (value) => Number.isFinite(value),
   date: (value) => typeof value === "string" && isRealDate(value),
   status: (value, column) =>
@@ -302,7 +302,7 @@ const STORED_CHECKS = Object.freeze({
     value.every(
       (id) =>
         typeof id === "string" &&
-        USER_ID_PATTERN.test(id) &&
+        ID_PATTERN.test(id) &&
         (typeof getUser !== "function" || Boolean(getUser(id))),
     ),
 });
@@ -370,14 +370,18 @@ const FORMATTERS = Object.freeze({
       value: JSON.stringify({ index: stored?.index }),
     };
   },
-  people(stored, column, getUser) {
+  people(stored, column, { getUser, hiddenName }) {
     const ids = Array.isArray(stored) ? stored : [];
-    const name = (id) =>
-      (typeof getUser === "function" ? getUser(id)?.name : undefined) ?? id;
+    const lookup = typeof getUser === "function" ? getUser : null;
+    const shown = lookup ? ids.filter((id) => lookup(id)) : ids;
+    const name = (id) => lookup?.(id)?.name ?? hiddenName ?? id;
     return {
       text: ids.map(name).join(", "),
       value: JSON.stringify({
-        personsAndTeams: ids.map((id) => ({ id: Number(id), kind: "person" })),
+        personsAndTeams: shown.map((id) => ({
+          id: Number(id),
+          kind: "person",
+        })),
       }),
     };
   },
@@ -385,11 +389,12 @@ const FORMATTERS = Object.freeze({
 
 /**
  * Formats a stored value as GraphQL `ColumnValue` output. `value` is JSON
- * text; both fields are null for empty values. People without a known user
- * keep their ID in `text`.
+ * text; both fields are null for empty values. With `getUser`, people it
+ * does not return (unknown, or outside the viewer's directory) are left
+ * out of `value` and shown in `text` as `hiddenName` (default: their ID).
  * @returns {{ text: string | null, value: string | null }}
  */
-export function formatColumnValue(column, stored, { getUser } = {}) {
+export function formatColumnValue(column, stored, options = {}) {
   const type = column?.type;
   if (
     stored === null ||
@@ -399,5 +404,5 @@ export function formatColumnValue(column, stored, { getUser } = {}) {
   ) {
     return { text: null, value: null };
   }
-  return FORMATTERS[type](stored, column, getUser);
+  return FORMATTERS[type](stored, column, options);
 }

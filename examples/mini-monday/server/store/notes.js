@@ -4,8 +4,8 @@
  * else, admins included. Writes take `expectedVersion`; a mismatch returns
  * `{ ok: false, reason: "version_conflict", version }`.
  */
+import { LIMITS } from "../input.js";
 import {
-  LIMITS,
   byId,
   commit,
   failure,

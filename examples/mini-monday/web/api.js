@@ -201,15 +201,19 @@ export async function requestSessionToken(installId) {
 
 /**
  * Opens an EventSource on `url` and forwards parsed `eventName` objects.
- * The server ends a stream for good by refusing its reconnection (a board
- * the user lost access to answers 404): EventSource then reports an error
- * in the CLOSED state, which `onEnd()` announces. Network drops keep the
- * CONNECTING state and retry on their own.
+ * The server refuses a stream (429 when the user holds too many) or ends
+ * one for good by refusing its reconnection (a board the user lost access
+ * to answers 404): EventSource then reports an error in the CLOSED state,
+ * which `onEnd()` announces once. Network drops keep the CONNECTING state
+ * and retry on their own.
  */
 function subscribe(url, eventName, onEvent, onEnd = null) {
   const source = new globalThis.EventSource(url);
+  let ended = false;
   source.addEventListener("error", () => {
-    if (source.readyState === globalThis.EventSource.CLOSED) onEnd?.();
+    if (ended || source.readyState !== globalThis.EventSource.CLOSED) return;
+    ended = true;
+    onEnd?.();
   });
   source.addEventListener(eventName, (event) => {
     let payload;
@@ -245,13 +249,16 @@ export function subscribeBoardEvents(boardId, onEvent, onEnd) {
 
 /**
  * Subscribes to the signed-in user's notification events
- * (`GET /v2/events?stream=me`, `event: notification`). Returns `close()`.
+ * (`GET /v2/events?stream=me`, `event: notification`). `onEnd()` runs once
+ * the server has refused or ended the stream for good (too many open
+ * streams, the session ended). Returns `close()`.
  *
  * @param {(notification: object) => void} onEvent
+ * @param {() => void} [onEnd]
  * @returns {() => void}
  */
-export function subscribeMyEvents(onEvent) {
-  return subscribe(`${EVENTS_PATH}?stream=me`, "notification", onEvent);
+export function subscribeMyEvents(onEvent, onEnd) {
+  return subscribe(`${EVENTS_PATH}?stream=me`, "notification", onEvent, onEnd);
 }
 
 /**

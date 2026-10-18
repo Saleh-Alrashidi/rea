@@ -4,10 +4,16 @@
  * `access.notificationVisible` allows: the caller's own, about resources
  * they can still access. Activity logs need viewer access to the board,
  * which reaching `Board.activity_logs` already implies.
+ *
+ * Texts that name people (notification `text`, activity `actor_label`,
+ * `from_text`, `to_text`) are rendered for the caller: people outside a
+ * guest's directory read "Someone" (SPEC-2 §6).
  */
 import { notificationVisible } from "../access.js";
+import { actorLabel, renderText } from "../store/activity.js";
 import {
   lookupUser,
+  namesFor,
   read,
   readIds,
   readLimit,
@@ -50,6 +56,9 @@ const Mutation = wrapAll(write, {
 });
 
 const actor = (record, _a, ctx) => lookupUser(ctx, record.actor_id);
+/** A resolver rendering the rich-text `field` for the caller. */
+const rendered = (field) => (record, _a, ctx) =>
+  renderText(record[field], namesFor(ctx));
 
 export const definition = {
   types: {
@@ -66,8 +75,13 @@ export const definition = {
   resolvers: {
     Query,
     Mutation,
-    Notification: { actor },
-    ActivityLog: { actor },
+    Notification: { actor, text: rendered("text") },
+    ActivityLog: {
+      actor,
+      actor_label: (entry, _a, ctx) => actorLabel(entry, namesFor(ctx)),
+      from_text: rendered("from_text"),
+      to_text: rendered("to_text"),
+    },
     Board: {
       activity_logs: (board, { limit }, { store }) =>
         store.listActivity(board.id, { limit: readLimit(limit) }),

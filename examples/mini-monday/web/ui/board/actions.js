@@ -265,8 +265,9 @@ function itemActions(app, kit) {
         },
       );
     },
+    /** Resolves to false when the server refused the change. */
     setValue(item, column, value) {
-      run(
+      const done = run(
         "changeValue",
         {
           boardId: kit.boardId(),
@@ -284,6 +285,7 @@ function itemActions(app, kit) {
           },
         },
       );
+      return done.then((result) => result !== null);
     },
     moveItem(item, groupId) {
       const group = state.board.groups.find((entry) => entry.id === groupId);

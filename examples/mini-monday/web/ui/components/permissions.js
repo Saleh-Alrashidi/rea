@@ -1,34 +1,13 @@
 /**
  * Capability hints for the UI. The server (`server/access.js`) decides every
  * access question and rejects anything not allowed; the browser only reads
- * the fields the API returns — a resource's `my_access` / `can_manage` and
- * the account `role` — to hide or disable controls the user cannot use.
- *
- * Every page reads those fields through this module, so the client's view of
- * roles lives in one place. The account-level table mirrors SPEC-2 §1.1
- * (`access.can`) because the API exposes `role`, not a capability list.
+ * the verdicts the API returns — `me.capabilities` (the caller's account
+ * capabilities, from `access.can`), a resource's `my_access` /
+ * `can_manage` and the Member verdicts — to hide or disable controls the
+ * user cannot use. No role table is copied here.
  */
 
 const RANK = Object.freeze({ viewer: 1, editor: 2, owner: 3 });
-
-const ACCOUNT_CAPABILITIES = Object.freeze({
-  admin: new Set([
-    "manage_users",
-    "admin_directory",
-    "create_workspace",
-    "create_team",
-    "create_content",
-    "create_note",
-  ]),
-  member: new Set([
-    "create_workspace",
-    "create_team",
-    "create_content",
-    "create_note",
-  ]),
-  viewer: new Set(["create_note"]),
-  guest: new Set(["create_note"]),
-});
 
 /** Why a control is disabled, shown as its tooltip. */
 export const REASONS = Object.freeze({
@@ -50,14 +29,15 @@ export function isViewOnly(myAccess) {
 }
 
 /**
- * True when the account role of `me` grants `capability`
+ * True when the server listed `capability` in `me.capabilities`
  * ("manage_users" | "admin_directory" | "create_workspace" | "create_team" |
- * "create_content" | "create_note"). Only active users have any, as the
- * server's `access.can` decides.
+ * "create_content" | "create_note"). A user record without the list (any
+ * user but the caller) has none.
  */
 export function can(me, capability) {
-  if (me?.status !== "active") return false;
-  return ACCOUNT_CAPABILITIES[me.role]?.has(capability) ?? false;
+  return (
+    Array.isArray(me?.capabilities) && me.capabilities.includes(capability)
+  );
 }
 
 /**

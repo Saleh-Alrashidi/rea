@@ -14,6 +14,7 @@ import {
   insertPlainText,
   listNumbers,
   markdownShortcut,
+  matchBlockTypes,
   mergeWithNext,
   moveBlock,
   parseBlocksJson,
@@ -34,6 +35,7 @@ import {
   docsView,
   loadDoc,
   loadDocsList,
+  personLabel,
   saveDoc,
 } from "../web/ui/docs/doc-data.js";
 import { ApiError } from "../web/api.js";
@@ -195,6 +197,48 @@ test("blocks move, change type and number their lists", () => {
   assert.equal(setBlockType(doc, 0, "marquee"), null);
   const after = insertParagraphAfter(divider.blocks, 2);
   assert.equal(after.blocks[3].text, "");
+});
+
+test("the / menu filters block types by label, type or glyph", () => {
+  const types = (query) => matchBlockTypes(query).map((entry) => entry.type);
+  assert.deepEqual(
+    types(""),
+    BLOCK_TYPES.map((entry) => entry.type),
+  );
+  assert.deepEqual(types("quo"), ["quote"]);
+  assert.deepEqual(types("HEADING"), ["heading1", "heading2"]);
+  // Case, spaces and punctuation are ignored: "h1", "to-do", "todo".
+  assert.deepEqual(types("h1"), ["heading1"]);
+  assert.deepEqual(types("to-do"), ["todo"]);
+  assert.deepEqual(types("todo"), ["todo"]);
+  assert.deepEqual(types("bulleted LIST"), ["bulleted"]);
+  assert.deepEqual(types("zzz"), []);
+});
+
+test("the / menu finds the shortcuts it shows, exact matches first", () => {
+  const types = (query) => matchBlockTypes(query).map((entry) => entry.type);
+  assert.deepEqual(types(">"), ["quote"]);
+  assert.deepEqual(types("#"), ["heading1", "heading2"]);
+  assert.deepEqual(types("##"), ["heading2"]);
+  assert.deepEqual(types("-"), ["bulleted", "divider"]);
+  assert.deepEqual(types("---"), ["divider"]);
+  assert.deepEqual(types("[]"), ["todo"]);
+  assert.deepEqual(types("```"), ["code"]);
+  assert.deepEqual(types("!"), ["callout"]);
+  // "1." is the numbered list's shortcut, so Enter picks it over Heading 1.
+  assert.deepEqual(types("1."), ["numbered", "heading1"]);
+  // Punctuation that is no shortcut matches nothing (it used to match all).
+  assert.deepEqual(types("?"), []);
+  assert.deepEqual(types("."), []);
+});
+
+test("doc authors read you, their name, or Someone when hidden", () => {
+  const sam = { id: "2", name: "Sam Lee" };
+  assert.equal(personLabel(sam, 2), "you");
+  assert.equal(personLabel(sam, "1"), "Sam Lee");
+  // The API leaves out people a guest may not see: never fall back to
+  // another person (the creator) for the last editor.
+  assert.equal(personLabel(null, "1"), "Someone");
 });
 
 test("paste inserts plain text, one block per line outside code", () => {

@@ -1,7 +1,9 @@
 /**
  * The account directory: users and teams the signed-in user may see (the
- * server filters both lists). Loaded once and shared by people columns,
- * the people picker and the share dialog; `refreshShell()` invalidates it.
+ * server filters both lists). Loaded once and shared by the names and
+ * avatars of people columns and the team pickers; `refreshShell()`
+ * invalidates it. Who may be assigned or invited is not read from it: the
+ * server answers that (`Board.assignable_users`, `share_candidates`).
  * Switching the demo user reloads the page, so the cache never outlives
  * the session that filled it.
  */

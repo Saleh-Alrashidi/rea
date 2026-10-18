@@ -3,6 +3,7 @@ import test from "node:test";
 import { notificationVisible } from "../server/access.js";
 import { createStore } from "../server/store.js";
 import { MAX_ACTIVITY, MAX_NOTIFICATIONS } from "../server/store/activity.js";
+import { plainText } from "./helpers.js";
 
 // Notifications and activity (SPEC-2 §2): who is told what, never the
 // actor, never someone without access, one event per recipient, read
@@ -34,17 +35,30 @@ test("assignments notify newly added people who can see the board", async () => 
     .items[2];
   assert.equal(item.name, "API rate limits");
   const before = unreadOf(store, users);
-  const people = [users.sam.id, users.noa.id, users.chris.id, users.morgan.id];
+  // People who cannot open the board (a guest on a Main board, a
+  // deactivated user) cannot be assigned at all (SPEC-2 §6).
+  for (const outsider of [users.chris, users.morgan]) {
+    const refused = store.setColumnValue(
+      item.id,
+      "person",
+      [users.noa.id, outsider.id],
+      { actorId: users.sam.id },
+    );
+    assert.deepEqual(refused, {
+      ok: false,
+      reason: "invalid",
+      message: `${outsider.name} cannot access this board`,
+    });
+  }
+  assert.deepEqual(events, [], "a refused write changes nothing");
+  assert.equal(store.getItem(item.id).values.person, undefined);
+  const people = [users.sam.id, users.noa.id];
   store.setColumnValue(item.id, "person", people, { actorId: users.sam.id });
   const after = unreadOf(store, users);
-  assert.deepEqual(
-    diff(before, after),
-    ["noa"],
-    "not the actor, the guest or the deactivated user",
-  );
+  assert.deepEqual(diff(before, after), ["noa"], "not the actor");
   const [note] = store.listNotifications(users.noa.id);
   assert.deepEqual(
-    [note.kind, note.text, note.url, note.actor_id],
+    [note.kind, plainText(store, note.text), note.url, note.actor_id],
     [
       "assign",
       "Sam Lee assigned you to “API rate limits”",
@@ -83,7 +97,7 @@ test("assignments notify newly added people who can see the board", async () => 
     values: { person: [users.sam.id] },
   });
   assert.equal(
-    store.listNotifications(users.sam.id)[0].text,
+    plainText(store, store.listNotifications(users.sam.id)[0].text),
     "Someone assigned you to “Seeded”",
   );
   assert.equal(store.listNotifications(users.sam.id)[0].actor_id, null);
@@ -110,7 +124,7 @@ test("updates notify the item's assignees except the author", async () => {
   );
   const [note] = store.listNotifications(users.sam.id);
   assert.deepEqual(
-    [note.kind, note.text],
+    [note.kind, plainText(store, note.text)],
     ["update", "Noa Cohen posted an update on “Kanban drag and drop”"],
   );
   const mid = unreadOf(store, users);
@@ -120,11 +134,20 @@ test("updates notify the item's assignees except the author", async () => {
     creatorId: users.sam.id,
   });
   assert.deepEqual(diff(mid, unreadOf(store, users)), ["alex"]);
-  // Assignees who cannot see the board hear nothing about it.
+  // Assignees who lost access to the board stay assigned (values are
+  // never rewritten) but hear nothing about it.
   const role = store.listItems({ boardId: hiring.id }).items[0];
+  const grant = { resourceKind: "board", resourceId: hiring.id };
+  const subject = { ...grant, subjectKind: "user" };
+  store.share({ ...subject, subjectIds: [users.sam.id], role: "editor" });
   store.setColumnValue(role.id, "person", [users.noa.id, users.sam.id], {
     actorId: users.alex.id,
   });
+  store.unshare({ ...subject, subjectId: users.sam.id });
+  assert.deepEqual(store.getItem(role.id).values.person, [
+    users.noa.id,
+    users.sam.id,
+  ]);
   const late = unreadOf(store, users);
   store.createUpdate({
     itemId: role.id,

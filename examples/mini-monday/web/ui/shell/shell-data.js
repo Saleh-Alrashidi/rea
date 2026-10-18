@@ -8,7 +8,7 @@
 import { request } from "../../api.js";
 
 export const SHELL_QUERY = `query ShellData {
-  me { id name email initials is_admin role title color status }
+  me { id name email initials is_admin role title color status capabilities }
   account { id name user_count role_counts_json }
   workspaces {
     id name description kind color my_access can_manage

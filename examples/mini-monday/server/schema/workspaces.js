@@ -56,7 +56,7 @@ const Workspace = {
   members: (workspace, _a, ctx) =>
     accessOf(ctx, workspace) === null
       ? []
-      : memberRecords(ctx.store, "workspace", workspace),
+      : memberRecords(ctx, "workspace", workspace),
   my_access: (workspace, _a, ctx) => accessOf(ctx, workspace) ?? "viewer",
   can_manage: (workspace, _a, ctx) => accessOf(ctx, workspace) === "owner",
   can_open: (workspace, _a, ctx) => accessOf(ctx, workspace) !== null,

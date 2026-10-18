@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { boardAccess, can, isAdmin } from "../server/access.js";
 import { createStore } from "../server/store.js";
+import { plainText } from "./helpers.js";
 
 // Users and teams (SPEC-2 §2): invitations, unique emails, roles, titles,
 // deactivation with last-admin protection, role notifications, and team
@@ -90,7 +91,13 @@ test("updateUser changes profile fields and notifies role changes", async () => 
   assert.ok(isAdmin(promoted) && can(promoted, "manage_users"));
   const [note] = store.listNotifications(users.sam.id);
   assert.deepEqual(
-    [note.kind, note.text, note.actor_id, note.url, note.resource_kind],
+    [
+      note.kind,
+      plainText(store, note.text),
+      note.actor_id,
+      note.url,
+      note.resource_kind,
+    ],
     [
       "role",
       "Alex Rivera changed your account role to admin",

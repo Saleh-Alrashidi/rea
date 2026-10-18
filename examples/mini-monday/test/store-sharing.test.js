@@ -7,6 +7,7 @@ import {
   workspaceAccess,
 } from "../server/access.js";
 import { createStore } from "../server/store.js";
+import { plainEntry, plainText } from "./helpers.js";
 
 // Sharing through the store (SPEC-2 §1.2, §2): share/unshare with their
 // activity and notifications, team shares, workspace/doc/note shares,
@@ -36,7 +37,8 @@ async function seeded() {
 const latest = (store, userId) => store.listNotifications(userId)[0] ?? null;
 const lastActivity = (store, boardId) => {
   const [entry] = store.listActivity(boardId, { limit: 1 });
-  return [entry.kind, entry.actor_id, entry.from_text, entry.to_text];
+  const shown = plainEntry(store, entry);
+  return [entry.kind, entry.actor_id, shown.from_text, shown.to_text];
 };
 
 test("share grants access, logs it and notifies the people it reaches", async () => {
@@ -91,7 +93,7 @@ test("share grants access, logs it and notifies the people it reaches", async ()
     ],
   );
   assert.equal(
-    note.text,
+    plainText(store, note.text),
     "Alex Rivera shared the board “Hiring plan” with you (editor)",
   );
   assert.deepEqual(lastActivity(store, hiring.id), [
@@ -320,7 +322,7 @@ test("workspace, doc and note shares", async () => {
     "private boards do not",
   );
   assert.equal(
-    latest(store, users.sam.id).text,
+    plainText(store, latest(store, users.sam.id).text),
     "Alex Rivera shared the workspace “Leadership” with you (editor)",
   );
   assert.equal(

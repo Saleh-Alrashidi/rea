@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { capabilitiesOf } from "../server/access.js";
 import { parse } from "../server/graphql/parse.js";
 import {
   activityActor,
@@ -36,9 +37,15 @@ function jsonResponse(status, body) {
 
 // ------------------------------------------------------------ capabilities
 
-test("board capabilities follow my_access and the account role", () => {
-  const member = { id: "2", role: "member", status: "active" };
-  const guest = { id: "9", role: "guest", status: "active" };
+test("board capabilities follow my_access and me.capabilities", () => {
+  // `me` as the API returns it: the server's own capability list.
+  const meOf = (role) => ({
+    id: "2",
+    role,
+    capabilities: capabilitiesOf({ role, status: "active" }),
+  });
+  const member = meOf("member");
+  const guest = meOf("guest");
   const viewer = boardCapabilities({ myAccess: "viewer" }, member);
   assert.deepEqual(
     [viewer.viewOnly, viewer.edit, viewer.manage, viewer.createForms],
@@ -63,6 +70,10 @@ test("board capabilities follow my_access and the account role", () => {
   const guestEditor = boardCapabilities({ myAccess: "editor" }, guest);
   assert.deepEqual([guestEditor.edit, guestEditor.createForms], [true, false]);
   assert.equal(guestEditor.reasons.createForms, REASONS.noCreate);
+  // The account role alone grants nothing: only the server's list counts.
+  const roleOnly = { id: "2", role: "member", status: "active" };
+  const noList = boardCapabilities({ myAccess: "editor" }, roleOnly);
+  assert.equal(noList.createForms, false);
 
   // Unknown or missing access grants nothing.
   for (const board of [null, { myAccess: null }, { myAccess: "admin" }]) {
@@ -191,7 +202,7 @@ test("activity entries read as sentences with from → to chips", () => {
   assert.deepEqual(column.segments[1], { strong: "a column" });
 });
 
-test("activity actors: users or labelled form submissions", () => {
+test("activity actors: users, form submissions or hidden people", () => {
   const user = activityActor(entry({ kind: "item_created" }));
   assert.equal(user.kind, "user");
   assert.equal(user.user.color, "#d6409f");
@@ -202,7 +213,13 @@ test("activity actors: users or labelled form submissions", () => {
       actor_label: "Form: Feature request",
     }),
   );
-  assert.deepEqual(form, { kind: "label", name: "Form: Feature request" });
+  assert.deepEqual(form, { kind: "form", name: "Form: Feature request" });
+  // Someone outside a guest's directory: no actor record, the server's
+  // "Someone" label, and never the form icon.
+  const hidden = activityActor(
+    entry({ kind: "item_renamed", actor: null, actor_label: "Someone" }),
+  );
+  assert.deepEqual(hidden, { kind: "hidden", name: "Someone" });
   assert.equal(
     activityActor(entry({ actor: null, actor_label: null })).name,
     "Someone",

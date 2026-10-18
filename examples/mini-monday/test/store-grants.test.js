@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { boardAccess, canGrant, docAccess } from "../server/access.js";
 import { createStore } from "../server/store.js";
+import { plainEntry } from "./helpers.js";
 
 // Grant rules (SPEC-2 §1.2): canGrant (roles per kind, subjects, guests,
 // deactivated users, last owner), board kinds and admin takeovers.
@@ -30,7 +31,8 @@ const user = (record) => ({ kind: "user", id: record.id });
 const teamSubject = (record) => ({ kind: "team", id: record.id });
 const lastActivity = (store, boardId) => {
   const [entry] = store.listActivity(boardId, { limit: 1 });
-  return [entry.kind, entry.actor_id, entry.from_text, entry.to_text];
+  const shown = plainEntry(store, entry);
+  return [entry.kind, entry.actor_id, shown.from_text, shown.to_text];
 };
 
 test("canGrant: roles per resource kind, subjects and guests", async () => {
@@ -150,7 +152,10 @@ test("setBoardKind: leaving shareable removes guests and logs it", async () => {
     resource_kind: "board",
     resource_id: marketing.id,
   });
-  const log = store.listActivity(marketing.id, { limit: 2 }).reverse();
+  const log = store
+    .listActivity(marketing.id, { limit: 2 })
+    .reverse()
+    .map((entry) => plainEntry(store, entry));
   assert.deepEqual(
     log.map((a) => [a.kind, a.from_text, a.to_text]),
     [

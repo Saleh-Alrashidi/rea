@@ -7,15 +7,14 @@
  * Blocks are validated here (types, ≤ 2,000 blocks, text ≤ 10,000) and get
  * IDs (`b<n>`, unique per doc) when they arrive without one.
  */
+import { LIMITS, isPlainObject } from "../input.js";
 import {
   BLOCK_TYPES,
   DOC_VISIBILITIES,
-  LIMITS,
   byId,
   commit,
   failure,
   invalid,
-  isObject,
   nextId,
   optional,
   push,
@@ -33,7 +32,10 @@ const BLOCK_KEYS = new Set(["id", "type", "text", "checked"]);
 
 function readBlock(raw, index) {
   const where = `Block ${index + 1}`;
-  if (!isObject(raw) || !Object.keys(raw).every((key) => BLOCK_KEYS.has(key))) {
+  if (
+    !isPlainObject(raw) ||
+    !Object.keys(raw).every((key) => BLOCK_KEYS.has(key))
+  ) {
     invalid(`${where} must be { id?, type, text, checked? }`);
   }
   const type = readChoice(raw.type, BLOCK_TYPES, `${where} type`);

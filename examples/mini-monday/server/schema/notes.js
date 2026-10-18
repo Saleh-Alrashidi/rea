@@ -74,7 +74,7 @@ const Mutation = wrapAll(write, {
 
 const Note = {
   owner: (note, _a, ctx) => lookupUser(ctx, note.owner_id),
-  shares: (note, _a, { store }) => memberRecords(store, "note", note),
+  shares: (note, _a, ctx) => memberRecords(ctx, "note", note),
   my_access: (note, _a, ctx) => noteAccess(ctx.store, viewerOf(ctx), note),
 };
 

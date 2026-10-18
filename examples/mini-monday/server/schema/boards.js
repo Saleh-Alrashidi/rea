@@ -5,11 +5,17 @@
  * (groups → editor; name, description, kind, columns, delete → owner)
  * through `server/access.js`.
  */
-import { boardAccess, requireBoard, requireCapability } from "../access.js";
+import {
+  boardAccess,
+  canBeAssigned,
+  requireBoard,
+  requireCapability,
+} from "../access.js";
+import { isColor, isPlainObject } from "../input.js";
+import { GROUP_COLOR } from "../store-state.js";
 import {
   accessibleBoards,
   badInput,
-  isPlainObject,
   lookupUser,
   memberRecords,
   notFound,
@@ -20,18 +26,18 @@ import {
   readName,
   storeResult,
   viewerOf,
+  visibleUsers,
   wrapAll,
   write,
 } from "./common.js";
 import { requireTargetWorkspace } from "./workspaces.js";
 
-const DEFAULT_GROUP_COLOR = "#579bfc";
-const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CURSOR_PATTERN = /^[\w-]{1,512}$/;
 
+/** A group color as given (part 1 keeps its case), or the default. */
 function readColor(value) {
-  if (value === undefined || value === null) return DEFAULT_GROUP_COLOR;
-  return COLOR_PATTERN.test(value)
+  if (value === undefined || value === null) return GROUP_COLOR;
+  return isColor(value)
     ? value
     : badInput("Group colors must look like #RRGGBB");
 }
@@ -175,8 +181,10 @@ const Board = {
   items_count: (board, _a, { store }) => store.countItems(board.id),
   views: (board, _a, { store }) => store.listViews(board.id),
   workspace: (board, _a, { store }) => store.getWorkspace(board.workspace_id),
-  members: (board, _a, { store }) => memberRecords(store, "board", board),
+  members: (board, _a, ctx) => memberRecords(ctx, "board", board),
   my_access: (board, _a, ctx) => boardAccess(ctx.store, viewerOf(ctx), board),
+  assignable_users: (board, _a, ctx) =>
+    visibleUsers(ctx).filter((user) => canBeAssigned(ctx.store, user, board)),
 };
 
 const Group = {
@@ -193,7 +201,7 @@ export const definition = {
       items_page(limit:Int=25,cursor:String):ItemsPage!
       items(limit:Int=25):[Item!]! items_count:Int! views:[BoardView!]!
       workspace:Workspace! board_kind:BoardKind! members:[Member!]!
-      my_access:AccessRole!`,
+      my_access:AccessRole! assignable_users:[User!]!`,
     Group: `id:String! title:String! color:String! position:Int!
       items_page(limit:Int=25,cursor:String):ItemsPage!`,
     ItemsPage: "cursor:String items:[Item!]!",
@@ -216,6 +224,10 @@ export const definition = {
       deprecationReason: "Use items_page.",
     },
     "Board.items_page": { description: "Items in board order, by cursor." },
+    "Board.assignable_users": {
+      description:
+        "Active users who can open the board and whom the caller may see: the people a people column accepts.",
+    },
     "Query.boards": { description: "Boards the caller can access." },
   },
 };

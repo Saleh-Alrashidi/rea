@@ -9,11 +9,11 @@
  * `hostOrigin`, `appsOrigin`, `log`, `demoLogin`, …) and `target` is
  * `{ pathname, search, params? }`.
  */
+import { ID_PATTERN, isPlainObject } from "../input.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const SESSION_COOKIE = "mm_session";
 const SESSION_PATTERN = /(?:^|;)\s*mm_session=([^;]*)/;
-export const ID_PATTERN = /^[1-9]\d{0,15}$/;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 export const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -35,9 +35,6 @@ const ERROR_CODES = Object.freeze({
   500: "INTERNAL_SERVER_ERROR",
   503: "SERVICE_UNAVAILABLE",
 });
-
-export const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * A failure answered with `{ errors: [{ message, extensions }] }`;
