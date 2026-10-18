@@ -11,6 +11,7 @@ import test from "node:test";
 import {
   FAILURE_LIMIT,
   FAILURE_WINDOW_MS,
+  SITE_FAILURE_LIMIT,
   createGate,
   sanitizeNext,
 } from "../server/routes/gate.js";
@@ -180,6 +181,45 @@ test("MM_TRUST_PROXY: the last X-Forwarded-For hop is the client of every limite
   }
   assert.equal((await submit("198.51.100.20")).status, 429);
   assert.equal((await submit("198.51.100.21")).status, 201);
+});
+
+test("a new X-Forwarded-For per guess still meets the site-wide failure limit", async (t) => {
+  // MM_TRUST_PROXY=1 with nothing in front that sets the header: every
+  // client names its own IP, so only the site-wide limit holds.
+  const clock = manualClock();
+  const { signIn } = await startHosted(t, { trustProxy: true, now: clock.now });
+  const from = (index, password = "a guess") =>
+    signIn(password, { headers: { "X-Forwarded-For": `203.0.113.${index}` } });
+  const guesses = Array.from({ length: SITE_FAILURE_LIMIT }, (_, i) => from(i));
+  for (const response of await Promise.all(guesses)) {
+    assert.equal(response.status, 401);
+  }
+  const refused = await from(SITE_FAILURE_LIMIT);
+  assert.equal(refused.status, 429);
+  assert.equal(codeOf(refused), "RATE_LIMITED");
+  assert.equal(
+    refused.headers["retry-after"],
+    String(FAILURE_WINDOW_MS / 1000),
+  );
+  const right = await from(SITE_FAILURE_LIMIT + 1, PASSWORD);
+  assert.equal(right.status, 429, "no answer reveals the password meanwhile");
+  clock.advance(FAILURE_WINDOW_MS);
+  assert.equal((await from(SITE_FAILURE_LIMIT + 2, PASSWORD)).status, 200);
+});
+
+test("site-wide refusals count against no client; successes are refunded", () => {
+  const clock = manualClock();
+  const { failures } = createGate({ password: PASSWORD, now: clock.now });
+  for (let index = 0; index < SITE_FAILURE_LIMIT; index += 1) {
+    assert.equal(failures.take(`198.51.100.${index % 40}`).ok, true);
+  }
+  for (let index = 0; index < FAILURE_LIMIT + 1; index += 1) {
+    const refused = failures.take("192.0.2.1");
+    assert.deepEqual(refused, { ok: false, retryAfter: 900 });
+  }
+  failures.refund("198.51.100.0"); // a sign-in that succeeded
+  assert.equal(failures.take("192.0.2.1").ok, true, "192.0.2.1 has no count");
+  assert.equal(failures.take("192.0.2.2").ok, false);
 });
 
 test("without MM_TRUST_PROXY, X-Forwarded-For is ignored", async (t) => {

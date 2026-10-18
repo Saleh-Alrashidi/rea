@@ -4,7 +4,8 @@
  * `server/main.js`'s `main()` in hosted mode (`PORT`, an
  * `MM_HOST_ORIGIN`, a site password, no apps origin, an in-memory store)
  * and drives Chromium through the site gate: a deep link redirects to
- * `/signin`, a wrong password shows the error, the right one lands on the
+ * `/signin`, the form cannot send the password before its script runs,
+ * a wrong password shows the error, the right one lands on the
  * requested page, a board works (without app tabs), demo user switching
  * stays signed in, a public form works signed out, and signing out
  * returns to `/signin` for good. Changes are confirmed through the API
@@ -117,6 +118,43 @@ async function redirectToSignin(run) {
   check(csp.includes("script-src 'self'"), `CSP ${csp}`);
   check(!csp.includes("frame-src"), "no frame-src without an apps origin");
   await screenshot(run, page, "hosted-signin.png");
+}
+
+/** Whether a query value of `url` holds the site password. */
+const carriesPassword = (url) =>
+  [...new URL(url).searchParams.values()].some((value) =>
+    value.includes(PASSWORD),
+  );
+
+async function noSubmitBeforeScript(run) {
+  const context = await run.newContext({ label: "slow script" });
+  const page = await context.newPage();
+  const mainPage = run.page;
+  run.page = page;
+  const urls = [];
+  page.on("request", (request) => urls.push(request.url()));
+  let release = () => {};
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route("**/signin.js", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto(`${run.hostOrigin}/signin?next=%2F`, { waitUntil: "commit" });
+  // A quick Enter (or a password manager) before signin.js has arrived.
+  await submitPassword(page, PASSWORD);
+  await page.waitForTimeout(500);
+  const leaked = urls.filter(carriesPassword);
+  check(leaked.length === 0, `the password went into a URL: ${leaked}`);
+  check(at(page).search === "?next=%2F", `the page stayed: ${page.url()}`);
+  const button = page.locator("#signin-submit");
+  check(await button.isDisabled(), "the button waits for signin.js");
+  release();
+  await waitUntil(
+    async () => !(await button.isDisabled()),
+    "signin.js enables the button",
+  );
+  await context.close();
+  run.page = mainPage;
 }
 
 async function wrongPassword(run) {
@@ -249,6 +287,10 @@ runE2E({
   serve: serveHosted,
   steps: [
     ["a deep link redirects to /signin", redirectToSignin],
+    [
+      "the form cannot send the password before its script",
+      noSubmitBeforeScript,
+    ],
     ["a wrong password shows the error", wrongPassword],
     ["signing in lands on the requested page", signInLands],
     ["a board works, without app tabs", useBoard],

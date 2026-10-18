@@ -87,7 +87,9 @@ async function postPassword(fetchImpl, body) {
 /**
  * Wires the sign-in form. `elements` holds the form, the password input,
  * the error line and the submit button; `env` the `fetch` and `location`
- * to use. Returns the submit handler (for tests).
+ * to use. The page ships the button disabled, so the browser cannot
+ * submit the form itself before this runs; wiring enables it. Returns the
+ * submit handler (for tests).
  */
 export function wireSignin(elements, { fetch: fetchImpl, location }) {
   const { form, input, error, button } = elements;
@@ -127,6 +129,7 @@ export function wireSignin(elements, { fetch: fetchImpl, location }) {
     error.hidden = true;
     input.removeAttribute("aria-invalid");
   });
+  button.disabled = false;
   return submit;
 }
 

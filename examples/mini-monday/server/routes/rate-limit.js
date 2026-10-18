@@ -6,7 +6,10 @@
  * Client IP (SPEC-3 §1 `MM_TRUST_PROXY`): with `cfg.trustProxy` the client
  * is the last `X-Forwarded-For` entry, the hop the platform proxy appended
  * (entries before it are whatever the client sent); otherwise, or when
- * that entry is not an IP address, it is the socket's peer address.
+ * that entry is not an IP address, it is the socket's peer address. The
+ * last entry names the client only when every request passes that proxy:
+ * a client that reaches the port directly picks its own (the sign-in gate
+ * adds a site-wide limit for that case).
  */
 import { isIP } from "node:net";
 
