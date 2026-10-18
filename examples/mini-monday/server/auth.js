@@ -2,10 +2,17 @@
  * Authentication: API tokens, browser sessions, app principals and the HS256
  * session tokens (JWT) that iframe apps hand to their own backends.
  *
- * Principal = { kind: "token" | "session" | "app", userId, scopes: Set,
+ * Principal = { kind: "token" | "session" | "app", userId, role, scopes: Set,
  *               installId?, appId? }
+ *
+ * Principals are built per request from the current user record, so role
+ * changes apply at once, and a deactivated user's tokens and sessions stop
+ * working immediately (their sessions are also dropped, so reactivation
+ * does not revive them). Apps installed on boards the user cannot access
+ * are treated as unknown installs (`server/access.js` decides access).
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { boardAccess, isActive, isAdmin } from "./access.js";
 
 /** Every scope a principal can hold. */
 export const ALL_SCOPES = Object.freeze([
@@ -119,19 +126,30 @@ function knownScopes(scopes) {
   return new Set(ALL_SCOPES.filter((scope) => scopes.includes(scope)));
 }
 
+/** The current user record when it exists and is active, else null. */
+function activeUser(store, userId) {
+  const user = store.getUser(userId);
+  return isActive(user) ? user : null;
+}
+
 function tokenPrincipal(store, authorizationHeader) {
   if (typeof authorizationHeader !== "string") return null;
   const raw = authorizationHeader.trim();
   const token = BEARER_PATTERN.exec(raw)?.[1] ?? raw;
   if (!API_TOKEN_PATTERN.test(token)) return null;
   const record = store.findApiToken(token);
-  if (!record || !store.getUser(record.user_id)) return null;
+  const user = record ? activeUser(store, record.user_id) : null;
+  if (!user) return null;
   return {
     kind: "token",
-    userId: record.user_id,
+    userId: user.id,
+    role: user.role,
     scopes: knownScopes(record.scopes),
   };
 }
+
+const validSessionId = (sessionId) =>
+  typeof sessionId === "string" && SESSION_ID_PATTERN.test(sessionId);
 
 function createSessionTable(store, now) {
   // Map order is least recently used first; every use moves an entry to the
@@ -143,30 +161,61 @@ function createSessionTable(store, now) {
       sessions.delete(id);
     }
   };
+  const create = (userId) => {
+    if (!activeUser(store, userId)) {
+      throw new TypeError("Unknown or deactivated user");
+    }
+    prune();
+    const id = randomBytes(32).toString("base64url");
+    sessions.set(id, { userId, expiresAt: now() + SESSION_IDLE_MS });
+    return id;
+  };
   return {
-    create(userId) {
-      if (!store.getUser(userId)) throw new TypeError("Unknown user");
-      prune();
-      const id = randomBytes(32).toString("base64url");
-      sessions.set(id, { userId, expiresAt: now() + SESSION_IDLE_MS });
-      return id;
-    },
+    create,
     get(sessionId) {
-      const valid =
-        typeof sessionId === "string" && SESSION_ID_PATTERN.test(sessionId);
-      if (!valid) return null;
+      if (!validSessionId(sessionId)) return null;
       const entry = sessions.get(sessionId);
       if (!entry) return null;
       sessions.delete(sessionId);
-      if (entry.expiresAt <= now() || !store.getUser(entry.userId)) return null;
+      const user = activeUser(store, entry.userId);
+      if (entry.expiresAt <= now() || !user) return null;
       sessions.set(sessionId, { ...entry, expiresAt: now() + SESSION_IDLE_MS });
       return {
         kind: "session",
-        userId: entry.userId,
+        userId: user.id,
+        role: user.role,
         scopes: new Set(ALL_SCOPES),
       };
     },
+    /**
+     * Ends `sessionId` and starts a session for `userId` (demo user
+     * switching). An unknown or deactivated target → null, and the current
+     * session stays as it was.
+     */
+    rotate(sessionId, userId) {
+      if (!activeUser(store, userId)) return null;
+      if (validSessionId(sessionId)) sessions.delete(sessionId);
+      return create(userId);
+    },
+    end(sessionId) {
+      return validSessionId(sessionId) && sessions.delete(sessionId);
+    },
+    /** Drops every session of `userId` (deactivation). */
+    revokeUser(userId) {
+      for (const [id, entry] of sessions) {
+        if (entry.userId === userId) sessions.delete(id);
+      }
+    },
   };
+}
+
+/** The install and app when both exist and the user can see the board. */
+function reachableInstall(store, user, installId) {
+  const install = store.getInstall(installId);
+  const app = install ? store.getApp(install.app_id) : null;
+  if (!app || !user) return null;
+  const board = store.getBoard(install.board_id);
+  return boardAccess(store, user, board) === null ? null : { install, app };
 }
 
 function appPrincipal(store, userPrincipal, installId) {
@@ -176,12 +225,14 @@ function appPrincipal(store, userPrincipal, installId) {
   if (!isUser) {
     throw new TypeError("appPrincipal needs a token or session principal");
   }
-  const install = store.getInstall(installId);
-  const app = install ? store.getApp(install.app_id) : null;
-  if (!app) return null;
+  const user = activeUser(store, userPrincipal.userId);
+  const found = reachableInstall(store, user, installId);
+  if (!found) return null;
+  const { install, app } = found;
   return {
     kind: "app",
-    userId: userPrincipal.userId,
+    userId: user.id,
+    role: user.role,
     scopes: new Set(app.scopes.filter((s) => userPrincipal.scopes.has(s))),
     installId: install.id,
     appId: app.id,
@@ -199,10 +250,10 @@ function issueSessionToken(store, now, options = {}) {
       `ttlSeconds must be an integer from 1 to ${MAX_SESSION_TOKEN_TTL_SECONDS}`,
     );
   }
-  const user = store.getUser(userId);
-  const install = store.getInstall(installId);
-  const app = install ? store.getApp(install.app_id) : null;
-  if (!user || !app) return null;
+  const user = activeUser(store, userId);
+  const found = reachableInstall(store, user, installId);
+  if (!found) return null;
+  const { install, app } = found;
   const iat = Math.floor(now() / 1000);
   const exp = iat + ttlSeconds;
   const payload = {
@@ -218,7 +269,7 @@ function issueSessionToken(store, now, options = {}) {
       app_id: app.id,
       install_id: install.id,
       board_id: install.board_id,
-      is_admin: user.is_admin,
+      is_admin: isAdmin(user),
     },
   };
   return {
@@ -232,21 +283,37 @@ function issueSessionToken(store, now, options = {}) {
  * milliseconds.
  *
  * - `authenticateApiToken(header)` accepts a raw token or `Bearer <token>`.
- * - `createBrowserSession(userId)` returns a random 32-byte base64url ID.
+ * - `createBrowserSession(userId)` returns a random 32-byte base64url ID
+ *   (TypeError for unknown or deactivated users).
+ * - `getBrowserSession(id)` resolves the session's user on every call.
+ * - `rotateBrowserSession(id, userId)` replaces a session with a new one
+ *   for an active `userId` (null otherwise, keeping the old session).
+ * - `endBrowserSession(id)` signs out; true when a session ended.
  * - `appPrincipal(principal, installId)` intersects the user's scopes with
- *   the app's scopes; null when the install is unknown.
+ *   the app's scopes; null when the install is unknown or on a board the
+ *   user cannot access.
  * - `issueSessionToken({ userId, installId, ttlSeconds = 300 })` returns
- *   `{ token, expires_at }`, or null when the user or install is unknown.
+ *   `{ token, expires_at }`, or null when the user or install is unknown
+ *   (or unreachable, as above).
  */
 export function createAuth({ store, now = () => Date.now() } = {}) {
   if (typeof store?.getUser !== "function") {
     throw new TypeError("createAuth requires a store");
   }
   const sessions = createSessionTable(store, now);
+  store.on?.((event) => {
+    if (event.type !== "user_updated") return;
+    for (const id of event.user_ids ?? []) {
+      if (!activeUser(store, id)) sessions.revokeUser(id);
+    }
+  });
   return Object.freeze({
     authenticateApiToken: (header) => tokenPrincipal(store, header),
     createBrowserSession: (userId) => sessions.create(userId),
     getBrowserSession: (sessionId) => sessions.get(sessionId),
+    rotateBrowserSession: (sessionId, userId) =>
+      sessions.rotate(sessionId, userId),
+    endBrowserSession: (sessionId) => sessions.end(sessionId),
     appPrincipal: (principal, installId) =>
       appPrincipal(store, principal, installId),
     issueSessionToken: (options) => issueSessionToken(store, now, options),

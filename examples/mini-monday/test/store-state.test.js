@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ALL_SCOPES } from "../server/auth.js";
 import { createStore } from "../server/store.js";
 
-// Seed content, ID generation, data-file loading and persistence (the parts
-// implemented by server/store-state.js), exercised through createStore.
+// ID generation (store-state.js), data-file loading and persistence
+// (server/store/persistence.js), exercised through createStore. The seed
+// is covered by store-seed.test.js.
 
 const START = Date.UTC(2026, 9, 18, 9, 0, 0);
 const clock = () => {
@@ -35,124 +35,24 @@ async function tempFile(t, ...parts) {
   return { dir, file: path.join(dir, ...parts) };
 }
 
-test("seed data matches the spec", async () => {
-  const store = await memoryStore();
-  const users = store.listUsers();
-  assert.deepEqual(
-    users.map((u) => [u.id, u.name, u.email, u.is_admin]),
-    [
-      ["1", "Alex Rivera", "alex@example.test", true],
-      ["2", "Sam Lee", "sam@example.test", false],
-      ["3", "Noa Cohen", "noa@example.test", false],
-    ],
-  );
-  const [roadmap, marketing] = store.listBoards();
-  assert.equal(roadmap.name, "Product roadmap");
-  assert.equal(marketing.name, "Marketing launch");
-  assert.deepEqual(
-    store
-      .listGroups(roadmap.id)
-      .map((g) => [g.id, g.title, g.color, g.position]),
-    [
-      ["this_sprint", "This sprint", "#579bfc", 0],
-      ["next_up", "Next up", "#a25ddc", 1],
-      ["done", "Done", "#00c875", 2],
-    ],
-  );
-  assert.deepEqual(
-    store.listColumns(roadmap.id).map((c) => [c.id, c.title, c.type]),
-    [
-      ["name", "Name", "name"],
-      ["status", "Status", "status"],
-      ["person", "Owner", "people"],
-      ["date", "Due date", "date"],
-      ["estimate", "Estimate", "numbers"],
-      ["notes", "Notes", "text"],
-    ],
-  );
-  const status = store.getColumn(roadmap.id, "status");
-  assert.equal(status.settings.labels[1], "Done");
-  assert.equal(status.settings_str, JSON.stringify(status.settings));
-  assert.equal(store.getColumn(roadmap.id, "notes").settings_str, "{}");
-  assert.equal(store.countItems(roadmap.id), 8);
-  assert.equal(store.countItems(marketing.id), 3);
-  assert.deepEqual(
-    store.listGroups(marketing.id).map((g) => g.id),
-    ["topics"],
-  );
-  const values = store
-    .listItems({ boardId: roadmap.id, limit: 8 })
-    .items.map((i) => i.values);
-  for (const column of ["status", "person", "date", "estimate", "notes"]) {
-    assert.ok(
-      values.some((v) => column in v),
-      `some item has ${column}`,
-    );
-    assert.ok(
-      values.some((v) => !(column in v)),
-      `some item lacks ${column}`,
-    );
-  }
-  assert.ok(values.some((v) => v.person?.length === 2));
-  assert.ok(new Set(values.map((v) => v.status?.index)).size >= 3);
-});
-
-test("seed includes the Status summary app, its install, view and tokens", async () => {
-  const store = await memoryStore();
-  const roadmap = roadmapOf(store);
-  const [app] = store.listApps();
-  assert.equal(app.name, "Status summary");
-  assert.equal(app.path, "/apps/status-summary/index.html");
-  assert.deepEqual(app.scopes, [
-    "boards:read",
-    "storage:read",
-    "storage:write",
-  ]);
-  assert.match(app.client_id, /^[0-9a-f]{32}$/);
-  assert.match(app.client_secret, /^[\w-]{43}$/);
-  const [install] = store.listInstalls({ boardId: roadmap.id });
-  assert.deepEqual(store.getInstall(install.id), install);
-  assert.equal(install.app_id, app.id);
-  const views = store.listViews(roadmap.id);
-  assert.deepEqual(
-    views.map((v) => [v.name, v.type, v.app_install_id]),
-    [
-      ["Main table", "table", null],
-      ["Kanban", "kanban", null],
-      ["Status summary", "app", install.id],
-    ],
-  );
-  const tokens = store.listApiTokens();
-  assert.deepEqual(
-    tokens.map((t) => [t.label, t.user_id, t.scopes]),
-    [
-      ["read-write", "1", [...ALL_SCOPES]],
-      ["read-only", "1", ["boards:read", "storage:read"]],
-    ],
-  );
-  for (const { token } of tokens) assert.match(token, /^[\w-]{43}$/);
-  const other = await memoryStore();
-  assert.notEqual(other.listApiTokens()[0].token, tokens[0].token);
-  assert.notEqual(other.listApps()[0].client_secret, app.client_secret);
-  assert.deepEqual(
-    other.listBoards(),
-    store.listBoards(),
-    "content is deterministic",
-  );
-});
-
 test("numeric IDs come from one counter and records are frozen", async () => {
   const store = await memoryStore();
+  const boards = store.listBoards();
   const all = [
     ...store.listUsers(),
-    ...store.listBoards(),
+    ...store.listTeams(),
+    ...store.listWorkspaces(),
+    ...boards,
     ...store.listApps(),
     ...store.listInstalls(),
-    ...store.listBoards().flatMap((b) => store.listViews(b.id)),
-    ...store
-      .listBoards()
-      .flatMap((b) => store.listItems({ boardId: b.id }).items),
+    ...boards.flatMap((b) => store.listViews(b.id)),
+    ...boards.flatMap((b) => store.listItems({ boardId: b.id }).items),
     ...store.listUpdates("7"),
+    ...store.listDocs(),
+    ...store.listNotes(),
+    ...store.listForms(),
+    ...boards.flatMap((b) => store.listActivity(b.id)),
+    ...store.listUsers().flatMap((u) => store.listNotifications(u.id)),
   ];
   const ids = all.map((r) => r.id);
   assert.ok(ids.every((id) => /^[1-9]\d*$/.test(id)));
@@ -166,6 +66,9 @@ test("numeric IDs come from one counter and records are frozen", async () => {
   }, TypeError);
   assert.throws(() => item.values.person.push("2"), TypeError);
   assert.equal(store.getItem(7), null, "IDs are strings");
+  const doc = store.listDocs()[0];
+  assert.ok(Object.isFrozen(doc.blocks[0]) && Object.isFrozen(doc.members));
+  assert.throws(() => doc.members.push({}), TypeError);
 });
 
 test("groups get unique slug IDs and positions", async () => {
@@ -247,6 +150,64 @@ test("createColumn makes <type> and <type>_<n> IDs", async () => {
   assert.equal(events.length, 5);
 });
 
+/** Changes every SPEC-2 collection through the store API. */
+function touchEverything(store) {
+  const roadmap = roadmapOf(store);
+  const user = store.createUser({
+    name: "Robin Park",
+    email: "robin@example.test",
+    role: "member",
+    title: "Support Lead",
+  });
+  store.updateUser("3", { title: "Staff Engineer" }, { actorId: "1" });
+  const team = store.createTeam({
+    name: "Support",
+    creatorId: user.id,
+    memberIds: ["2"],
+  });
+  const workspace = store.createWorkspace({
+    name: "Support desk",
+    kind: "closed",
+    color: "#0B8A5F",
+    creatorId: user.id,
+  });
+  const board = store.createBoard({
+    name: "Tickets",
+    creatorId: user.id,
+    workspaceId: workspace.id,
+    boardKind: "share",
+  });
+  store.share({
+    resourceKind: "board",
+    resourceId: board.id,
+    subjectKind: "team",
+    subjectIds: [team.id],
+    role: "editor",
+    actorId: user.id,
+  });
+  const doc = store.createDoc({
+    title: "Runbook",
+    workspaceId: workspace.id,
+    creatorId: user.id,
+    blocks: [{ type: "todo", text: "Triage" }],
+  });
+  store.updateDoc(
+    doc.id,
+    { expectedVersion: 1, blocks: [...doc.blocks, { type: "divider" }] },
+    { actorId: user.id },
+  );
+  const note = store.createNote({ ownerId: user.id, title: "Shift notes" });
+  store.updateNote(note.id, { expectedVersion: 1, pinned: true });
+  const form = store.createForm({
+    boardId: roadmap.id,
+    title: "Bug report",
+    creatorId: "1",
+  });
+  store.submitForm(form.id, { name: "Crash on save" });
+  store.markNotificationsRead("1", { all: true });
+  return { user, team, workspace, board, doc, note, form };
+}
+
 test("a file store seeds, persists atomically and reloads", async (t) => {
   const { dir, file } = await tempFile(t, "nested", "deeper", "data.json");
   const first = await createStore({ file, now: clock() });
@@ -263,9 +224,10 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
   first.setAppStorage("install:24", "note", "saved");
   first.deleteAppStorage("install:24", "note");
   first.setAppStorage("install:24", "note", "again");
+  const made = touchEverything(first);
   await first.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(saved.format, "mini-monday-store/1");
+  assert.equal(saved.format, "mini-monday-store/2", "SPEC-2 data format");
   assert.equal(
     "settings_str" in saved.columns[0],
     false,
@@ -274,10 +236,15 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
   const second = await createStore({ file, now: clock() });
   for (const method of [
     "listUsers",
+    "listTeams",
+    "listWorkspaces",
     "listBoards",
     "listApps",
     "listInstalls",
     "listApiTokens",
+    "listDocs",
+    "listNotes",
+    "listForms",
   ]) {
     assert.deepEqual(second[method](), first[method](), method);
   }
@@ -286,6 +253,18 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
       second[method](roadmap.id),
       first[method](roadmap.id),
       method,
+    );
+  }
+  for (const board of first.listBoards()) {
+    assert.deepEqual(
+      second.listActivity(board.id, { limit: 1000 }),
+      first.listActivity(board.id, { limit: 1000 }),
+    );
+  }
+  for (const user of first.listUsers()) {
+    assert.deepEqual(
+      second.listNotifications(user.id, { limit: 200 }),
+      first.listNotifications(user.id, { limit: 200 }),
     );
   }
   assert.deepEqual(
@@ -298,8 +277,16 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
     value: "again",
     version: 2,
   });
+  assert.equal(second.getDoc(made.doc.id).version, 2);
+  assert.equal(second.getNote(made.note.id).pinned, true);
+  assert.equal(second.getForm(made.form.id).response_count, 1);
+  assert.equal(second.getWorkspace(made.workspace.id).color, "#0b8a5f");
+  assert.deepEqual(
+    second.findFormByToken(made.form.token),
+    first.getForm(made.form.id),
+  );
   const next = second.createBoard({ name: "After reload" });
-  assert.equal(Number(next.id), Number(item.id) + 1, "the counter continues");
+  assert.equal(Number(next.id), saved.next_id, "the counter continues");
   await second.flush();
   const entries = await readdir(path.join(dir, "nested", "deeper"));
   assert.deepEqual(entries, ["data.json"], "no temp files remain");
@@ -355,8 +342,30 @@ test("an invalid data file is rejected and left untouched", async (t) => {
     broken((doc) => (doc.items[0].group_id = "missing")),
     broken((doc) => (doc.items[1].id = doc.items[0].id)),
     broken((doc) => (doc.next_id = 2)),
-    broken((doc) => (doc.users[0].is_admin = "yes")),
+    broken((doc) => (doc.users[0].role = "owner")),
     broken((doc) => doc.columns.push({ ...doc.columns[1] })),
+    // SPEC-2 records: shapes, nested records, uniqueness and references.
+    broken((doc) => (doc.format = "mini-monday-store/1")),
+    broken((doc) => (doc.users[1].email = "ALEX@example.test")),
+    broken((doc) => (doc.users[0].status = "suspended")),
+    broken((doc) => (doc.boards[0].board_kind = "secret")),
+    broken((doc) => (doc.boards[0].workspace_id = "999")),
+    broken((doc) => (doc.boards[0].members[0].role = "admin")),
+    broken((doc) =>
+      doc.boards[0].members.push({ kind: "group", id: "1", role: "owner" }),
+    ),
+    broken((doc) => (doc.teams[0].members[0].role = "lead")),
+    broken((doc) => (doc.docs[0].blocks[0].type = "table")),
+    broken((doc) => (doc.docs[0].blocks[1].id = doc.docs[0].blocks[0].id)),
+    broken((doc) => (doc.docs[0].blocks[0].checked = true)),
+    broken((doc) => (doc.notes[1].shares[0].role = "owner")),
+    broken((doc) => (doc.notes[0].owner_id = "999")),
+    broken((doc) => (doc.forms[0].questions[0].column_id = "person")),
+    broken((doc) => doc.forms[0].questions.reverse()),
+    broken((doc) => (doc.forms[1].token = doc.forms[0].token)),
+    broken((doc) => (doc.notifications[0].kind = "mention")),
+    broken((doc) => (doc.activity[0].board_id = "999")),
+    broken((doc) => (doc.workspaces[0].color = "indigo")),
   );
   for (const text of cases) {
     await writeFile(file, text);
@@ -402,4 +411,9 @@ test("memory stores never touch the disk", async (t) => {
   assert.deepEqual(await readdir(dir), []);
   const empty = await createStore({ seed: false });
   assert.deepEqual([empty.listUsers(), empty.listBoards()], [[], []]);
+  assert.equal(
+    empty.createBoard({ name: "Nowhere" }),
+    null,
+    "boards need a workspace",
+  );
 });

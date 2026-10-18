@@ -103,6 +103,10 @@ function applyAttribute(element, name, value) {
 function applyProps(element, props) {
   const later = [];
   for (const [name, value] of Object.entries(props)) {
+    // An absent prop (for example an optional `dataset`) sets nothing.
+    if ((value === null || value === undefined) && !PROPERTIES.has(name)) {
+      continue;
+    }
     if (name === "class") {
       if (value) element.setAttribute("class", classValue(value));
     } else if (name === "style") {

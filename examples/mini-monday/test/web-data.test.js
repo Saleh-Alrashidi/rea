@@ -4,14 +4,10 @@ import test from "node:test";
 import { DEFAULT_STATUS_SETTINGS } from "../server/column-values.js";
 import { parse } from "../server/graphql/parse.js";
 import { graphql, requestSessionToken } from "../web/api.js";
-import {
-  loadBoard,
-  loadBoards,
-  loadItem,
-  loadSession,
-  mutate,
-} from "../web/ui/board-data.js";
-import { CLEAR_VALUE, encodeValue } from "../web/ui/values.js";
+import { loadBoard, loadItem, mutate } from "../web/ui/board/board-data.js";
+import { CLEAR_VALUE, encodeValue } from "../web/ui/board/values.js";
+import { loadDirectory } from "../web/ui/components/directory.js";
+import { loadShellData } from "../web/ui/shell/shell-data.js";
 
 const SCHEMA_URL = new URL("../server/schema.js", import.meta.url);
 const STATUS_SETTINGS = JSON.stringify(DEFAULT_STATUS_SETTINGS);
@@ -52,11 +48,6 @@ const RAW_ITEM = (id, groupId, status) => ({
 
 /** Canned responses keyed by the UI's operation names. */
 const CANNED = {
-  HostSession: {
-    me: { id: "1", name: "Alex", email: "a@x", is_admin: true, initials: "A" },
-    users: [{ id: "1", name: "Alex", email: "a@x", initials: "A" }],
-  },
-  HostBoards: { boards: [{ id: "1", name: "Roadmap", items_count: 2 }] },
   HostBoard: {
     boards: [
       {
@@ -64,6 +55,9 @@ const CANNED = {
         name: "Roadmap",
         description: null,
         items_count: 2,
+        board_kind: "share",
+        my_access: "editor",
+        workspace: { id: 4, name: "Main workspace" },
         columns: [
           { id: "name", title: "Name", type: "name", settings_str: "{}" },
           {
@@ -204,6 +198,9 @@ test("loadBoard() follows items_page cursors and orders groups", async (t) => {
   );
   assert.equal(board.truncated, false);
   assert.equal(board.description, "");
+  assert.equal(board.kind, "share");
+  assert.equal(board.myAccess, "editor");
+  assert.deepEqual(board.workspace, { id: "4", name: "Main workspace" });
   const pageCalls = calls.filter(
     (call) => operationName(call.body.query) === "HostBoardItems",
   );
@@ -247,12 +244,10 @@ test("GraphQL errors from loaders and mutations become thrown Errors", async (t)
 
 test("every document the UI sends parses with the server parser", async (t) => {
   const calls = stubFetch(t, cannedServer);
-  await loadSession();
-  await loadBoards();
   const board = await loadBoard("1");
   await loadItem("11", board.columns);
   const variables = {
-    createBoard: { name: "B" },
+    createBoard: { name: "B", workspaceId: "4", kind: "private" },
     updateBoard: { boardId: "1", attribute: "name", value: "B" },
     deleteBoard: { boardId: "1" },
     createGroup: { boardId: "1", name: "G", color: "#579bfc" },
@@ -274,8 +269,8 @@ test("every document the UI sends parses with the server parser", async (t) => {
   for (const [name, args] of Object.entries(variables)) {
     assert.deepEqual(await mutate(name, args), { id: "99" }, name);
   }
-  // Session, boards, the board and its two item pages, and the item.
-  assert.equal(calls.length, 6 + Object.keys(variables).length);
+  // The board and its two item pages, and the item.
+  assert.equal(calls.length, 4 + Object.keys(variables).length);
   for (const { body } of calls) {
     assert.doesNotThrow(() => parse(body.query, { maxDepth: 12 }), body.query);
   }
@@ -284,7 +279,7 @@ test("every document the UI sends parses with the server parser", async (t) => {
 // ------------------------------------------------------------------------
 // End-to-end against the real schema and store, through the same request
 // path http.js serves (parse → execute with a browser-session principal).
-// Skipped until server/schema.js (another builder's module) exists.
+// Skipped until server/schema.js serves the SPEC-2 API (workspaces).
 
 async function realApi(t) {
   const { createSchema } = await import("../server/schema.js");
@@ -333,12 +328,19 @@ async function realApi(t) {
 }
 
 async function checkSeededBoard() {
-  const session = await loadSession();
-  assert.equal(session.me.name, "Alex Rivera");
-  assert.ok(session.users.length >= 3);
-  const boards = await loadBoards();
+  const shell = await loadShellData();
+  assert.equal(shell.me.name, "Alex Rivera");
+  assert.equal(shell.me.role, "admin");
+  const directory = await loadDirectory({ refresh: true });
+  assert.ok(directory.users.size >= 3);
+  const boards = shell.workspaces.flatMap((workspace) => workspace.boards);
   const roadmap = boards.find((board) => board.name === "Product roadmap");
   const board = await loadBoard(roadmap.id);
+  assert.equal(board.kind, "public");
+  const holder = shell.workspaces.find((workspace) =>
+    workspace.boards.some((entry) => entry.id === roadmap.id),
+  );
+  assert.equal(board.workspace.id, holder.id);
   assert.deepEqual(
     board.groups.map((group) => group.id),
     ["this_sprint", "next_up", "done"],
@@ -474,14 +476,23 @@ async function checkWideBoard() {
   assert.equal(board.truncated, false);
 }
 
-test(
-  "UI loaders and mutations work against the real schema",
-  { skip: !existsSync(SCHEMA_URL) && "server/schema.js is not written yet" },
-  async (t) => {
+/** True when the real schema serves the SPEC-2 workspace API. */
+async function hasWorkspaceApi() {
+  if (!existsSync(SCHEMA_URL)) return false;
+  const { createSchema } = await import("../server/schema.js");
+  return createSchema().types.get("Query").fields.has("workspaces");
+}
+
+test("UI loaders and mutations work against the real schema", async (t) => {
+  if (!(await hasWorkspaceApi())) {
+    t.skip("server/schema.js does not serve the SPEC-2 API yet");
+    return;
+  }
+  {
     await realApi(t);
     const board = await checkSeededBoard();
     await checkItemFlow(board);
     await checkStructureFlow(board);
     await checkWideBoard();
-  },
-);
+  }
+});

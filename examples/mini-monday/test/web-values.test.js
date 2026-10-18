@@ -5,7 +5,6 @@ import {
   formatColumnValue,
   parseColumnValue,
 } from "../server/column-values.js";
-import { itemHash, parseRoute, viewHash } from "../web/ui/router.js";
 import {
   CLEAR_VALUE,
   decodeItem,
@@ -14,7 +13,8 @@ import {
   encodeValue,
   parseStatusSettings,
   prepareColumns,
-} from "../web/ui/values.js";
+  textColorOn,
+} from "../web/ui/board/values.js";
 
 const USERS = new Map([
   ["1", { id: "1", name: "Alex Rivera" }],
@@ -137,40 +137,12 @@ test("decodeItem keeps the name out of values and tolerates bad JSON", () => {
   assert.deepEqual(item.texts, { status: "Stuck", person: "" });
 });
 
-test("routes parse and round-trip", () => {
-  assert.deepEqual(parseRoute("#/boards/12"), {
-    boardId: "12",
-    view: "table",
-    installId: null,
-    itemId: null,
-  });
-  assert.equal(parseRoute("#/boards/12/views/kanban").view, "kanban");
-  assert.deepEqual(parseRoute("#/boards/12/views/app-7"), {
-    boardId: "12",
-    view: "app",
-    installId: "7",
-    itemId: null,
-  });
-  assert.deepEqual(parseRoute("#/boards/12/items/40"), {
-    boardId: "12",
-    view: null,
-    installId: null,
-    itemId: "40",
-  });
-  for (const hash of [
-    "",
-    "#/",
-    "#/boards/x",
-    "#/boards/1/views/app-",
-    "#/boards/1/items/1/x",
-  ]) {
-    assert.equal(parseRoute(hash).boardId, null, hash);
-  }
-  assert.equal(viewHash("3", { view: "kanban" }), "#/boards/3/views/kanban");
-  assert.equal(
-    viewHash("3", { view: "app", installId: "9" }),
-    "#/boards/3/views/app-9",
-  );
-  assert.equal(viewHash("3", { view: "table" }), "#/boards/3");
-  assert.equal(itemHash("3", "4"), "#/boards/3/items/4");
+test("status text color keeps label colors from the data readable", () => {
+  // The default labels: light green/orange get dark text, red gets white.
+  assert.equal(textColorOn("#00c875"), "#1c1e2e");
+  assert.equal(textColorOn("#fdab3d"), "#1c1e2e");
+  assert.equal(textColorOn("#df2f4a"), "#ffffff");
+  assert.equal(textColorOn("#5b5bd6"), "#ffffff");
+  // Malformed colors fall back to the neutral label color.
+  assert.equal(textColorOn("red; background: url(x)"), "#1c1e2e");
 });

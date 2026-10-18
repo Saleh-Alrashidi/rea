@@ -31,11 +31,13 @@ function readPort(env, name, fallback) {
 
 /**
  * Reads the configuration from `env` (see SPEC.md "Configuration").
- * `MM_DATA_FILE=:memory:` disables persistence.
+ * `MM_DATA_FILE=:memory:` disables persistence; `MM_DEMO_LOGIN=0` turns
+ * demo sign-in off (SPEC-2 §4), which is on otherwise.
  */
 export function readConfig(env = process.env) {
   const dataFile = setting(env, "MM_DATA_FILE") ?? DEFAULT_DATA_FILE;
   return {
+    demoLogin: setting(env, "MM_DEMO_LOGIN") !== "0",
     hostPort: readPort(env, "MM_HOST_PORT", 4100),
     appsPort: readPort(env, "MM_APPS_PORT", 4101),
     bind: setting(env, "MM_BIND") ?? "127.0.0.1",

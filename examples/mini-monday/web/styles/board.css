@@ -1,0 +1,498 @@
+/* Board feature styles (refining board-*.css): header actions, view-only
+   cells, skeletons, the Activity timeline and the Forms view. */
+
+.board-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 2px -6px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.board-eyebrow:hover,
+.board-members:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.board-title-row {
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.board-name-heading {
+  flex: 0 1 auto;
+  min-width: min(240px, 100%);
+  overflow-wrap: anywhere;
+}
+
+.board-name {
+  field-sizing: content;
+  min-width: 8ch;
+  max-width: 100%;
+}
+
+.board-badges {
+  flex: 1;
+  align-items: center;
+}
+
+.board-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.board-members {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-height-sm);
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  cursor: pointer;
+}
+
+.board-description.plain {
+  max-width: 72ch;
+  margin: 2px 0 0;
+  padding: 4px 6px;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.board-header-skeleton {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+}
+
+.board-skeleton,
+.board-embedded-page > .skeleton-block {
+  max-width: 880px;
+  padding-top: var(--space-4);
+}
+
+.name-text,
+h2.group-title.readonly,
+.cell-readonly {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+h2.group-title.readonly {
+  margin: 0;
+  padding: 4px 6px;
+}
+
+.status-pill.readonly,
+.people-button.readonly,
+.kanban-card.readonly {
+  cursor: default;
+}
+
+.status-pill.readonly:hover {
+  filter: none;
+}
+
+.people-button.readonly:hover {
+  background: transparent;
+}
+
+.cell-readonly {
+  display: block;
+  padding: 0 10px;
+}
+
+.card-field .cell-readonly {
+  padding: 6px 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.empty-group-row td {
+  padding-left: 12px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.group-menu.icon-btn:not(:hover, :focus-visible, [aria-expanded="true"]) {
+  opacity: 0.7;
+}
+
+.person-text {
+  display: grid;
+  min-width: 0;
+}
+
+.person-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.person-option.inactive .avatar {
+  opacity: 0.55;
+}
+
+.kanban-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.lane-empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.card-group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-sunken);
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+
+.card-group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--group-color, var(--color-primary));
+}
+
+.card-readonly-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-soft);
+  font-size: var(--text-sm);
+}
+
+.card-readonly-note .icon {
+  flex: none;
+  color: var(--color-warning);
+}
+
+.activity-view,
+.activity-days,
+.forms-view {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.activity-view {
+  max-width: 820px;
+}
+
+.activity-summary,
+.forms-view-count {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.activity-day-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 var(--space-2);
+  padding: var(--space-1) 0;
+  background: var(--color-panel);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.activity-list {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-xs);
+  list-style: none;
+}
+
+.activity-entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.activity-entry + .activity-entry {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* The timeline line runs through the markers. */
+.activity-entry:not(:only-child)::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 calc(var(--space-4) + 11px);
+  width: 2px;
+  background: var(--color-border-subtle);
+}
+
+.activity-entry:first-child::before {
+  top: 50%;
+}
+
+.activity-entry:last-child::before {
+  bottom: 50%;
+}
+
+.activity-marker {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  box-shadow: 0 0 0 3px var(--color-panel);
+}
+
+[data-kind$="_deleted"] > .activity-marker,
+[data-kind="member_removed"] > .activity-marker {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+[data-kind$="_created"] > .activity-marker,
+[data-kind="member_added"] > .activity-marker,
+[data-kind="form_submitted"] > .activity-marker {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.activity-bot {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+.activity-body {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.activity-text {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: var(--leading-dense);
+  overflow-wrap: anywhere;
+}
+
+.activity-actor,
+.activity-name,
+.activity-item {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+a.activity-item {
+  text-decoration-color: var(--color-border-strong);
+  text-underline-offset: 3px;
+}
+
+a.activity-item:hover {
+  color: var(--color-primary-text);
+  text-decoration-color: currentColor;
+}
+
+.activity-item.gone {
+  text-decoration: line-through var(--color-text-muted);
+}
+
+.activity-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.activity-chip {
+  max-width: 240px;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-sunken);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-chip.colored {
+  box-shadow: none;
+}
+
+.activity-chip.empty {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-weight: var(--weight-regular);
+}
+
+.activity-when {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  padding-top: 2px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.activity-time {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.forms-view {
+  max-width: 1080px;
+}
+
+.forms-view-header,
+.form-card-top,
+.form-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.forms-view-header {
+  justify-content: space-between;
+}
+
+.form-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: var(--space-4);
+}
+
+.form-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-subtle);
+  border-top: 4px solid var(--form-accent, var(--color-primary));
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-xs);
+}
+
+.form-card-top {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.form-card-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--form-accent) 14%, var(--color-panel));
+  color: color-mix(in srgb, var(--form-accent) 70%, var(--color-text));
+}
+
+.form-card-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-card-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.form-card-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.form-card-meta,
+.form-card-description {
+  margin: 2px 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.form-card-description {
+  display: -webkit-box;
+  margin: 0;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.form-card-actions {
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.form-card-open {
+  margin-left: auto;
+}
+
+@media (max-width: 600px) {
+  .board-actions {
+    margin-left: 0;
+  }
+
+  .activity-entry {
+    grid-template-columns: 24px 24px minmax(0, 1fr);
+    padding: var(--space-3);
+  }
+
+  .activity-entry:not(:only-child)::before {
+    left: calc(var(--space-3) + 11px);
+  }
+
+  .activity-when {
+    grid-column: 3;
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: var(--space-2);
+  }
+}

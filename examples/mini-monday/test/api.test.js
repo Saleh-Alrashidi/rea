@@ -1,7 +1,8 @@
 /**
- * The GraphQL API end to end over HTTP: every query and mutation, scopes,
- * validation limits, pagination and API versions. App principals and HTTP
- * status paths are covered in http.test.js.
+ * The part-1 GraphQL API end to end over HTTP as the seeded admin (Alex):
+ * every board query and mutation, scopes, validation limits, pagination
+ * and API versions. App principals and HTTP status paths are covered in
+ * http.test.js; SPEC-2 additions in api-*.test.js and permissions.test.js.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -15,8 +16,9 @@ async function setup(t) {
   const servers = await startTestServers();
   t.after(() => servers.close());
   const { store, hostUrl, tokens } = servers;
-  const roadmap = store.listBoards().find((b) => b.name === "Product roadmap");
-  const marketing = store.listBoards().find((b) => b.name !== roadmap.name);
+  const roadmap = store.getBoard(servers.ids.boards.roadmap);
+  // SPEC-2: Alex owns Budget 2027 but has no access to Marketing launch.
+  const other = store.getBoard(servers.ids.boards.budget);
   const first = store.listItems({ boardId: roadmap.id }).items[0];
   const call = (query, variables, options = {}) =>
     gql(hostUrl, { query, variables, token: tokens.readWrite, ...options });
@@ -32,12 +34,11 @@ async function setup(t) {
     const { body } = await call(query, variables, options);
     assert.equal(body.errors?.[0]?.extensions.code, expected, query);
   };
-  return { ...servers, roadmap, marketing, first, call, data, fails };
+  return { ...servers, roadmap, other, first, call, data, fails };
 }
 
 test("queries: me, users, version, versions, boards and nested fields", async (t) => {
-  const { data, roadmap, marketing, hostOrigin, appsOrigin, store } =
-    await setup(t);
+  const { data, roadmap, hostOrigin, appsOrigin, store, ids } = await setup(t);
   const { me, users, version, versions } = await data(`{
     me { id name email is_admin initials }
     users(ids: [2, "3", "999"]) { id initials }
@@ -58,10 +59,12 @@ test("queries: me, users, version, versions, boards and nested fields", async (t
   assert.deepEqual(values, ["2025-10", "2026-01", "2026-04"]);
   const all = await data("{ users(limit: 2) { id } boards { id name } }");
   assert.equal(all.users.length, 2);
+  // SPEC-2: only accessible boards are listed (not the shareable
+  // Marketing launch), and pages count accessible boards only.
   const names = all.boards.map((board) => board.name);
-  assert.deepEqual(names, ["Product roadmap", "Marketing launch"]);
+  assert.deepEqual(names, ["Product roadmap", "Hiring plan", "Budget 2027"]);
   const paged = await data("{ boards(limit: 1, page: 2) { id } }");
-  assert.deepEqual(paged.boards, [{ id: marketing.id }]);
+  assert.deepEqual(paged.boards, [{ id: ids.boards.hiring }]);
   const { boards } = await data(
     `query Board($id: ID!) { boards(ids: [$id]) {
       id name description state url items_count creator { name }
@@ -138,7 +141,7 @@ test("queries: items with column values, updates and lookups", async (t) => {
 });
 
 test("items_page pages with cursors per board and per group", async (t) => {
-  const { data, fails, roadmap, marketing, store } = await setup(t);
+  const { data, fails, roadmap, other, store } = await setup(t);
   const page = `query Page($id: ID!, $limit: Int, $cursor: String) {
     boards(ids: [$id]) { items_page(limit: $limit, cursor: $cursor) {
       cursor items { id } } } }`;
@@ -169,7 +172,7 @@ test("items_page pages with cursors per board and per group", async (t) => {
   assert.deepEqual(last, { cursor: null, items: [lastItem] });
   // A group cursor is valid neither for the board nor for another board.
   await fails(BAD, page, { id: roadmap.id, cursor: groupPage.cursor });
-  await fails(BAD, page, { id: marketing.id, cursor: groupPage.cursor });
+  await fails(BAD, page, { id: other.id, cursor: groupPage.cursor });
   await fails(BAD, page, { id: roadmap.id, cursor: "not*a*cursor" });
   const forged = { b: roadmap.id, g: null, o: -1 };
   const encoded = Buffer.from(JSON.stringify(forged)).toString("base64url");
@@ -245,8 +248,10 @@ test("board mutations: create, update and delete", async (t) => {
 });
 
 test("group and column mutations", async (t) => {
-  const { data, fails, store, marketing } = await setup(t);
-  const id = { b: marketing.id };
+  const { data, fails, store } = await setup(t);
+  // A fresh board with one group, like part-1's Marketing launch.
+  const scratch = store.createBoard({ name: "Scratch", creatorId: "1" });
+  const id = { b: scratch.id };
   const group = `mutation G($b: ID!, $n: String!, $c: String) {
     create_group(board_id: $b, group_name: $n, group_color: $c) {
       id title color position } }`;
@@ -272,7 +277,7 @@ test("group and column mutations", async (t) => {
     delete_group(board_id: $b, group_id: $g) { id } }`;
   const deleted = await data(remove, { ...id, g: "later_2" });
   assert.equal(deleted.delete_group.id, "later_2");
-  assert.equal(store.getGroup(marketing.id, "later_2"), null);
+  assert.equal(store.getGroup(scratch.id, "later_2"), null);
   await fails(NOT_FOUND, remove, { ...id, g: "later_2" });
   const column = `mutation K($b: ID!, $t: String!, $type: ColumnType!) {
     create_column(board_id: $b, title: $t, column_type: $type) {

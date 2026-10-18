@@ -1,8 +1,12 @@
 /**
  * Shared test helpers: real host and apps servers over an in-memory store,
- * plus small HTTP clients for GraphQL, browser sessions and raw requests.
+ * plus small HTTP clients for GraphQL, browser sessions and raw requests,
+ * and ways to act as any seeded user (`sessionFor`, `tokenFor`, `as`).
  */
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
+import { ALL_SCOPES } from "../server/auth.js";
 import { startServers } from "../server/http.js";
 import { createStore } from "../server/store.js";
 
@@ -27,20 +31,168 @@ export function recordingLog() {
  * (`{ token, user_id, scopes, label }`), for scopes no seeded token has.
  */
 export function storeWithToken(store, record) {
-  const findApiToken = (token) =>
-    token === record.token ? record : store.findApiToken(token);
-  return Object.freeze({ ...store, findApiToken });
+  const { view, add } = storeWithExtraTokens(store);
+  add(record);
+  return view;
+}
+
+/** First-name keys of the seeded users (SPEC-2 §2.1). */
+export const SEED_USERS = Object.freeze([
+  "alex",
+  "sam",
+  "noa",
+  "priya",
+  "jordan",
+  "chris",
+  "morgan",
+]);
+
+/**
+ * The seed's effective access roles (SPEC-2 §1.2 and §2.1) for the active
+ * users in SEED_USERS order (Morgan, deactivated, has none): "-" means no
+ * access. Forms take the role of their board.
+ */
+const SEED_ROLE_TABLE = Object.freeze({
+  workspace: {
+    main: "owner editor editor editor viewer -",
+    leadership: "owner - - - - -",
+  },
+  board: {
+    roadmap: "owner editor editor editor viewer -",
+    marketing: "- - - owner - editor",
+    hiring: "owner - editor - - -",
+    budget: "owner - - - - -",
+  },
+  doc: {
+    vision: "owner editor editor editor viewer -",
+    brief: "- editor - owner - viewer",
+    offsite: "owner - - - - -",
+  },
+  note: {
+    ideas: "owner - - - - -",
+    oneOnOne: "owner viewer - - - -",
+    crit: "- owner - - - -",
+    checklist: "- editor - owner - -",
+  },
+});
+
+/** The seeded role of `user` (a SEED_USERS key) on `kind`/`key`, or null. */
+export function seedRole(kind, key, user) {
+  if (user === "morgan") return null;
+  const role = SEED_ROLE_TABLE[kind][key].split(" ")[SEED_USERS.indexOf(user)];
+  return role === "-" ? null : role;
+}
+
+/** The resource keys of `kind` in the seed role table. */
+export const seedKeys = (kind) => Object.keys(SEED_ROLE_TABLE[kind]);
+
+const ID_GROUPS = Object.freeze({
+  workspace: "workspaces",
+  board: "boards",
+  doc: "docs",
+  note: "notes",
+});
+
+/** `{ [id]: role }` of the seeded `kind` resources `user` can reach. */
+export function seedRoleMap(ids, kind, user) {
+  const entries = seedKeys(kind).flatMap((key) => {
+    const role = seedRole(kind, key, user);
+    return role === null ? [] : [[ids[ID_GROUPS[kind]][key], role]];
+  });
+  return Object.fromEntries(entries);
+}
+
+const RANK = Object.freeze({ viewer: 1, editor: 2, owner: 3 });
+
+/**
+ * The error code SPEC-2 §1.2 requires for an action needing `minRole` from
+ * a user holding `role`: NOT_FOUND without access, FORBIDDEN below
+ * `minRole`, null (success) otherwise.
+ */
+export function expectedCode(role, minRole) {
+  if (role === null) return "NOT_FOUND";
+  return RANK[role] >= RANK[minRole] ? null : "FORBIDDEN";
+}
+
+const firstName = (record) => record.name.split(" ")[0].toLowerCase();
+const byName = (records, names) =>
+  Object.fromEntries(
+    Object.entries(names).map(([key, name]) => [
+      key,
+      records.find((record) => (record.name ?? record.title) === name)?.id,
+    ]),
+  );
+
+/**
+ * Seeded record IDs by short key, looked up by name: `users` (first
+ * names), `teams`, `workspaces`, `boards` (roadmap, marketing, hiring,
+ * budget), `docs` (vision, brief, offsite), `notes` (ideas, oneOnOne,
+ * crit, checklist) and `forms` (feature, campaign).
+ */
+export function seedIds(store) {
+  return {
+    users: Object.fromEntries(
+      store.listUsers().map((user) => [firstName(user), user.id]),
+    ),
+    teams: Object.fromEntries(
+      store.listTeams().map((team) => [team.name.toLowerCase(), team.id]),
+    ),
+    workspaces: byName(store.listWorkspaces(), {
+      main: "Main workspace",
+      leadership: "Leadership",
+    }),
+    boards: byName(store.listBoards({ limit: 1000 }), {
+      roadmap: "Product roadmap",
+      marketing: "Marketing launch",
+      hiring: "Hiring plan",
+      budget: "Budget 2027",
+    }),
+    docs: byName(store.listDocs(), {
+      vision: "Product vision",
+      brief: "Launch brief",
+      offsite: "Leadership offsite",
+    }),
+    notes: byName(store.listNotes(), {
+      ideas: "Ideas for Q1",
+      oneOnOne: "1:1 with Sam",
+      crit: "Design crit notes",
+      checklist: "Launch checklist",
+    }),
+    forms: byName(store.listForms(), {
+      feature: "Feature request",
+      campaign: "Campaign intake",
+    }),
+  };
+}
+
+/**
+ * A view of `store` whose `findApiToken` also knows the tokens added with
+ * the returned `add(record)`.
+ */
+function storeWithExtraTokens(store) {
+  const extra = new Map();
+  const findApiToken = (token) => extra.get(token) ?? store.findApiToken(token);
+  const view = Object.freeze({ ...store, findApiToken });
+  return { view, add: (record) => extra.set(record.token, record) };
 }
 
 /**
  * Starts both servers on free ports over a fresh in-memory store (or
  * `options.store`). Other options are passed to `startServers`.
+ *
+ * Besides URLs, the store and the seeded tokens, the result can act as any
+ * user: `sessionFor(userId)` → `{ Cookie, Origin }` headers of a new
+ * browser session, `tokenFor(userId, scopes = ALL_SCOPES)` → a new API
+ * token, and `as(userId)` → an `apiClient` over a new session. `ids`
+ * holds the seeded IDs (`seedIds`).
  * @returns {Promise<{ hostUrl, appsUrl, hostOrigin, appsOrigin, store, auth,
- *   tokens: { readWrite, readOnly }, log, close(): Promise<void> }>}
+ *   tokens: { readWrite, readOnly }, ids, sessionFor, tokenFor, as, log,
+ *   close(): Promise<void> }>}
  */
 export async function startTestServers(options = {}) {
   const log = options.log ?? recordingLog();
-  const store = options.store ?? (await createStore({ file: null, log }));
+  const base = options.store ?? (await createStore({ file: null, log }));
+  const { view: store, add } = storeWithExtraTokens(base);
   const servers = await startServers({
     hostPort: 0,
     appsPort: 0,
@@ -51,14 +203,29 @@ export async function startTestServers(options = {}) {
   const tokens = store.listApiTokens();
   const token = (label) =>
     tokens.find((record) => record.label === label).token;
+  const { hostOrigin } = servers;
+  const sessionFor = (userId) => {
+    const id = servers.auth.createBrowserSession(userId);
+    return { Cookie: `mm_session=${id}`, Origin: hostOrigin };
+  };
+  const tokenFor = (userId, scopes = ALL_SCOPES) => {
+    const record = { token: randomBytes(32).toString("base64url") };
+    add({ ...record, user_id: userId, scopes: [...scopes], label: "test" });
+    return record.token;
+  };
+  const as = (userId) => apiClient(hostOrigin, { headers: sessionFor(userId) });
   return {
-    hostUrl: servers.hostOrigin,
+    hostUrl: hostOrigin,
     appsUrl: servers.appsOrigin,
-    hostOrigin: servers.hostOrigin,
+    hostOrigin,
     appsOrigin: servers.appsOrigin,
     store,
     auth: servers.auth,
     tokens: { readWrite: token("read-write"), readOnly: token("read-only") },
+    ids: seedIds(store),
+    sessionFor,
+    tokenFor,
+    as,
     log,
     close: () => servers.close(),
   };
@@ -94,6 +261,33 @@ export async function gql(
   });
   const body = await readResponse(response);
   return { status: response.status, headers: response.headers, body };
+}
+
+/**
+ * A GraphQL client with fixed credentials (`headers` and/or `token`):
+ * - `call(query, variables)` → `{ status, headers, body }`;
+ * - `data(query, variables)` asserts a 200 without errors, returns `data`;
+ * - `code(query, variables)` → the first error code, or null;
+ * - `error(query, variables)` → the first error object, or null.
+ */
+export function apiClient(hostUrl, { headers = {}, token } = {}) {
+  const call = (query, variables) =>
+    gql(hostUrl, { query, variables, headers, token });
+  const first = async (query, variables) =>
+    (await call(query, variables)).body.errors?.[0] ?? null;
+  return {
+    headers,
+    call,
+    async data(query, variables) {
+      const { status, body } = await call(query, variables);
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.equal(body.errors, undefined, JSON.stringify(body.errors));
+      return body.data;
+    },
+    error: first,
+    code: async (query, variables) =>
+      (await first(query, variables))?.extensions.code ?? null,
+  };
 }
 
 /**

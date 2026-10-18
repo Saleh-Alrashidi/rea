@@ -1,12 +1,20 @@
 /**
- * Host-app HTTP client: GraphQL over `POST /v2`, app session tokens and the
- * board change stream. Every request is same-origin and authenticated by the
- * HttpOnly session cookie; nothing here stores credentials.
+ * Host-app HTTP client: GraphQL over `POST /v2`, app session tokens, the
+ * server-sent event streams and the demo sign-in routes. Every request is
+ * same-origin and authenticated by the HttpOnly session cookie; nothing here
+ * stores credentials.
+ *
+ * This module is the one place that turns HTTP and GraphQL failures into
+ * thrown errors (`ApiError`), so pages read `error.code` instead of parsing
+ * response bodies.
  */
 
 const API_PATH = "/v2";
 const EVENTS_PATH = "/v2/events";
 const SESSION_TOKEN_PATH = "/apps/session-token";
+const DEMO_USERS_PATH = "/auth/demo-users";
+const DEMO_LOGIN_PATH = "/auth/demo-login";
+const LOGOUT_PATH = "/auth/logout";
 /** The version this UI was written against (`server/versions.js` current). */
 const DEFAULT_API_VERSION = "2026-01";
 const ID_PATTERN = /^\d{1,20}$/;
@@ -16,9 +24,34 @@ const STATUS_CODES = new Map([
   [401, "UNAUTHENTICATED"],
   [403, "FORBIDDEN"],
   [404, "NOT_FOUND"],
+  [405, "METHOD_NOT_ALLOWED"],
   [413, "PAYLOAD_TOO_LARGE"],
   [415, "UNSUPPORTED_MEDIA_TYPE"],
+  [429, "RATE_LIMITED"],
 ]);
+
+/**
+ * A failed request. `code` is the first error's `extensions.code`
+ * (`NOT_FOUND`, `FORBIDDEN`, `VERSION_CONFLICT`, …), `errors` the full
+ * GraphQL error list, `status` the HTTP status (when the request itself
+ * failed) and `version` the current version on `VERSION_CONFLICT`.
+ */
+export class ApiError extends Error {
+  constructor(errors, { status } = {}) {
+    const first = errors[0];
+    super(
+      typeof first?.message === "string" && first.message
+        ? first.message
+        : "Request failed",
+    );
+    this.name = "ApiError";
+    this.errors = errors;
+    this.code = first?.extensions?.code;
+    this.status = status;
+    const version = first?.extensions?.version;
+    if (Number.isSafeInteger(version)) this.version = version;
+  }
+}
 
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -46,7 +79,7 @@ async function readJson(response) {
   }
 }
 
-/** Builds the Error thrown for a non-2xx response (or a non-JSON body). */
+/** Builds the error thrown for a non-2xx response (or a non-JSON body). */
 function httpError(response, body) {
   const errors =
     Array.isArray(body?.errors) && body.errors.length > 0
@@ -59,28 +92,25 @@ function httpError(response, body) {
             },
           },
         ];
-  const first = errors[0];
-  const message =
-    typeof first?.message === "string" ? first.message : "Request failed";
-  const error = new Error(message);
-  error.status = response.status;
-  error.errors = errors;
-  error.code = first?.extensions?.code;
-  return error;
+  return new ApiError(errors, { status: response.status });
+}
+
+async function send(path, { method = "POST", body, headers = {} }) {
+  const init = {
+    method,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { Accept: "application/json", ...headers },
+  };
+  if (body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  return globalThis.fetch(path, init);
 }
 
 async function postJson(path, { body, headers = {} }) {
-  const response = await globalThis.fetch(path, {
-    method: "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...headers,
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await send(path, { body, headers });
   const parsed = await readJson(response);
   if (!response.ok || !isPlainObject(parsed)) {
     throw httpError(response, parsed);
@@ -88,11 +118,21 @@ async function postJson(path, { body, headers = {} }) {
   return parsed;
 }
 
+/** POSTs `body` to a route that answers 204 No Content. */
+async function postNoContent(path, body) {
+  const response = await send(path, { body });
+  if (!response.ok) throw httpError(response, await readJson(response));
+  // Finish the exchange before resolving: callers often reload the page
+  // next (switching user, signing out), which would abort it otherwise.
+  await response.arrayBuffer();
+}
+
 /**
  * Runs a GraphQL operation as the signed-in user, or as the app principal of
  * `installId` (sent as `X-App-Install`). Returns the parsed `{ data, errors? }`
- * body; throws an Error with `.errors` and `.status` when the HTTP status is
- * not 2xx. `operationName` is an optional extension of the spec signature.
+ * body; throws an `ApiError` with `.errors` and `.status` when the HTTP
+ * status is not 2xx. `operationName` is an optional extension of the part-1
+ * signature.
  *
  * @param {string} query
  * @param {object} [variables]
@@ -123,6 +163,26 @@ export async function graphql(query, variables = {}, options = {}) {
 }
 
 /**
+ * Runs `query` as the signed-in user and returns its `data`. Any GraphQL
+ * error (even next to partial data) becomes a thrown `ApiError`, so callers
+ * never render half a response as if it were complete.
+ *
+ * @param {string} query
+ * @param {object} [variables]
+ * @returns {Promise<object>}
+ */
+export async function request(query, variables = {}) {
+  const response = await graphql(query, variables);
+  if (Array.isArray(response.errors) && response.errors.length > 0) {
+    throw new ApiError(response.errors);
+  }
+  if (!isPlainObject(response.data)) {
+    throw new ApiError([{ message: "The server returned no data" }]);
+  }
+  return response.data;
+}
+
+/**
  * Asks the host server for a signed session token for an app install.
  * @param {string} installId
  * @returns {Promise<{ token: string, expires_at: string }>}
@@ -139,6 +199,21 @@ export async function requestSessionToken(installId) {
   return { token: result.token, expires_at: result.expires_at };
 }
 
+/** Opens an EventSource on `url` and forwards parsed `eventName` objects. */
+function subscribe(url, eventName, onEvent) {
+  const source = new globalThis.EventSource(url);
+  source.addEventListener(eventName, (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (isPlainObject(payload)) onEvent(payload);
+  });
+  return () => source.close();
+}
+
 /**
  * Subscribes to a board's server-sent change events. `onEvent` receives each
  * parsed change object; malformed events are ignored. Returns `close()`.
@@ -149,19 +224,53 @@ export async function requestSessionToken(installId) {
  */
 export function subscribeBoardEvents(boardId, onEvent) {
   const id = readId(boardId, "boardId");
-  const source = new globalThis.EventSource(
-    `${EVENTS_PATH}?board_id=${encodeURIComponent(id)}`,
-  );
-  source.addEventListener("change", (event) => {
-    let change;
-    try {
-      change = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    if (isPlainObject(change) && typeof change.type === "string") {
-      onEvent(change);
-    }
+  const url = `${EVENTS_PATH}?board_id=${encodeURIComponent(id)}`;
+  return subscribe(url, "change", (change) => {
+    if (typeof change.type === "string") onEvent(change);
   });
-  return () => source.close();
+}
+
+/**
+ * Subscribes to the signed-in user's notification events
+ * (`GET /v2/events?stream=me`, `event: notification`). Returns `close()`.
+ *
+ * @param {(notification: object) => void} onEvent
+ * @returns {() => void}
+ */
+export function subscribeMyEvents(onEvent) {
+  return subscribe(`${EVENTS_PATH}?stream=me`, "notification", onEvent);
+}
+
+/**
+ * Lists the users of the demo user switcher, or returns null when demo
+ * sign-in is turned off (the route answers 404).
+ *
+ * @returns {Promise<{ id: string, name: string, role: string, title: string | null,
+ *   color: string, status: string }[] | null>}
+ */
+export async function listDemoUsers() {
+  const response = await send(DEMO_USERS_PATH, { method: "GET" });
+  if (response.status === 404) return null;
+  const body = await readJson(response);
+  if (!response.ok || !Array.isArray(body?.users)) {
+    throw httpError(response, body);
+  }
+  return body.users.filter(
+    (user) => isPlainObject(user) && ID_PATTERN.test(String(user.id)),
+  );
+}
+
+/**
+ * Switches the session to another demo user (the server rotates the session
+ * cookie). Reload the page afterwards: every cached record belongs to the
+ * previous user.
+ * @param {string} userId
+ */
+export async function demoLogin(userId) {
+  await postNoContent(DEMO_LOGIN_PATH, { user_id: readId(userId, "userId") });
+}
+
+/** Ends the browser session (the server clears the cookie). */
+export async function logout() {
+  await postNoContent(LOGOUT_PATH, {});
 }

@@ -4,34 +4,42 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>mini-monday</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css" />
-    <link rel="stylesheet" href="/ui/controls.css" />
-    <link rel="stylesheet" href="/ui/table.css" />
-    <link rel="stylesheet" href="/ui/kanban.css" />
-    <link rel="stylesheet" href="/ui/panels.css" />
-    <link rel="stylesheet" href="/ui/item-card.css" />
+    <title>Worklane</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%235b5bd6'/%3E%3Cpath d='M7.5 10.5l4 11 4.5-8.5 4.5 8.5 4-11' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles/tokens.css" />
+    <link rel="stylesheet" href="/styles/base.css" />
+    <link rel="stylesheet" href="/styles/components.css" />
+    <link rel="stylesheet" href="/styles/display.css" />
+    <link rel="stylesheet" href="/styles/overlays.css" />
+    <link rel="stylesheet" href="/styles/pickers.css" />
+    <link rel="stylesheet" href="/styles/layout.css" />
+    <link rel="stylesheet" href="/styles/pages.css" />
+    <link rel="stylesheet" href="/styles/board-page.css" />
+    <link rel="stylesheet" href="/styles/board-table.css" />
+    <link rel="stylesheet" href="/styles/board-kanban.css" />
+    <link rel="stylesheet" href="/styles/board-card.css" />
+    <link rel="stylesheet" href="/styles/board.css" />
+    <link rel="stylesheet" href="/styles/docs.css" />
+    <link rel="stylesheet" href="/styles/notes.css" />
+    <link rel="stylesheet" href="/styles/forms.css" />
+    <link rel="stylesheet" href="/styles/admin.css" />
     <script type="module" src="/main.js"></script>
   </head>
   <body>
     <div id="app" class="app-shell">
-      <aside id="sidebar" class="sidebar" aria-label="Workspace"></aside>
+      <header id="topbar" class="topbar"></header>
+      <aside id="sidebar" class="sidebar" aria-label="Navigation"></aside>
       <div
         id="sidebar-backdrop"
         class="sidebar-backdrop"
         aria-hidden="true"
       ></div>
-      <main id="main" class="main">
-        <header id="board-header" class="board-header-region"></header>
-        <section
-          id="board-view"
-          class="board-view"
-          aria-label="Board"
-        ></section>
-      </main>
+      <main id="page" class="page" tabindex="-1"></main>
     </div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
-    <noscript><p class="noscript">mini-monday needs JavaScript.</p></noscript>
+    <noscript><p class="noscript">Worklane needs JavaScript.</p></noscript>
   </body>
 </html>
