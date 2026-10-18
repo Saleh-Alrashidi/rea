@@ -158,9 +158,11 @@ async function setup() {
 test("API tokens authenticate raw or as Bearer credentials", async () => {
   const { auth, readWrite, readOnly } = await setup();
   const principal = auth.authenticateApiToken(readWrite.token);
+  // SPEC-2: principals carry the user's current account role.
   assert.deepEqual(principal, {
     kind: "token",
     userId: "1",
+    role: "admin",
     scopes: new Set(ALL_SCOPES),
   });
   assert.deepEqual(
@@ -194,6 +196,7 @@ test("browser sessions are random, user bound and expire when idle", async () =>
   assert.deepEqual(auth.getBrowserSession(id), {
     kind: "session",
     userId: "2",
+    role: "member",
     scopes: new Set(ALL_SCOPES),
   });
   for (const bad of [
@@ -233,6 +236,7 @@ test("app principals take the intersection of user and app scopes", async () => 
   assert.deepEqual(auth.appPrincipal(session, install.id), {
     kind: "app",
     userId: "1",
+    role: "admin",
     scopes: new Set(app.scopes),
     installId: install.id,
     appId: app.id,
@@ -315,4 +319,106 @@ test("issueSessionToken rejects unknown records and bad lifetimes", async () => 
     );
   }
   assert.throws(() => createAuth({}), TypeError);
+});
+
+test("role changes apply to the next request", async () => {
+  const { store, auth, readWrite } = await setup();
+  const session = auth.createBrowserSession("2");
+  assert.equal(auth.getBrowserSession(session).role, "member");
+  store.updateUser("2", { role: "viewer" }, { actorId: "1" });
+  assert.equal(auth.getBrowserSession(session).role, "viewer");
+  store.updateUser("3", { role: "admin" });
+  store.updateUser("1", { role: "member" });
+  assert.equal(auth.authenticateApiToken(readWrite.token).role, "member");
+});
+
+test("deactivated users lose tokens and sessions at once", async () => {
+  const { store, auth, readWrite, install, advance } = await setup();
+  store.updateUser("2", { role: "admin" });
+  const mine = auth.createBrowserSession("1");
+  const other = auth.createBrowserSession("2");
+  store.deactivateUser("1");
+  assert.equal(auth.authenticateApiToken(readWrite.token), null);
+  assert.equal(auth.getBrowserSession(mine), null);
+  assert.ok(auth.getBrowserSession(other), "other users keep their sessions");
+  assert.throws(() => auth.createBrowserSession("1"), TypeError);
+  assert.equal(
+    auth.issueSessionToken({ userId: "1", installId: install.id }),
+    null,
+  );
+  store.activateUser("1");
+  assert.equal(
+    auth.authenticateApiToken(readWrite.token).userId,
+    "1",
+    "API tokens work again after reactivation",
+  );
+  assert.equal(
+    auth.getBrowserSession(mine),
+    null,
+    "sessions ended by deactivation stay ended",
+  );
+  const morgan = store.listUsers().find((u) => u.status === "deactivated");
+  assert.throws(() => auth.createBrowserSession(morgan.id), TypeError);
+  // Without change events, every request still checks the user's status.
+  const { on: _on, ...silent } = store;
+  const unaware = createAuth({ store: silent, now: () => NOW });
+  const session = unaware.createBrowserSession("1");
+  store.deactivateUser("1");
+  advance(1000);
+  assert.equal(unaware.getBrowserSession(session), null);
+});
+
+test("demo user switching rotates the session; sign-out ends it", async () => {
+  const { store, auth } = await setup();
+  const first = auth.createBrowserSession("1");
+  const chris = store.listUsers().find((u) => u.role === "guest");
+  const morgan = store.listUsers().find((u) => u.status === "deactivated");
+  assert.equal(auth.rotateBrowserSession(first, morgan.id), null);
+  assert.equal(auth.rotateBrowserSession(first, "999"), null);
+  assert.ok(
+    auth.getBrowserSession(first),
+    "a refused switch keeps the session",
+  );
+  const second = auth.rotateBrowserSession(first, chris.id);
+  assert.match(second, /^[\w-]{43}$/);
+  assert.notEqual(second, first);
+  assert.equal(auth.getBrowserSession(first), null, "the old session ends");
+  assert.deepEqual(
+    [
+      auth.getBrowserSession(second).userId,
+      auth.getBrowserSession(second).role,
+    ],
+    [chris.id, "guest"],
+  );
+  const third = auth.rotateBrowserSession("not-a-session", "2");
+  assert.equal(auth.getBrowserSession(third).userId, "2");
+  assert.equal(auth.endBrowserSession(second), true);
+  assert.equal(auth.getBrowserSession(second), null);
+  assert.equal(auth.endBrowserSession(second), false);
+  assert.equal(auth.endBrowserSession(undefined), false);
+});
+
+test("apps on boards the user cannot see are unknown installs", async () => {
+  const { store, auth, install } = await setup();
+  const chris = store.listUsers().find((u) => u.role === "guest");
+  const guest = auth.getBrowserSession(auth.createBrowserSession(chris.id));
+  assert.equal(auth.appPrincipal(guest, install.id), null);
+  assert.equal(
+    auth.issueSessionToken({ userId: chris.id, installId: install.id }),
+    null,
+  );
+  const roadmap = store.getBoard(install.board_id);
+  store.setBoardKind(roadmap.id, "private", { actorId: "1" });
+  const sam = auth.getBrowserSession(auth.createBrowserSession("2"));
+  assert.equal(auth.appPrincipal(sam, install.id), null, "private now");
+  store.share({
+    resourceKind: "board",
+    resourceId: roadmap.id,
+    subjectKind: "user",
+    subjectIds: ["2"],
+    role: "viewer",
+    actorId: "1",
+  });
+  assert.equal(auth.appPrincipal(sam, install.id).userId, "2");
+  assert.ok(auth.issueSessionToken({ userId: "2", installId: install.id }));
 });

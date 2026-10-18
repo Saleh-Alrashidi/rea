@@ -96,7 +96,7 @@ test("static files: types, 404, 405 and traversal attempts", async (t) => {
   const jsType = "text/javascript; charset=utf-8";
   assert.equal(script.headers.get("content-type"), jsType);
   assert.equal(script.headers.get("x-content-type-options"), "nosniff");
-  const nested = await host("/ui/table.css");
+  const nested = await host("/styles/base.css");
   assert.equal(nested.headers.get("content-type"), "text/css; charset=utf-8");
   await assertError(host("/missing.js"), 404, "NOT_FOUND");
   await assertError(host("/index.txt"), 404, "NOT_FOUND");
@@ -117,8 +117,8 @@ test("static files: types, 404, 405 and traversal attempts", async (t) => {
     "/%2edata/mini-monday.json",
     "/%252e%252e/package.json",
     "//etc/passwd",
-    "/ui/./table.css",
-    "/ui/",
+    "/styles/./base.css",
+    "/styles/",
     "/package.json",
   ];
   for (const path of attempts) {
@@ -293,9 +293,10 @@ test("app principals: scope intersection and their own storage only", async (t) 
     (await gql(hostUrl, { query, variables, headers })).body;
   const read = await app("{ boards(limit: 1) { name } }");
   assert.equal(read.data.boards[0].name, "Product roadmap");
+  const boards = store.listBoards({ limit: 100 }).length;
   const write = await app('mutation { create_board(board_name: "No") { id } }');
   assert.equal(write.errors[0].extensions.code, "FORBIDDEN");
-  assert.equal(store.listBoards().length, 2);
+  assert.equal(store.listBoards({ limit: 100 }).length, boards);
   const args = "install_id: $i, segment: $s, key: $k";
   const vars = "$i: ID!, $s: StorageSegment!, $k: String!";
   const result = "{ success version reason }";
@@ -362,8 +363,12 @@ test("GET /v2/get_schema prints SDL per version, publicly", async (t) => {
   assert.match(old, /items\(limit: Int = 25\): \[Item!\]! @deprecated/);
   const next = await (await host("/v2/get_schema?version=2026-04")).text();
   assert.doesNotMatch(next, /@deprecated/);
-  assert.equal(next.match(/url: String!/g).length, 2, "Board.url and Item.url");
-  assert.equal(sdl.match(/url: String!/g).length, 1);
+  // Item.url is added in 2026-04; Board.url exists in every version.
+  const block = (text, type) =>
+    new RegExp(`^type ${type} \\{\\n([^}]*)^\\}`, "m").exec(text)[1];
+  assert.match(block(next, "Item"), /^ {2}url: String!$/m);
+  assert.doesNotMatch(block(sdl, "Item"), /url:/);
+  assert.match(block(sdl, "Board"), /^ {2}url: String!$/m);
   const unsupported = await host("/v2/get_schema?version=1999-01");
   await assertError(unsupported, 400, "UNSUPPORTED_API_VERSION");
   await assertError(host("/v2/get_schema?format=json"), 400, "BAD_REQUEST");

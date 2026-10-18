@@ -1,0 +1,471 @@
+/*
+ * Admin, Teams and Workspace pages: the admin tables and stats
+ * (`.admin-*`, `.stat-*`, `.role-*`), the team page (`.team-*`) and the
+ * workspace page and settings (`.ws-*`). Cards and lists reuse the shared
+ * `.panel-grid` / `.shared-card` and `.preview-*` styles (pages.css).
+ * Tokens come from tokens.css.
+ */
+
+/* "‹ Parent" links above page titles (form builder, team, settings). */
+.page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.page-back:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------- admin */
+
+.admin-section,
+.ws-settings,
+.ws-settings-body,
+.team-add-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-xs);
+}
+
+.stat-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+.stat-text {
+  display: grid;
+  min-width: 0;
+}
+
+.stat-value {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+}
+
+.stat-label,
+.admin-person-name,
+.admin-content-title {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+.stat-detail,
+.admin-person-email,
+.admin-note,
+.team-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.admin-toolbar {
+  flex-wrap: wrap;
+}
+
+.admin-toolbar .panel-title {
+  margin-right: auto;
+}
+
+.admin-count,
+.admin-muted,
+.admin-you,
+.admin-empty-row,
+.ws-tab-count {
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.admin-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: min(260px, 100%);
+}
+
+.admin-search .icon {
+  position: absolute;
+  left: 9px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.admin-search .input {
+  width: 100%;
+  padding-left: 28px;
+}
+
+.admin-table-scroll {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-sm);
+}
+
+.admin-table th,
+.admin-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-weight: var(--weight-regular);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-table thead th {
+  background: var(--color-sunken);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+}
+
+.admin-table tbody tr:last-child > *,
+.ws-rows .preview-row:last-child {
+  border-bottom: 0;
+}
+
+.admin-table tbody tr:hover > * {
+  background: var(--color-row-hover);
+}
+
+/* The first column stays visible while the table scrolls sideways. */
+.admin-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--color-panel);
+}
+
+.admin-row.is-deactivated > * {
+  color: var(--color-text-muted);
+}
+
+.admin-row.is-deactivated .avatar,
+.is-inactive .avatar {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.admin-person,
+.admin-content-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 200px;
+}
+
+.admin-person.compact {
+  min-width: 0;
+}
+
+.admin-person-text {
+  display: grid;
+}
+
+.admin-role-select {
+  min-width: 112px;
+}
+
+.admin-role-fixed {
+  cursor: help;
+}
+
+.admin-chips {
+  display: flex;
+  gap: 4px;
+}
+
+.admin-chip {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-sunken);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+
+a.admin-chip:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+.admin-actions {
+  text-align: right;
+}
+
+.admin-table .admin-empty-row {
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.admin-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.admin-content-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.admin-filters {
+  padding: var(--space-2) var(--space-4) 0;
+}
+
+.admin-content-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--color-sunken);
+  color: var(--color-text-secondary);
+}
+
+.admin-content-title {
+  overflow: hidden;
+  max-width: 320px;
+  text-overflow: ellipsis;
+}
+
+.role-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.role-card {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.role-table th[scope="row"] {
+  min-width: 220px;
+  white-space: normal;
+}
+
+.role-table thead th:not(:first-child),
+.role-cell {
+  text-align: center;
+}
+
+.role-cell.yes {
+  color: var(--color-success);
+}
+
+.role-cell.no,
+.role-cell.text {
+  color: var(--color-text-secondary);
+}
+
+/* --------------------------------------------------------------- teams */
+
+.ws-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.team-page .page-heading > .avatar {
+  align-self: center;
+}
+
+.team-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.team-group + .team-group {
+  margin-top: var(--space-4);
+}
+
+.team-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+}
+
+.team-group-count {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-sunken);
+}
+
+.team-group-empty {
+  padding: var(--space-2) 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.team-add-body {
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.team-add-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.team-add-row .people-picker-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-owner-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/* ----------------------------------------------------------- workspace */
+
+.ws-members {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.ws-members-button:hover {
+  border-color: var(--color-border);
+  background: var(--color-hover);
+}
+
+.ws-tab-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.ws-rows {
+  padding-block: var(--space-1);
+}
+
+.ws-rows .preview-row {
+  min-height: 52px;
+}
+
+.ws-settings-form {
+  display: contents;
+}
+
+.ws-settings-body {
+  padding-top: var(--space-4);
+}
+
+.ws-save-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ws-save-status {
+  margin-right: auto;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.ws-settings-body > .btn {
+  justify-self: start;
+}
+
+.ws-danger {
+  border-color: var(--color-danger-soft);
+}
+
+.ws-danger .panel-title .icon {
+  color: var(--color-danger);
+}
+
+.ws-danger-body {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 900px) {
+  .team-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-search {
+    width: 100%;
+  }
+
+  .ws-danger-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-add-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

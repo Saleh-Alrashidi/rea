@@ -9,23 +9,27 @@ export class GraphQLError extends Error {
   /**
    * @param {string} message Human-readable message returned to clients.
    * @param {{ code?: string, locations?: { line: number, column: number }[],
-   *   path?: (string | number)[] }} [options]
+   *   path?: (string | number)[], extensions?: object }} [options]
+   *   `extensions` adds entries next to `code` (which it cannot replace),
+   *   such as the current `version` of a VERSION_CONFLICT.
    */
   constructor(
     message,
-    { code = "INTERNAL_SERVER_ERROR", locations, path } = {},
+    { code = "INTERNAL_SERVER_ERROR", locations, path, extensions } = {},
   ) {
     super(message);
     this.name = "GraphQLError";
     this.code = code;
     this.locations = locations;
     this.path = path;
+    this.extensions = extensions;
   }
 
   /**
    * Serializes the error in the GraphQL response format.
    * @returns {{ message: string, locations?: { line: number, column: number }[],
    *   path?: (string | number)[], extensions: { code: string } }}
+   *   (`extensions` also holds the constructor's `extensions` entries)
    */
   toJSON() {
     const json = { message: this.message };
@@ -36,7 +40,7 @@ export class GraphQLError extends Error {
       }));
     }
     if (Array.isArray(this.path)) json.path = [...this.path];
-    json.extensions = { code: this.code };
+    json.extensions = { ...this.extensions, code: this.code };
     return json;
   }
 }
@@ -59,8 +63,8 @@ export class ComplexityError extends GraphQLError {
  */
 export function locatedError(error, { locations, path, log } = {}) {
   if (error instanceof GraphQLError) {
-    const { message, code } = error;
-    return new GraphQLError(message, { code, locations, path });
+    const { message, code, extensions } = error;
+    return new GraphQLError(message, { code, locations, path, extensions });
   }
   log?.error?.(`GraphQL resolver failed at ${path?.join(".")}:`, error);
   return new GraphQLError("Internal server error", { locations, path });

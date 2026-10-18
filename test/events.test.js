@@ -1,7 +1,8 @@
 /**
- * Server-sent events: the /v2/events route (auth, filtering, cleanup on
- * close), the hub itself (heartbeats, disconnects, stalled readers) and the
- * servers' close() lifecycle.
+ * Server-sent events: the /v2/events route (auth, filtering, board access
+ * per user, streams that end when access is lost, the `stream=me`
+ * notification stream, cleanup on close), the hub itself (heartbeats,
+ * disconnects, stalled readers) and the servers' close() lifecycle.
  */
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
@@ -10,17 +11,23 @@ import test from "node:test";
 import { createEventHub } from "../server/events.js";
 import { createStore } from "../server/store.js";
 import {
+  SEED_USERS,
   browserSession,
   gql,
+  seedKeys,
+  seedRole,
   startTestServers,
   storeWithToken,
 } from "./helpers.js";
 
 const CHANGE = /event: change\ndata: (.*)\n\n/;
+const NOTIFICATION = /event: notification\ndata: (.*)\n\n/;
 
 /**
  * Opens an SSE stream with fetch. `next(pattern)` reads until `pattern`
- * matches the unread text, consumes through the match and returns it.
+ * matches the unread text, consumes through the match and returns it;
+ * `ends()` reads until the server ends the stream and returns the text
+ * that was still unread. Both fail after `timeoutMs`.
  */
 async function openStream(url, headers = {}) {
   const controller = new AbortController();
@@ -31,6 +38,22 @@ async function openStream(url, headers = {}) {
   let ended = false;
   // A read that lost a race against the timeout is kept for the next call.
   let pending = null;
+  /** Reads one chunk into `unread` (or notes the end) before `deadline`. */
+  const read = async (deadline, waitingFor) => {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new Error(`timed out waiting for ${waitingFor}`);
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(resolve, left, null);
+    });
+    pending ??= reader.read();
+    const chunk = await Promise.race([pending, timeout]);
+    clearTimeout(timer);
+    if (chunk === null) return;
+    pending = null;
+    if (chunk.done) ended = true;
+    else unread += decoder.decode(chunk.value, { stream: true });
+  };
   const next = async (pattern, timeoutMs = 5000) => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -40,25 +63,13 @@ async function openStream(url, headers = {}) {
         return match;
       }
       if (ended) throw new Error(`stream ended before ${pattern}`);
-      const left = deadline - Date.now();
-      if (left <= 0) throw new Error(`timed out waiting for ${pattern}`);
-      let timer;
-      const timeout = new Promise((resolve) => {
-        timer = setTimeout(resolve, left, null);
-      });
-      pending ??= reader.read();
-      const chunk = await Promise.race([pending, timeout]);
-      clearTimeout(timer);
-      if (chunk === null) continue;
-      pending = null;
-      if (chunk.done) ended = true;
-      else unread += decoder.decode(chunk.value, { stream: true });
+      await read(deadline, pattern);
     }
   };
-  const ends = async () => {
-    if (pending) ended ||= (await pending).done;
-    pending = null;
-    while (!ended) ended = (await reader.read()).done;
+  const ends = async (timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (!ended) await read(deadline, "the end of the stream");
+    return unread;
   };
   return { response, next, ends, close: () => controller.abort() };
 }
@@ -70,8 +81,10 @@ async function setup(t) {
   const view = storeWithToken(store, { ...record, label: "storage" });
   const servers = await startTestServers({ store: view });
   t.after(() => servers.close());
-  const boards = servers.store.listBoards();
-  const [roadmap, marketing] = boards;
+  const { getBoard } = servers.store;
+  const roadmap = getBoard(servers.ids.boards.roadmap);
+  // Another board the token's user (Alex) can write to.
+  const other = getBoard(servers.ids.boards.budget);
   const url = (boardId) =>
     new URL(`/v2/events?board_id=${boardId}`, servers.hostUrl);
   const auth = { Authorization: `Bearer ${servers.tokens.readOnly}` };
@@ -82,11 +95,11 @@ async function setup(t) {
       variables: { b: board.id, n: name },
       token: servers.tokens.readWrite,
     });
-  return { ...servers, roadmap, marketing, url, auth, createItem };
+  return { ...servers, roadmap, other, url, auth, createItem };
 }
 
 test("a board stream receives that board's changes after mutations", async (t) => {
-  const { url, auth, roadmap, marketing, createItem } = await setup(t);
+  const { url, auth, roadmap, other, createItem } = await setup(t);
   const stream = await openStream(url(roadmap.id), auth);
   t.after(() => stream.close());
   assert.equal(stream.response.status, 200);
@@ -105,7 +118,7 @@ test("a board stream receives that board's changes after mutations", async (t) =
     group_id: "this_sprint",
   });
   // Another board's change is never delivered to this stream.
-  await createItem(marketing, "Elsewhere");
+  await createItem(other, "Elsewhere");
   await createItem(roadmap, "Second");
   const [, second] = await stream.next(CHANGE);
   assert.equal(JSON.parse(second).board_id, roadmap.id);
@@ -142,6 +155,126 @@ test("event stream auth, board validation and methods", async (t) => {
   const post = await fetch(board, { method: "POST", headers: auth });
   assert.equal(post.status, 405);
   assert.equal(post.headers.get("allow"), "GET");
+});
+
+test("board streams need board access; hidden boards are 404 like unknown ones", async (t) => {
+  const { url, ids, sessionFor, tokenFor } = await setup(t);
+  const status = async (target, headers) => {
+    const response = await fetch(target, { headers });
+    await response.body?.cancel();
+    return response.status;
+  };
+  for (const user of SEED_USERS.filter((key) => key !== "morgan")) {
+    const session = sessionFor(ids.users[user]);
+    const token = { Authorization: tokenFor(ids.users[user]) };
+    for (const key of seedKeys("board")) {
+      const want = seedRole("board", key, user) === null ? 404 : 200;
+      const board = url(ids.boards[key]);
+      assert.equal(await status(board, session), want, `${user} ${key}`);
+      assert.equal(await status(board, token), want, `${user} token ${key}`);
+    }
+  }
+  const morgan = { Authorization: tokenFor(ids.users.morgan) };
+  assert.equal(await status(url(ids.boards.roadmap), morgan), 401);
+});
+
+const shareBoard = (store, { board, user, actor }) =>
+  store.share({
+    resourceKind: "board",
+    resourceId: board,
+    subjectKind: "user",
+    subjectIds: [user],
+    role: "viewer",
+    actorId: actor,
+  });
+
+test("a board stream ends when its user loses access or the board goes", async (t) => {
+  const { url, ids, sessionFor, store } = await setup(t);
+  const { marketing } = ids.boards;
+  const { sam, priya, jordan } = ids.users;
+  shareBoard(store, { board: marketing, user: sam, actor: priya });
+  const stream = await openStream(url(marketing), sessionFor(sam));
+  t.after(() => stream.close());
+  assert.equal(stream.response.status, 200);
+  await stream.next(/^: connected\n\n/);
+  store.createItem({ boardId: marketing, name: "Seen", creatorId: priya });
+  const [, data] = await stream.next(CHANGE);
+  assert.equal(JSON.parse(data).type, "item_created");
+  store.unshare({
+    resourceKind: "board",
+    resourceId: marketing,
+    subjectKind: "user",
+    subjectId: sam,
+    actorId: priya,
+  });
+  assert.equal(await stream.ends(), "", "the removal itself is not sent");
+  // Deactivation ends a viewer's stream on a public board.
+  const viewer = await openStream(url(ids.boards.roadmap), sessionFor(jordan));
+  await viewer.next(/: connected/);
+  store.deactivateUser(jordan);
+  await viewer.ends();
+  // The owner sees the deletion, then the stream ends.
+  const owner = await openStream(url(marketing), sessionFor(priya));
+  await owner.next(/: connected/);
+  store.deleteBoard(marketing);
+  const [, gone] = await owner.next(CHANGE);
+  assert.deepEqual(JSON.parse(gone), {
+    type: "board_deleted",
+    board_id: marketing,
+  });
+  await owner.ends();
+});
+
+test("stream=me delivers the user's own notification events only", async (t) => {
+  const { ids, sessionFor, store, hostUrl, as, tokenFor } = await setup(t);
+  const { sam, noa, priya, alex } = ids.users;
+  const me = new URL("/v2/events?stream=me", hostUrl);
+  const samStream = await openStream(me, sessionFor(sam));
+  t.after(() => samStream.close());
+  const noaStream = await openStream(me, {
+    Authorization: `Bearer ${tokenFor(noa)}`,
+  });
+  t.after(() => noaStream.close());
+  assert.equal(samStream.response.status, 200);
+  await samStream.next(/^: connected\n\n/);
+  await noaStream.next(/^: connected\n\n/);
+  shareBoard(store, { board: ids.boards.marketing, user: sam, actor: priya });
+  const [, data] = await samStream.next(NOTIFICATION);
+  const event = JSON.parse(data);
+  assert.deepEqual(Object.keys(event).sort(), [
+    "resource_id",
+    "resource_kind",
+    "type",
+    "user_ids",
+  ]);
+  assert.equal(event.type, "notification_created");
+  assert.deepEqual(event.user_ids, [sam]);
+  const record = store.getNotification(event.resource_id);
+  assert.equal(record.user_id, sam);
+  assert.equal(record.kind, "share");
+  await as(sam).data("mutation { mark_notifications_read(all: true) }");
+  const [, read] = await samStream.next(NOTIFICATION);
+  assert.deepEqual(JSON.parse(read), {
+    type: "notifications_read",
+    user_ids: [sam],
+  });
+  // Noa's first event is Noa's own assignment: Sam's never reached Noa.
+  const [item] = store.listItems({ boardId: ids.boards.roadmap }).items;
+  store.setColumnValue(item.id, "person", [noa], { actorId: alex });
+  const [, noaData] = await noaStream.next(NOTIFICATION);
+  const noaEvent = JSON.parse(noaData);
+  assert.deepEqual(noaEvent.user_ids, [noa]);
+  assert.equal(store.getNotification(noaEvent.resource_id).kind, "assign");
+  store.deactivateUser(noa);
+  await noaStream.ends();
+  const bad = await fetch(new URL("/v2/events?stream=all", hostUrl), {
+    headers: sessionFor(sam),
+  });
+  await bad.body?.cancel();
+  assert.equal(bad.status, 400);
+  const anonymous = await fetch(me);
+  await anonymous.body?.cancel();
+  assert.equal(anonymous.status, 401);
 });
 
 test("servers.close() ends open streams", async (t) => {

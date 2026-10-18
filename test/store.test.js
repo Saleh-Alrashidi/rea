@@ -2,17 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createStore } from "../server/store.js";
 
-// Store API tests: mutators, change events, ordering, app storage, tokens
-// and listeners. Seed, ID generation and persistence are covered by
-// store-state.test.js.
+// Store API tests for the part-1 board model: mutators, change events,
+// activity entries, ordering, app storage, tokens and listeners. Seed, ID
+// generation and persistence are covered by store-state.test.js; SPEC-2
+// people, sharing and content by the other store-*.test.js files.
 const START = Date.UTC(2026, 9, 18, 9, 0, 0);
 const clock = () => {
   let tick = 0;
   return () => new Date(START + 1000 * tick++);
-};
-const quietLog = () => {
-  const errors = [];
-  return { errors, error: (...args) => errors.push(args) };
 };
 const memoryStore = (options = {}) => createStore({ now: clock(), ...options });
 const record = (store) => {
@@ -22,6 +19,13 @@ const record = (store) => {
 };
 const roadmapOf = (store) =>
   store.listBoards().find((b) => b.name === "Product roadmap");
+const boardEvents = (events) =>
+  events.filter((event) => event.type !== "notification_created");
+const activityOf = (store, boardId, count) =>
+  store
+    .listActivity(boardId, { limit: count })
+    .reverse()
+    .map((a) => [a.kind, a.actor_id, a.item_name, a.from_text, a.to_text]);
 
 test("createBoard adds the default columns, group and views", async () => {
   const store = await memoryStore();
@@ -31,12 +35,18 @@ test("createBoard adds the default columns, group and views", async () => {
     description: "Runbook",
     creatorId: "2",
   });
+  // SPEC-2: boards live in a workspace (default: the first one), have a
+  // kind (default "public") and members; the creator is the first owner.
+  const [main] = store.listWorkspaces();
   assert.deepEqual(board, {
     id: board.id,
     name: "Ops",
     description: "Runbook",
     state: "active",
     creator_id: "2",
+    workspace_id: main.id,
+    board_kind: "public",
+    members: [{ kind: "user", id: "2", role: "owner" }],
   });
   assert.deepEqual(events, [{ type: "board_created", board_id: board.id }]);
   assert.deepEqual(
@@ -57,13 +67,35 @@ test("createBoard adds the default columns, group and views", async () => {
     ["table", "kanban"],
   );
   assert.equal(store.createBoard({ name: "Ghost", creatorId: "99" }), null);
-  assert.equal(store.createBoard({ name: "Anon" }).creator_id, null);
+  const anon = store.createBoard({ name: "Anon", workspaceId: null });
+  assert.equal(anon.workspace_id, main.id, "null means the default workspace");
+  assert.deepEqual([anon.creator_id, anon.members], [null, []]);
+  assert.equal(
+    store.createBoard({ name: "Lost", workspaceId: "999" }),
+    null,
+    "unknown workspace",
+  );
+  const leadership = store.listWorkspaces()[1];
+  const placed = store.createBoard({
+    name: "Private plan",
+    creatorId: "1",
+    workspaceId: leadership.id,
+    boardKind: "private",
+  });
+  assert.deepEqual(
+    [placed.workspace_id, placed.board_kind],
+    [leadership.id, "private"],
+  );
+  assert.throws(
+    () => store.createBoard({ name: "x", boardKind: "secret" }),
+    TypeError,
+  );
   assert.throws(() => store.createBoard({ name: "" }), TypeError);
   assert.throws(
     () => store.createBoard({ name: "x", description: 5 }),
     TypeError,
   );
-  assert.equal(events.length, 2);
+  assert.equal(events.length, 3);
 });
 
 test("updateBoard and deleteBoard emit events and cascade", async () => {
@@ -91,6 +123,8 @@ test("updateBoard and deleteBoard emit events and cascade", async () => {
   assert.equal(store.getItem("7"), null);
   assert.deepEqual(store.listUpdates("7"), []);
   assert.equal(store.getInstall(install.id), null);
+  assert.deepEqual(store.listForms({ boardId: roadmap.id }), [], "forms go");
+  assert.deepEqual(store.listActivity(roadmap.id), [], "activity goes");
   assert.equal(store.getAppStorage(`install:${install.id}`, "note"), null);
   assert.equal(
     store.getAppStorage(`app:${install.app_id}`, "shared").value,
@@ -115,10 +149,21 @@ test("deleteGroup removes the group and its items", async () => {
     groupId: "next_up",
   }).items;
   assert.equal(doomed.length, 3);
+  const form = store.listForms({ boardId: roadmap.id })[0];
+  assert.equal(form.target_group_id, "next_up");
   const { events } = record(store);
-  assert.equal(store.deleteGroup(roadmap.id, "next_up").id, "next_up");
+  const deleted = store.deleteGroup(roadmap.id, "next_up", { actorId: "2" });
+  assert.equal(deleted.id, "next_up");
   assert.deepEqual(events, [
     { type: "group_deleted", board_id: roadmap.id, group_id: "next_up" },
+  ]);
+  assert.equal(
+    store.getForm(form.id).target_group_id,
+    null,
+    "forms aimed at the group fall back to the first group",
+  );
+  assert.deepEqual(activityOf(store, roadmap.id, 1), [
+    ["group_deleted", "2", null, "Next up", null],
   ]);
   assert.equal(store.countItems(roadmap.id), 5);
   for (const item of doomed) assert.equal(store.getItem(item.id), null);
@@ -165,7 +210,7 @@ test("createItem validates stored values and appends to the group", async () => 
     name: "Late",
   });
   assert.equal(done.position, 2);
-  assert.deepEqual(events, [
+  assert.deepEqual(boardEvents(events), [
     {
       type: "item_created",
       board_id: roadmap.id,
@@ -178,6 +223,19 @@ test("createItem validates stored values and appends to the group", async () => 
       item_id: done.id,
       group_id: "done",
     },
+  ]);
+  // SPEC-2: the assigned user 2 is notified right after the item event;
+  // user 3 created the item and is never notified about their own action.
+  assert.deepEqual(
+    events
+      .filter((e) => e.type === "notification_created")
+      .map((e) => e.user_ids),
+    [["2"]],
+  );
+  assert.equal(events[1].type, "notification_created");
+  assert.deepEqual(activityOf(store, roadmap.id, 2), [
+    ["item_created", "3", "New", null, "This sprint"],
+    ["item_created", null, "Late", null, "Done"],
   ]);
   assert.equal(store.createItem({ boardId: "999", name: "x" }), null);
   assert.equal(
@@ -207,7 +265,7 @@ test("createItem validates stored values and appends to the group", async () => 
     () => store.createItem({ boardId: roadmap.id, name: " " }),
     TypeError,
   );
-  assert.equal(events.length, 2);
+  assert.equal(events.length, 3);
 });
 
 test("item mutators emit one event each and ignore unknown IDs", async () => {
@@ -215,24 +273,37 @@ test("item mutators emit one event each and ignore unknown IDs", async () => {
   const roadmap = roadmapOf(store);
   const item = store.listItems({ boardId: roadmap.id }).items[0];
   const { events } = record(store);
-  const renamed = store.renameItem(item.id, "Renamed");
+  const actor = { actorId: "2" };
+  const renamed = store.renameItem(item.id, "Renamed", actor);
   assert.equal(renamed.name, "Renamed");
   assert.ok(renamed.updated_at > item.updated_at);
-  const set = store.setColumnValue(item.id, "estimate", 13);
+  const set = store.setColumnValue(item.id, "estimate", 13, actor);
   assert.equal(set.values.estimate, 13);
-  const cleared = store.setColumnValue(item.id, "status", null);
+  const cleared = store.setColumnValue(item.id, "status", null, actor);
   assert.equal("status" in cleared.values, false);
-  const moved = store.moveItem(item.id, "done");
+  const moved = store.moveItem(item.id, "done", actor);
   assert.deepEqual([moved.group_id, moved.position], ["done", 2]);
   assert.equal(
     store.moveItem(item.id, "done").position,
     2,
     "same group keeps position",
   );
-  const deleted = store.deleteItem(item.id);
+  const deleted = store.deleteItem(item.id, actor);
   assert.equal(deleted.state, "deleted");
   assert.equal(store.getItem(item.id), null);
   assert.deepEqual(store.listUpdates(item.id), [], "updates go with the item");
+  // SPEC-2 activity: from/to texts come from formatColumnValue; a move
+  // within the same group is not a change and is not logged.
+  assert.deepEqual(activityOf(store, roadmap.id, 5), [
+    ["item_renamed", "2", "Renamed", "Design onboarding flow", "Renamed"],
+    ["column_value_changed", "2", "Renamed", "5", "13"],
+    ["column_value_changed", "2", "Renamed", "Working on it", null],
+    ["item_moved", "2", "Renamed", "This sprint", "Done"],
+    ["item_deleted", "2", "Renamed", null, null],
+  ]);
+  const [latest] = store.listActivity(roadmap.id);
+  assert.equal(latest.actor_label, "Sam Lee");
+  assert.equal(store.listActivity(roadmap.id)[1].column_id, null);
   const base = { board_id: roadmap.id, item_id: item.id };
   assert.deepEqual(events, [
     { type: "item_renamed", ...base, group_id: "this_sprint" },
@@ -267,6 +338,40 @@ test("item mutators emit one event each and ignore unknown IDs", async () => {
   assert.throws(() => store.setColumnValue(other.id, "notes", ""), TypeError);
   assert.throws(() => store.renameItem(other.id, ""), TypeError);
   assert.equal(events.length, 6);
+  const logged = store.listActivity(roadmap.id).length;
+  store.setColumnValue(other.id, "estimate", other.values.estimate ?? null);
+  assert.equal(
+    store.listActivity(roadmap.id).length,
+    logged,
+    "unchanged values are not logged",
+  );
+});
+
+test("groups and columns log their changes", async () => {
+  const store = await memoryStore();
+  const roadmap = roadmapOf(store);
+  const actor = { actorId: "3" };
+  store.createGroup(roadmap.id, { title: "Backlog" }, actor);
+  store.updateGroup(roadmap.id, "backlog", { color: "#a25ddc" }, actor);
+  store.updateGroup(roadmap.id, "backlog", { title: "Icebox" }, actor);
+  const column = store.createColumn(
+    roadmap.id,
+    { title: "Risk", type: "text" },
+    actor,
+  );
+  const entries = store.listActivity(roadmap.id, { limit: 3 }).reverse();
+  assert.deepEqual(
+    entries.map((a) => [a.kind, a.column_id, a.from_text, a.to_text]),
+    [
+      ["group_created", null, null, "Backlog"],
+      ["group_renamed", null, "Backlog", "Icebox"],
+      ["column_created", column.id, null, "Risk"],
+    ],
+    "a color change is not a rename",
+  );
+  assert.ok(
+    entries.every((a) => a.actor_id === "3" && a.board_id === roadmap.id),
+  );
 });
 
 test("setColumnValue on the name column renames the item", async () => {
@@ -338,7 +443,7 @@ test("listBoards filters by IDs and pages", async () => {
   const store = await memoryStore();
   for (const name of ["A", "B", "C"]) store.createBoard({ name });
   const all = store.listBoards();
-  assert.equal(all.length, 5);
+  assert.equal(all.length, 7, "four seeded boards (SPEC-2) plus three");
   assert.deepEqual(store.listBoards({ limit: 2, page: 2 }), all.slice(2, 4));
   assert.deepEqual(store.listBoards({ ids: [all[3].id, all[0].id, "999"] }), [
     all[0],
@@ -374,9 +479,11 @@ test("updates are listed newest first", async () => {
     "Shipped!",
   );
   assert.deepEqual(store.listUpdates(item.id, { limit: 1 }), [update]);
-  assert.deepEqual(events, [
+  assert.deepEqual(boardEvents(events), [
     { type: "update_created", board_id: roadmap.id, item_id: item.id },
   ]);
+  // SPEC-2: Alex is assigned to the item and hears about the update.
+  assert.deepEqual(events[1].user_ids, ["1"]);
   assert.equal(store.createUpdate({ itemId: "999", body: "x" }), null);
   assert.equal(
     store.createUpdate({ itemId: item.id, body: "x", creatorId: "99" }),
@@ -386,101 +493,5 @@ test("updates are listed newest first", async () => {
     () => store.createUpdate({ itemId: item.id, body: "" }),
     TypeError,
   );
-  assert.equal(events.length, 1);
-});
-
-test("app storage versions writes and reports conflicts", async () => {
-  const store = await memoryStore();
-  const { events } = record(store);
-  const scope = "install:24";
-  assert.equal(store.getAppStorage(scope, "note"), null);
-  assert.deepEqual(store.setAppStorage(scope, "note", "a"), {
-    success: true,
-    version: 1,
-  });
-  assert.deepEqual(store.setAppStorage(scope, "note", "b", 1), {
-    success: true,
-    version: 2,
-  });
-  assert.deepEqual(store.setAppStorage(scope, "note", "c", 1), {
-    success: false,
-    version: 2,
-    reason: "version_conflict",
-  });
-  assert.deepEqual(store.getAppStorage(scope, "note"), {
-    value: "b",
-    version: 2,
-  });
-  assert.deepEqual(store.setAppStorage(scope, "new", "x", 0), {
-    success: false,
-    version: null,
-    reason: "version_conflict",
-  });
-  assert.deepEqual(store.deleteAppStorage(scope, "note"), {
-    success: true,
-    version: null,
-  });
-  assert.equal(store.getAppStorage(scope, "note"), null);
-  assert.deepEqual(store.setAppStorage(scope, "note", "d", 2), {
-    success: false,
-    version: null,
-    reason: "version_conflict",
-  });
-  assert.deepEqual(
-    store.setAppStorage(scope, "note", "e"),
-    { success: true, version: 3 },
-    "versions are never reused",
-  );
-  assert.deepEqual(store.deleteAppStorage(scope, "absent"), {
-    success: true,
-    version: null,
-  });
-  assert.equal(
-    store.getAppStorage("app:23", "note"),
-    null,
-    "segments are separate",
-  );
-  store.setAppStorage("app:23", "note", "global");
-  assert.equal(store.getAppStorage(scope, "note").value, "e");
-  assert.equal(store.getAppStorage(scope, "a/../b"), null, "keys are opaque");
-  for (const bad of ["install:", "board:4", "install:4/x", "", 24]) {
-    assert.throws(() => store.getAppStorage(bad, "k"), TypeError);
-  }
-  assert.throws(() => store.setAppStorage(scope, "k", 5), TypeError);
-  assert.throws(() => store.setAppStorage(scope, "k", "v", "1"), TypeError);
-  assert.throws(() => store.setAppStorage(scope, 5, "v"), TypeError);
-  assert.deepEqual(events, [], "storage writes are not board changes");
-});
-
-test("findApiToken matches whole tokens only", async () => {
-  const store = await memoryStore();
-  const [readWrite] = store.listApiTokens();
-  assert.deepEqual(store.findApiToken(readWrite.token), readWrite);
-  for (const bad of [
-    readWrite.token.slice(0, -1),
-    `${readWrite.token}A`,
-    "",
-    undefined,
-    42,
-  ]) {
-    assert.equal(store.findApiToken(bad), null);
-  }
-});
-
-test("listeners unsubscribe and a throwing listener does not stop others", async () => {
-  const log = quietLog();
-  const store = await memoryStore({ log });
-  const seen = [];
-  store.on(() => {
-    throw new Error("boom");
-  });
-  const off = store.on((event) => seen.push(event.type));
-  store.createBoard({ name: "One" });
-  off();
-  off();
-  store.createBoard({ name: "Two" });
-  assert.deepEqual(seen, ["board_created"]);
-  assert.equal(log.errors.length, 2);
-  assert.match(String(log.errors[0][0]), /listener failed/);
-  assert.throws(() => store.on("nope"), TypeError);
+  assert.equal(events.length, 2);
 });

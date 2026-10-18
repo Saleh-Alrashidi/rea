@@ -1,0 +1,221 @@
+/*
+ * Worklane design tokens. Every color, size, radius, shadow and duration
+ * used by the app comes from here. Light is the default; dark applies with
+ * `prefers-color-scheme: dark` unless `<html data-theme="light">`, and
+ * always with `<html data-theme="dark">` (ui/shell/theme.js sets it).
+ *
+ * Text colors meet 4.5:1 on page, panel, raised and hover surfaces in both
+ * themes; primary buttons keep white text at 5.4:1.
+ */
+
+:root {
+  /* Typography */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 32px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --leading-tight: 1.2;
+  --leading-dense: 1.35;
+  --leading-normal: 1.5;
+
+  /* Spacing (4 px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+
+  /* Layout */
+  --topbar-height: 52px;
+  --sidebar-width: 264px;
+  --content-width: 1180px;
+  --control-height: 32px;
+  --control-height-sm: 28px;
+  --z-sticky: 5;
+  --z-drawer: 40;
+  --z-popover: 60;
+  --z-toast: 100;
+
+  /* Brand: Worklane indigo */
+  --indigo-50: #f4f4fe;
+  --indigo-100: #ececfd;
+  --indigo-200: #e0e0fb;
+  --indigo-300: #c9c9f6;
+  --indigo-400: #a3a3ec;
+  --indigo-500: #7c7ce3;
+  --indigo-600: #5b5bd6;
+  --indigo-700: #4f4fc8;
+  --indigo-800: #4545b8;
+  --indigo-900: #272962;
+
+  /* Light theme */
+  color-scheme: light;
+  --color-page: #f7f7fb;
+  --color-panel: #ffffff;
+  --color-raised: #ffffff;
+  --color-sunken: #f1f2f7;
+  --color-hover: #eef0f6;
+  --color-pressed: #e4e6ef;
+  --color-selected: var(--indigo-100);
+  --color-text: #1c1e2e;
+  --color-text-secondary: #4a4e63;
+  --color-text-muted: #63677b;
+  --color-text-inverse: #ffffff;
+  --color-text-on-primary: #ffffff;
+  --color-border: #dfe1ea;
+  --color-border-subtle: #ebedf3;
+  --color-border-strong: #c7cad6;
+  --color-primary: var(--indigo-600);
+  --color-primary-hover: var(--indigo-700);
+  --color-primary-active: var(--indigo-800);
+  --color-primary-soft: var(--indigo-100);
+  --color-primary-soft-hover: var(--indigo-200);
+  --color-primary-text: #4a4ac0;
+  --color-success: #18794e;
+  --color-success-soft: #e6f6ee;
+  --color-warning: #a35200;
+  --color-warning-soft: #fff3e0;
+  --color-danger: #c62a3c;
+  --color-danger-hover: #a8202f;
+  --color-danger-soft: #fdecee;
+  --color-info: #0b6bcb;
+  --color-info-soft: #e6f1fc;
+  --color-focus: var(--indigo-600);
+  --color-status-empty: #c4c4c4;
+  --color-row-hover: #f6f6fd;
+  --color-backdrop: rgb(20 21 40 / 45%);
+  --color-skeleton: #e9eaf1;
+  --color-skeleton-shine: #f5f6fa;
+  --color-toast: #1c1e2e;
+  --shadow-xs: 0 1px 2px rgb(20 21 40 / 6%);
+  --shadow-sm: 0 1px 2px rgb(20 21 40 / 6%), 0 1px 3px rgb(20 21 40 / 8%);
+  --shadow-md: 0 4px 12px rgb(20 21 40 / 10%), 0 1px 3px rgb(20 21 40 / 8%);
+  --shadow-lg: 0 16px 40px rgb(20 21 40 / 18%), 0 2px 8px rgb(20 21 40 / 8%);
+  --focus-ring: 0 0 0 2px var(--color-panel), 0 0 0 4px var(--color-focus);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-page: #0f1017;
+    --color-panel: #171822;
+    --color-raised: #1e1f2c;
+    --color-sunken: #12131b;
+    --color-hover: #23253a;
+    --color-pressed: #2b2d45;
+    --color-selected: #25264d;
+    --color-text: #ececf3;
+    --color-text-secondary: #b9bbcc;
+    --color-text-muted: #9093a8;
+    --color-text-inverse: #171822;
+    --color-border: #2d2f42;
+    --color-border-subtle: #24263a;
+    --color-border-strong: #3d4058;
+    --color-primary-hover: #6767e0;
+    --color-primary-active: #7373e6;
+    --color-primary-soft: #25264d;
+    --color-primary-soft-hover: #2f3062;
+    --color-primary-text: #a9a8ff;
+    --color-success: #4cc38a;
+    --color-success-soft: #12271d;
+    --color-warning: #f1a10d;
+    --color-warning-soft: #2c2112;
+    --color-danger: #ff6b70;
+    --color-danger-hover: #ff8a8e;
+    --color-danger-soft: #3a1418;
+    --color-info: #70b8ff;
+    --color-info-soft: #0f2238;
+    --color-focus: #8f8ff0;
+    --color-status-empty: #4a4d63;
+    --color-row-hover: #1d1e2b;
+    --color-backdrop: rgb(0 0 0 / 60%);
+    --color-skeleton: #23253a;
+    --color-skeleton-shine: #2d2f48;
+    --color-toast: #2b2d45;
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 30%);
+    --shadow-sm: 0 1px 3px rgb(0 0 0 / 40%);
+    --shadow-md: 0 6px 16px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 4%);
+    --shadow-lg: 0 18px 48px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 255 255 / 5%);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-page: #0f1017;
+  --color-panel: #171822;
+  --color-raised: #1e1f2c;
+  --color-sunken: #12131b;
+  --color-hover: #23253a;
+  --color-pressed: #2b2d45;
+  --color-selected: #25264d;
+  --color-text: #ececf3;
+  --color-text-secondary: #b9bbcc;
+  --color-text-muted: #9093a8;
+  --color-text-inverse: #171822;
+  --color-border: #2d2f42;
+  --color-border-subtle: #24263a;
+  --color-border-strong: #3d4058;
+  --color-primary-hover: #6767e0;
+  --color-primary-active: #7373e6;
+  --color-primary-soft: #25264d;
+  --color-primary-soft-hover: #2f3062;
+  --color-primary-text: #a9a8ff;
+  --color-success: #4cc38a;
+  --color-success-soft: #12271d;
+  --color-warning: #f1a10d;
+  --color-warning-soft: #2c2112;
+  --color-danger: #ff6b70;
+  --color-danger-hover: #ff8a8e;
+  --color-danger-soft: #3a1418;
+  --color-info: #70b8ff;
+  --color-info-soft: #0f2238;
+  --color-focus: #8f8ff0;
+  --color-status-empty: #4a4d63;
+  --color-row-hover: #1d1e2b;
+  --color-backdrop: rgb(0 0 0 / 60%);
+  --color-skeleton: #23253a;
+  --color-skeleton-shine: #2d2f48;
+  --color-toast: #2b2d45;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 40%);
+  --shadow-md: 0 6px 16px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 4%);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 255 255 / 5%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0.01ms;
+    --duration-base: 0.01ms;
+    --duration-slow: 0.01ms;
+  }
+}

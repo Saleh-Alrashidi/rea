@@ -5,12 +5,12 @@
  *
  * A step receives `run`: `{ page, hostOrigin, appsOrigin, store, token,
  * outputDir, documentCsp: Map<"host"|"app", string>, screenshots: string[] }`
- * and may add fields for later steps (boardId, itemId, installId, frame…).
+ * (see `runE2E` in `e2e-lib.mjs`) and may add fields for later steps
+ * (boardId, itemId, installId, frame…).
  */
 import path from "node:path";
+import { DESKTOP, WAIT_MS, check, fail, waitUntil } from "./e2e-lib.mjs";
 
-export const WAIT_MS = 10_000;
-export const DESKTOP = { width: 1280, height: 860 };
 const ITEM_NAME = "Smoke test item";
 const RENAMED = "Smoke test item (renamed)";
 const UPDATE_BODY = "Posted by the smoke test <img src=x onerror=alert(1)>";
@@ -35,30 +35,6 @@ const ITEM_QUERY = `query SmokeItem($id: ID!) {
 }`;
 
 // ------------------------------------------------------------------ helpers
-
-function fail(message) {
-  throw new Error(message);
-}
-
-function check(condition, message) {
-  if (!condition) fail(message);
-}
-
-/** Polls `probe` until it returns a truthy value; returns that value. */
-async function waitUntil(probe, label, timeout = WAIT_MS) {
-  const deadline = Date.now() + timeout;
-  let last = "";
-  while (Date.now() < deadline) {
-    try {
-      const value = await probe();
-      if (value) return value;
-    } catch (error) {
-      last = `: ${error.message.split("\n")[0]}`;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return fail(`timed out waiting for ${label}${last}`);
-}
 
 /** POSTs GraphQL with the seeded read-write token; returns `data`. */
 async function api(run, query, variables) {
@@ -119,7 +95,7 @@ const sidebarBox = (run) => run.page.locator("#sidebar").boundingBox();
 
 /**
  * Waits until the board view has not been rebuilt for `quietMs`. Change
- * events refresh the view 250 ms after they arrive (`ui/board-sync.js`);
+ * events refresh the view 250 ms after they arrive (`ui/board/board-sync.js`);
  * a rebuild in the middle of Playwright's `dragTo` leaves Chromium's
  * intercepted drag unfinished, and every later drag on the page is lost.
  */
@@ -163,9 +139,12 @@ async function boardLoads(run) {
     (entry) => entry.name === "mm_session",
   );
   check(cookie?.httpOnly && cookie.sameSite === "Strict", "session cookie");
+  // The default route is Home (SPEC-2 §5.1); open the board from the sidebar.
+  await waitUntil(() => page.url().endsWith("#/home"), "redirect to Home");
+  await page.locator(".nav-link", { hasText: "Product roadmap" }).click();
   const match = await waitUntil(
     () => /#\/boards\/(\d+)$/.exec(page.url()),
-    "redirect to the first board",
+    "the Product roadmap route",
   );
   run.boardId = match[1];
   const board = await boardFromApi(run);

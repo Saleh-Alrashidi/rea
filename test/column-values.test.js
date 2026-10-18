@@ -6,6 +6,8 @@ import {
   isValidStoredValue,
   parseColumnValue,
   parseSimpleColumnValue,
+  peopleIds,
+  statusOptions,
 } from "../server/column-values.js";
 
 const status = {
@@ -340,4 +342,32 @@ test("DEFAULT_STATUS_SETTINGS matches the spec and is frozen", () => {
   assert.throws(() => {
     DEFAULT_STATUS_SETTINGS.labels[9] = "x";
   }, TypeError);
+});
+
+test("peopleIds reads assignees of people columns only", () => {
+  assert.deepEqual(peopleIds(people, ["2", "1"]), ["2", "1"]);
+  assert.deepEqual(peopleIds(people, undefined), []);
+  assert.deepEqual(peopleIds(people, null), []);
+  assert.deepEqual(peopleIds(people, "1"), []);
+  assert.deepEqual(peopleIds(text, ["1"]), [], "other column types");
+  assert.deepEqual(peopleIds(null, ["1"]), []);
+});
+
+test("statusOptions lists selectable labels in index order", () => {
+  assert.deepEqual(statusOptions(status), [
+    { index: 0, label: "Working on it", color: "#fdab3d" },
+    { index: 1, label: "Done", color: "#00c875" },
+    { index: 2, label: "Stuck", color: "#df2f4a" },
+  ]);
+  const custom = {
+    id: "status_2",
+    type: "status",
+    settings: { labels: { 10: "Later", 3: "Soon", 5: "", x: "Bad" } },
+  };
+  assert.deepEqual(statusOptions(custom), [
+    { index: 3, label: "Soon", color: null },
+    { index: 10, label: "Later", color: null },
+  ]);
+  assert.deepEqual(statusOptions(text), []);
+  assert.deepEqual(statusOptions({ type: "status" }).length, 3, "defaults");
 });

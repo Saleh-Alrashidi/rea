@@ -441,9 +441,11 @@ test("e2e: me, boards and items print tables and JSON", async (t) => {
   assert.equal(me.code, 0, me.stderr);
   assert.match(me.stdout, /Name\s+Alex Rivera/);
   const boards = await run(["boards"], real.env());
-  assert.match(boards.stdout, /^ID\s+NAME\s+ITEMS\n/);
-  assert.match(boards.stdout, /Product roadmap\s+8\n/);
-  assert.match(boards.stdout, /Marketing launch\s+3\n/);
+  // Exactly these rows: SPEC-2 gives the admin no grant on the Shareable
+  // "Marketing launch", so it must not be listed.
+  const rows =
+    /^ID\s+NAME\s+ITEMS\n\d+\s+Product roadmap\s+8\n\d+\s+Hiring plan\s+3\n\d+\s+Budget 2027\s+3\n$/;
+  assert.match(boards.stdout, rows);
   const boardId = real.roadmap.id;
   const items = await run(["items", boardId], real.env(real.tokens.readOnly));
   assert.equal(items.code, 0, items.stderr);

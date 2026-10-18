@@ -320,6 +320,37 @@ export function isValidStoredValue(column, stored, { getUser } = {}) {
   return STORED_CHECKS[type](stored, column, getUser);
 }
 
+/**
+ * The user IDs in a stored people value (in order); `[]` for empty values
+ * and other column types. Assignment checks (notifications, "my work") use
+ * this instead of reading stored people values themselves.
+ */
+export function peopleIds(column, stored) {
+  if (column?.type !== "people" || !Array.isArray(stored)) return [];
+  return stored.filter((id) => typeof id === "string");
+}
+
+/**
+ * The selectable labels of a status column in index order, without the
+ * blank label: `[{ index, label, color }]` (public form options).
+ */
+export function statusOptions(column) {
+  if (column?.type !== "status") return [];
+  const labels = statusLabels(column);
+  const colors = isPlainObject(column?.settings?.labels_colors)
+    ? column.settings.labels_colors
+    : {};
+  return Object.entries(labels)
+    .filter(([index, label]) => INDEX_PATTERN.test(index) && label !== "")
+    .filter(([, label]) => typeof label === "string")
+    .map(([index, label]) => ({
+      index: Number(index),
+      label,
+      color: typeof colors[index] === "string" ? colors[index] : null,
+    }))
+    .sort((a, b) => a.index - b.index);
+}
+
 function textOutput(text) {
   return { text, value: JSON.stringify(text) };
 }
