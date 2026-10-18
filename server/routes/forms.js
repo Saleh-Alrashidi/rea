@@ -13,9 +13,10 @@
  * Access: `public` forms need nothing, `account` forms the session of an
  * active non-guest user (else 401), `closed` forms answer 403
  * FORM_CLOSED. Submissions also need a host `Origin` when one is sent, are
- * limited to RATE_LIMIT per minute per client IP and form (429
- * RATE_LIMITED), and a filled honeypot `website` field is acknowledged
- * with 201 without creating anything.
+ * limited to RATE_LIMIT per minute per client IP (`clientIp`, which
+ * follows MM_TRUST_PROXY) and form (429 RATE_LIMITED), and a filled
+ * honeypot `website` field is acknowledged with 201 without creating
+ * anything.
  */
 import path from "node:path";
 import { isActive, isGuest } from "../access.js";
@@ -32,50 +33,22 @@ import {
   requireJsonType,
   sendJson,
 } from "./common.js";
+import { clientIp, createRateLimiter } from "./rate-limit.js";
 import { sendFile } from "./static.js";
 
 const FORM_PATH = /^\/f\/([^/]+)(?:\/(definition|submit))?$/;
 const TOKEN_PATTERN = /^[\w-]{22}$/;
 const RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 60_000;
-const MAX_RATE_KEYS = 10_000;
 const METHODS = {
   page: ["GET", "HEAD"],
   definition: ["GET"],
   submit: ["POST"],
 };
 
-/**
- * A sliding-window limiter: `take(key)` → `{ ok: true }` or
- * `{ ok: false, retryAfter }` (seconds). Keys are kept in least recently
- * used order and capped at `maxKeys`.
- */
-export function createRateLimiter({
-  limit = RATE_LIMIT,
-  windowMs = RATE_WINDOW_MS,
-  maxKeys = MAX_RATE_KEYS,
-  now = () => Date.now(),
-} = {}) {
-  const hits = new Map();
-  return {
-    take(key) {
-      const at = now();
-      const recent = (hits.get(key) ?? []).filter((t) => at - t < windowMs);
-      hits.delete(key);
-      if (recent.length >= limit) {
-        hits.set(key, recent);
-        const retryAfter = Math.ceil((windowMs - (at - recent[0])) / 1000);
-        return { ok: false, retryAfter: Math.max(retryAfter, 1) };
-      }
-      hits.set(key, [...recent, at]);
-      for (const oldest of hits.keys()) {
-        if (hits.size <= maxKeys) break;
-        hits.delete(oldest);
-      }
-      return { ok: true };
-    },
-  };
-}
+/** The submission limiter of `cfg.formLimiter`, keyed by client and form. */
+export const createFormLimiter = ({ now } = {}) =>
+  createRateLimiter({ limit: RATE_LIMIT, windowMs: RATE_WINDOW_MS, now });
 
 /** `{ token, action }` for a `/f/…` path, or null. */
 export function matchFormPath(pathname) {
@@ -186,8 +159,7 @@ async function postSubmit(req, res, cfg, form) {
   }
   requireJsonType(req);
   checkAccess(req, cfg, form, { sameOriginFetch: false });
-  const client = req.socket.remoteAddress ?? "unknown";
-  const allowed = cfg.formLimiter.take(`${client}|${form.id}`);
+  const allowed = cfg.formLimiter.take(`${clientIp(req, cfg)}|${form.id}`);
   if (!allowed.ok) {
     const headers = { "Retry-After": String(allowed.retryAfter) };
     fail(429, "Too many responses; try again in a minute", { headers });

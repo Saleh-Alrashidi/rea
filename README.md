@@ -18,8 +18,9 @@ It has two halves:
   `postMessage`, a host-proxied API, app storage, signed session tokens and
   a small CLI.
 
-The contracts are [`SPEC.md`](SPEC.md) (part 1: engine, API, platform) and
-[`SPEC-2.md`](SPEC-2.md) (part 2: the full workspace). This README
+The contracts are [`SPEC.md`](SPEC.md) (part 1: engine, API, platform),
+[`SPEC-2.md`](SPEC-2.md) (part 2: the full workspace) and
+[`SPEC-3.md`](SPEC-3.md) (part 3: private hosted deployment). This README
 summarizes them; the specs win where they differ.
 
 ## How it maps to the REA findings
@@ -73,17 +74,19 @@ session; the next visit signs in as Alex again.
 | Chris Taylor | guest                | Sees only what is shared with him                      |
 | Morgan Diaz  | member (deactivated) | Cannot sign in                                         |
 
-Configuration (environment variables):
+Configuration (environment variables; setting `PORT` switches to hosted
+mode instead, see [Deploy privately on CranL](#deploy-privately-on-cranl)):
 
-| Variable         | Default                        | Meaning                                          |
-| ---------------- | ------------------------------ | ------------------------------------------------ |
-| `MM_HOST_PORT`   | `4100`                         | Host (workspace app + API) port; `0` = free      |
-| `MM_APPS_PORT`   | `4101`                         | Apps (iframe apps + SDK) port                    |
-| `MM_BIND`        | `127.0.0.1`                    | Listen address for both servers                  |
-| `MM_DATA_FILE`   | `.data/mini-monday.json`       | JSON persistence; `:memory:` disables it         |
-| `MM_HOST_ORIGIN` | `http://localhost:<host port>` | Public host origin                               |
-| `MM_APPS_ORIGIN` | `http://127.0.0.1:<apps port>` | Public apps origin (a different site on purpose) |
-| `MM_DEMO_LOGIN`  | on                             | `0` turns off auto sign-in and the user switcher |
+| Variable         | Default                        | Meaning                                           |
+| ---------------- | ------------------------------ | ------------------------------------------------- |
+| `MM_HOST_PORT`   | `4100`                         | Host (workspace app + API) port; `0` = free       |
+| `MM_APPS_PORT`   | `4101`                         | Apps (iframe apps + SDK) port                     |
+| `MM_BIND`        | `127.0.0.1`                    | Listen address for both servers                   |
+| `MM_DATA_FILE`   | `.data/mini-monday.json`       | JSON persistence; `:memory:` disables it          |
+| `MM_HOST_ORIGIN` | `http://localhost:<host port>` | Public host origin                                |
+| `MM_APPS_ORIGIN` | `http://127.0.0.1:<apps port>` | Public apps origin (a different site on purpose)  |
+| `MM_DEMO_LOGIN`  | on                             | `0` turns off auto sign-in and the user switcher  |
+| `MM_TRUST_PROXY` | `0`                            | `1` takes client IPs (rate limits) from the proxy |
 
 The data file format is `mini-monday-store/3`. A part-1 file is refused
 with a message; move it away and the server reseeds. A
@@ -92,6 +95,103 @@ and activity texts) is upgraded once at start-up: names become mentions
 rendered per viewer, a name that matches no single user becomes "Someone",
 the old file is kept as `<file>.v2.bak` (private, like the data file) and
 the result is saved as `/3`, which older versions refuse as unsupported.
+
+## Deploy privately on CranL
+
+[CranL](https://cranl.com/) builds an app from a GitHub repository
+(Railpack or a Dockerfile), runs it on one port, gives it a
+`https://….cranl.net` address and terminates HTTPS at its proxy. Setting
+`PORT` switches Worklane to **hosted mode** (SPEC-3): one listener, a
+password-protected **site gate** in front of everything and proxy-aware
+rate limits. Without the site password, only the form links you make
+public can be used.
+
+1. **Give Worklane its own private repository.** CranL builds from the
+   repository root (Railpack reads `package.json` there, and a Dockerfile
+   must sit there), so this directory has to be the root. From a clone of
+   this repository, push its history to a new private repository:
+
+   ```sh
+   gh repo create <you>/worklane --private   # or create it on github.com
+   git subtree split --prefix examples/mini-monday -b worklane
+   git push git@github.com:<you>/worklane.git worklane:main
+   ```
+
+2. **Connect GitHub in CranL** and allow it to read that repository.
+3. **Create a project, then an app** in it from the repository and branch
+   (`main`). Build type **Railpack** (auto-detects Node.js and runs
+   `npm start`, which is `node server/main.js`) or **Dockerfile** (this
+   directory's `Dockerfile`: `node:22-alpine`, non-root `node` user, port
+   8080).
+4. **Set the app's port to `8080`** and its environment variables:
+
+   | Variable           | Value                                                                                                 |
+   | ------------------ | ----------------------------------------------------------------------------------------------------- |
+   | `PORT`             | `8080`, the app's port (the Dockerfile sets it too; a port the platform provides wins)                |
+   | `MM_HOST_ORIGIN`   | The app's address, e.g. `https://worklane.cranl.net`: exactly the origin, no path or trailing slash   |
+   | `MM_SITE_PASSWORD` | A long random password (at least 12 characters) for everyone who may use the site                     |
+   | `MM_DATA_FILE`     | Optional: a file on a mounted volume, e.g. `/data/worklane.json` (see Data below)                     |
+   | `MM_APPS_ORIGIN`   | Optional: a second domain for iframe apps (see Apps below)                                            |
+   | `MM_TRUST_PROXY`   | Leave unset (hosted default `1`): the proxy appends the client's IP as the last `X-Forwarded-For` hop |
+   | `MM_DEMO_LOGIN`    | Optional: `0` hides the demo user switcher                                                            |
+
+5. **Health check path: `/healthz`** (200 `ok`, no data, no sign-in).
+6. **Deploy and open the address.** Every page asks for the site password
+   first; signing in opens the workspace as Alex Rivera, the admin. The
+   app's log (visible only to the project's members) shows the address,
+   whether the gate and apps are on, the data file and the two API tokens.
+   It never shows the password.
+
+A missing or invalid setting stops the server before it listens, with one
+line per problem in the log and exit code 1:
+
+```
+mini-monday: MM_HOST_ORIGIN is required in hosted mode: the site's public origin, like https://worklane.cranl.net
+mini-monday: MM_SITE_PASSWORD must be at least 12 characters long
+```
+
+**What is reachable without the password.** `/signin` with its
+stylesheets and script, `/healthz`, `/robots.txt` (which disallows
+everything), and the forms you set to **Public**: `/f/<token>` with the
+files the form page loads. **Signed-in members** forms still need a
+session and closed forms stay closed. Calls to `POST /v2` and
+`GET /v2/events` with a valid API token work without the site session, so
+keep the tokens secret. Everything else redirects page loads to
+`/signin?next=<path>` (only same-site paths are followed afterwards) and
+answers other requests with 401 `SITE_LOCKED`; the boards app then opens
+the sign-in page and comes back to where it was. Every response carries
+`X-Robots-Tag: noindex, nofollow` and, for an `https:` address,
+`Strict-Transport-Security`; cookies are `Secure`.
+
+**Sign-in.** The password is compared in constant time. A wrong one is
+answered after a fixed ~300 ms delay, and 5 failures from one client IP
+within 15 minutes refuse that IP for the rest of the window (429 with
+`Retry-After`); successful sign-ins do not count. A site session ends
+after 12 hours without use or at **Sign out**, after which the site shows
+`/signin` again. Demo user switching keeps you signed in.
+
+**Data.** The default data file lives on the container's disk, which may
+not survive a redeploy or restart: the demo workspace is then seeded again
+with new API tokens. To keep data, mount a volume (where your plan has
+them), make it writable by the app's user (`node`, uid 1000, with the
+Dockerfile) and set `MM_DATA_FILE` to a file on it.
+
+**Apps.** Without `MM_APPS_ORIGIN` the app platform is off: boards show no
+app views, `POST /apps/session-token` answers 404 and the page allows no
+frames. To turn it on, point a second domain (another host name than
+`MM_HOST_ORIGIN`, so apps never receive the site's cookie) at the same app
+and set `MM_APPS_ORIGIN` to its origin; requests for that host reach the
+apps handler on the same port.
+
+**Try hosted mode locally** (`http:` is accepted for loopback hosts only):
+
+```sh
+PORT=8080 MM_HOST_ORIGIN=http://localhost:8080 \
+  MM_SITE_PASSWORD='a long local password' npm start
+```
+
+`MM_PUBLIC_DEMO=1` instead of a password runs a deliberately public demo
+(no gate, demo sign-in as in local mode); the server prints a loud warning.
 
 ## Feature tour
 
@@ -232,9 +332,13 @@ sending them.
 
 ```
 server/
-  main.js          env → store → startServers → banner with tokens
-  http.js          host and apps servers, routing table, security headers
+  main.js          env → config (local or hosted) → store → startServers
+                   → banner with tokens
+  http.js          host and apps handlers, their listeners (two locally,
+                   one routed by Host when hosted), routes, headers
   routes/          graphql.js static.js forms.js auth.js apps.js common.js
+                   gate.js (site gate, /signin) platform.js (/healthz,
+                   /robots.txt) rate-limit.js (client IP, limiter)
   access.js        the only interpreter of roles, grants and teams
   store.js         createStore(): records, change events, persistence
   store/           people workspaces boards items docs notes forms grants
@@ -251,6 +355,7 @@ server/
   versions.js      API version table
 web/               the host app (plain ES modules, no build)
   main.js router.js api.js dom.js host-bridge.js form-page.js
+  signin.html signin.js  the site gate's sign-in page
   pages/           one module per route (mount(container, ctx, params))
   ui/              components/ shell/ board/ docs/ notes/ forms/ admin/
                    teams/ workspaces/
@@ -258,7 +363,8 @@ web/               the host app (plain ES modules, no build)
 apps/status-summary/  example iframe app
 sdk/               the iframe-app SDK (served from the apps origin)
 cli/               the mm CLI
-scripts/           browser tests (e2e-smoke, e2e-roles) and their harness
+scripts/           browser tests (e2e-smoke, e2e-roles, e2e-hosted) and
+                   their harness
 test/              node:test suites
 ```
 
@@ -367,6 +473,10 @@ from these streams.
   in-app links from server data.
 - **Public forms**: unguessable 16-byte tokens, a timing-safe token
   lookup, an `Origin` check, a honeypot and a per-client rate limit.
+- **Private hosting** (SPEC-3, `server/routes/gate.js`): with a site
+  password every host request needs a site session except the sign-in
+  page, health and robots, public forms and API-token calls; see
+  [Deploy privately on CranL](#deploy-privately-on-cranl).
 - **Secrets**: tokens, app secrets and session IDs are random per run;
   signatures are compared with `crypto.timingSafeEqual`; JWTs accept only
   HS256.
@@ -380,6 +490,7 @@ npm test                       # node --test "test/**/*.test.js"
 node --test test/permissions.test.js   # one suite
 npm run e2e                    # node scripts/e2e-smoke.mjs
 node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
+node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
 ```
 
 - The unit and integration suites cover the GraphQL engine, the store and
@@ -405,6 +516,14 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
   updates paused" banner. Both fail on console
   errors, page errors, CSP violations, failed requests and unexpected HTTP
   errors, and save screenshots to `e2e-output/`.
+- The `test/hosted-*.test.js` suites cover hosted mode: configuration
+  checks, the gate for every route class, `next` sanitization, the
+  password comparison and delay, rate limits behind a proxy, session
+  expiry and sign-out, Host routing with and without an apps origin, and
+  the headers. `e2e-hosted.mjs` starts hosted mode on a free `PORT` with a
+  password and drives the redirect to `/signin`, a wrong password, signing
+  in to the requested page, a board, demo switching, a public form signed
+  out and signing out.
 - The browser tests need `playwright` or `playwright-core` and a Chromium;
   without them they print why and exit 0. `MM_E2E_CHROMIUM` names a browser
   executable; `MM_E2E_STEPS=2,5` runs selected steps while developing.
@@ -414,13 +533,19 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
 
 ## Limitations
 
-- **Demo sign-in.** In demo mode anyone who can reach the server is signed
-  in as the admin and can switch to any user. Set `MM_DEMO_LOGIN=0` to turn
-  it off; there is then no real sign-in flow at all.
+- **Demo sign-in.** In local demo mode anyone who can reach the server is
+  signed in as the admin and can switch to any user. Set `MM_DEMO_LOGIN=0`
+  to turn it off; there is then no real sign-in flow at all.
+- **One site password.** Hosted mode's gate has one shared password that
+  signs in as the admin (user 1); there are no per-person accounts or
+  passwords. Per-IP limits treat people behind one address as one client.
+  `mm schema` reads `/v2/get_schema` without a token, which the gate
+  refuses: run it against a local server.
 - **One account.** There is a single account (`id "1"`) with no sign-up,
   passwords, invitations by email or multi-tenancy.
 - **In-memory sessions.** Browser sessions live in the server process
-  (24 h idle timeout) and are lost on restart. The two API tokens are
+  (24 h idle timeout, 12 h behind the site gate) and are lost on restart,
+  like the sign-in failure counts. The two API tokens are
   created when the store is seeded; there is no UI to create or revoke
   tokens.
 - **Containing workspace names.** Content reached only through a grant
@@ -446,6 +571,7 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
   saves surface as a version conflict). Undo in docs is the editor's own
   doc-wide history (typing and structural edits, up to 200 steps), cleared
   when the doc is reloaded.
-- **Not production software.** No TLS termination, backups, audit log
+- **Not production software.** No TLS termination (hosted mode relies on
+  the platform's proxy), backups, audit log
   export, email, accessibility audit beyond the checks above, or security
   review beyond this example's tests.

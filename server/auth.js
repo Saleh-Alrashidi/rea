@@ -30,7 +30,8 @@ const API_TOKEN_PATTERN = /^[\w-]{1,512}$/;
 const BEARER_PATTERN = /^Bearer\s+(\S+)$/i;
 const SESSION_ID_PATTERN = /^[\w-]{43}$/;
 // Browser sessions are an in-memory demo convenience: they expire after a
-// day without use and the table is capped so anonymous page loads (demo
+// day without use (unless `createAuth` is given another idle time, as the
+// site gate does) and the table is capped so anonymous page loads (demo
 // auto-login) cannot grow it without bound.
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
 const MAX_SESSIONS = 10_000;
@@ -158,7 +159,7 @@ function sessionPrincipal(user) {
   };
 }
 
-function createSessionTable(store, now) {
+function createSessionTable(store, { now, idleMs }) {
   // Map order is least recently used first; every use moves an entry to the
   // end, so expired entries always sit at the front.
   const sessions = new Map();
@@ -181,7 +182,7 @@ function createSessionTable(store, now) {
     }
     prune();
     const id = randomBytes(32).toString("base64url");
-    sessions.set(id, { userId, expiresAt: now() + SESSION_IDLE_MS });
+    sessions.set(id, { userId, expiresAt: now() + idleMs });
     return id;
   };
   /** The live entry and its active user, without extending it; or null. */
@@ -199,7 +200,7 @@ function createSessionTable(store, now) {
         return null;
       }
       sessions.delete(sessionId);
-      const expiresAt = now() + SESSION_IDLE_MS;
+      const expiresAt = now() + idleMs;
       sessions.set(sessionId, { ...found.entry, expiresAt });
       return sessionPrincipal(found.user);
     },
@@ -300,7 +301,8 @@ function issueSessionToken(store, now, options = {}) {
 
 /**
  * Creates the authentication service over `store`. `now` returns epoch
- * milliseconds.
+ * milliseconds; browser sessions end after `sessionIdleMs` without use
+ * (default a day; every use restarts it).
  *
  * - `authenticateApiToken(header)` accepts a raw token or `Bearer <token>`.
  * - `createBrowserSession(userId)` returns a random 32-byte base64url ID
@@ -321,11 +323,18 @@ function issueSessionToken(store, now, options = {}) {
  *   an unsubscribe function.
  * - `close()` stops listening to the store (deactivations).
  */
-export function createAuth({ store, now = () => Date.now() } = {}) {
+export function createAuth({
+  store,
+  now = () => Date.now(),
+  sessionIdleMs = SESSION_IDLE_MS,
+} = {}) {
   if (typeof store?.getUser !== "function") {
     throw new TypeError("createAuth requires a store");
   }
-  const sessions = createSessionTable(store, now);
+  if (!Number.isSafeInteger(sessionIdleMs) || sessionIdleMs < 1) {
+    throw new TypeError("sessionIdleMs must be a positive integer");
+  }
+  const sessions = createSessionTable(store, { now, idleMs: sessionIdleMs });
   const unsubscribe =
     store.on?.((event) => {
       if (event.type !== "user_updated") return;

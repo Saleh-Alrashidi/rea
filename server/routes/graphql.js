@@ -33,6 +33,8 @@ function apiPrincipal(req, cfg) {
   }
   const principal = sessionPrincipal(req, cfg);
   if (install === undefined) return principal;
+  // Without an apps origin no app runs (SPEC-3 §3), so no app principal.
+  if (cfg.appsOrigin === null) fail(403, "Apps are turned off on this server");
   const installId = typeof install === "string" ? install.trim() : "";
   const app = ID_PATTERN.test(installId)
     ? cfg.auth.appPrincipal(principal, installId)

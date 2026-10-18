@@ -6,7 +6,9 @@
  *
  * This module is the one place that turns HTTP and GraphQL failures into
  * thrown errors (`ApiError`), so pages read `error.code` instead of parsing
- * response bodies.
+ * response bodies. On a private site (SPEC-3 §2) a request the site gate
+ * refuses (`SITE_LOCKED`: the site session ended) also opens the sign-in
+ * page, which brings the browser back to the same page afterwards.
  */
 
 const API_PATH = "/v2";
@@ -15,6 +17,7 @@ const SESSION_TOKEN_PATH = "/apps/session-token";
 const DEMO_USERS_PATH = "/auth/demo-users";
 const DEMO_LOGIN_PATH = "/auth/demo-login";
 const LOGOUT_PATH = "/auth/logout";
+const SIGNIN_PATH = "/signin";
 /** The version this UI was written against (`server/versions.js` current). */
 const DEFAULT_API_VERSION = "2026-01";
 const ID_PATTERN = /^\d{1,20}$/;
@@ -95,6 +98,23 @@ function httpError(response, body) {
   return new ApiError(errors, { status: response.status });
 }
 
+/**
+ * Opens the sign-in page with this page as `next` (its hash rides along:
+ * the sign-in page adds it back).
+ */
+function openSignin() {
+  const { pathname, search, hash } = globalThis.location;
+  const next = encodeURIComponent(`${pathname}${search}`);
+  globalThis.location.assign(`${SIGNIN_PATH}?next=${next}${hash}`);
+}
+
+/** `httpError`, after opening the sign-in page when the site gate refused. */
+function failed(response, body) {
+  const error = httpError(response, body);
+  if (error.code === "SITE_LOCKED") openSignin();
+  return error;
+}
+
 async function send(path, { method = "POST", body, headers = {} }) {
   const init = {
     method,
@@ -113,7 +133,7 @@ async function postJson(path, { body, headers = {} }) {
   const response = await send(path, { body, headers });
   const parsed = await readJson(response);
   if (!response.ok || !isPlainObject(parsed)) {
-    throw httpError(response, parsed);
+    throw failed(response, parsed);
   }
   return parsed;
 }
@@ -121,7 +141,7 @@ async function postJson(path, { body, headers = {} }) {
 /** POSTs `body` to a route that answers 204 No Content. */
 async function postNoContent(path, body) {
   const response = await send(path, { body });
-  if (!response.ok) throw httpError(response, await readJson(response));
+  if (!response.ok) throw failed(response, await readJson(response));
   // Finish the exchange before resolving: callers often reload the page
   // next (switching user, signing out), which would abort it otherwise.
   await response.arrayBuffer();
@@ -273,7 +293,7 @@ export async function listDemoUsers() {
   if (response.status === 404) return null;
   const body = await readJson(response);
   if (!response.ok || !Array.isArray(body?.users)) {
-    throw httpError(response, body);
+    throw failed(response, body);
   }
   return body.users.filter(
     (user) => isPlainObject(user) && ID_PATTERN.test(String(user.id)),
@@ -290,7 +310,13 @@ export async function demoLogin(userId) {
   await postNoContent(DEMO_LOGIN_PATH, { user_id: readId(userId, "userId") });
 }
 
-/** Ends the browser session (the server clears the cookie). */
+/**
+ * Ends the browser session (the server clears the cookie). A session the
+ * site gate already ended (`SITE_LOCKED`) counts as signed out.
+ */
 export async function logout() {
-  await postNoContent(LOGOUT_PATH, {});
+  const response = await send(LOGOUT_PATH, { body: {} });
+  if (response.ok) return void (await response.arrayBuffer());
+  const error = httpError(response, await readJson(response));
+  if (error.code !== "SITE_LOCKED") throw error;
 }

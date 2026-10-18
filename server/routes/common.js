@@ -6,7 +6,8 @@
  *
  * Route handlers have the signature `(req, res, cfg, target)` where `cfg`
  * is the server state built by `startServers` (`store`, `auth`, `events`,
- * `hostOrigin`, `appsOrigin`, `log`, `demoLogin`, …) and `target` is
+ * `hostOrigin`, `appsOrigin` (null while the app platform is off), `log`,
+ * `demoLogin`, `hosted`, `gate`, `trustProxy`, …) and `target` is
  * `{ pathname, search, params? }`.
  */
 import { ID_PATTERN, isPlainObject } from "../input.js";

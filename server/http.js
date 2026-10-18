@@ -1,15 +1,27 @@
 /**
- * The two HTTP servers (see SPEC.md "server/http.js" and SPEC-2 §4):
+ * The HTTP handlers and their listeners (see SPEC.md "server/http.js",
+ * SPEC-2 §4 and SPEC-3 §3–4):
  *
  * - host: the boards app (`web/`), the GraphQL API at `/v2`, the SSE
  *   streams, app session tokens, public forms (`/f/<token>`) and the
- *   sign-in routes (`/auth/*`);
+ *   sign-in routes (`/auth/*`); with a site password, the site gate
+ *   (`routes/gate.js`) runs before every host route and `/signin` exists;
  * - apps: iframe apps (`apps/`), the SDK and the example app's backend.
  *   It sets no cookies and serves no API.
  *
- * Route handlers live in `server/routes/`. Both servers only answer
- * requests whose Host header names their public origin, `localhost` or an
- * IP literal: names that DNS rebinding cannot point at them.
+ * Local mode (default) gives each handler its own listener, and both only
+ * answer requests whose Host header names their public origin,
+ * `localhost` or an IP literal: names that DNS rebinding cannot point at
+ * them. Hosted mode has one listener behind the platform's proxy: a Host
+ * naming the apps origin's host goes to the apps handler, every other
+ * Host to the host handler (proxies may rewrite it), while CSP, cookies
+ * and Origin checks keep using the configured origins. Hosted responses
+ * carry `X-Robots-Tag` (and HSTS for an `https:` host origin), and the
+ * host also serves `/healthz` and `/robots.txt`. Without an apps origin
+ * (`appsOrigin` null) the app platform is off: no app views, session
+ * tokens or app principals, and no `frame-src` in the host CSP.
+ *
+ * Route handlers live in `server/routes/`.
  */
 import { realpath } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -32,8 +44,16 @@ import {
   postLogout,
 } from "./routes/auth.js";
 import { HttpError, fail, sendError, splitTarget } from "./routes/common.js";
-import { createRateLimiter, formRoute, matchFormPath } from "./routes/forms.js";
+import { createFormLimiter, formRoute, matchFormPath } from "./routes/forms.js";
+import {
+  SITE_SESSION_IDLE_MS,
+  createGate,
+  getSignin,
+  guard,
+  postSignin,
+} from "./routes/gate.js";
 import { getEvents, getSchema, postGraphql } from "./routes/graphql.js";
+import { getHealthz, getRobots } from "./routes/platform.js";
 import { staticRoute } from "./routes/static.js";
 import { createSchema } from "./schema.js";
 
@@ -45,12 +65,23 @@ const invalidOption = (message) => {
   throw new TypeError(`startServers: ${message}`);
 };
 
+/** The host name a Host header names (lower case), or "". */
+function hostnameOf(host) {
+  const url = `http://${host}`;
+  return typeof host === "string" && URL.canParse(url)
+    ? new URL(url).hostname
+    : "";
+}
+
+/** True when two origins name the same host (ports aside, like cookies). */
+export const sameHostname = (a, b) =>
+  new URL(a).hostname === new URL(b).hostname;
+
 /** True when `host` is `origin`'s host, `localhost` or an IP literal. */
 function isAllowedHost(host, origin) {
   if (typeof host !== "string") return false;
   if (host.toLowerCase() === new URL(origin).host) return true;
-  const url = `http://${host}`;
-  const hostname = URL.canParse(url) ? new URL(url).hostname : "";
+  const hostname = hostnameOf(host);
   const literal = hostname.replace(/^\[(.*)\]$/, "$1");
   return hostname === "localhost" || isIP(literal) !== 0;
 }
@@ -66,6 +97,13 @@ const HOST_ROUTES = new Map([
   ["/auth/demo-login", { POST: postDemoLogin }],
   ["/auth/logout", { POST: postLogout }],
 ]);
+/** Hosted mode only (SPEC-3 §2, §4). */
+const HOSTED_ROUTES = [
+  ["/healthz", READ(getHealthz)],
+  ["/robots.txt", READ(getRobots)],
+];
+/** With a site password only. */
+const GATE_ROUTES = [["/signin", { ...READ(getSignin), POST: postSignin }]];
 const APPS_ROUTES = new Map([
   ["/sdk/mini-monday-sdk.js", READ(getSdk)],
   ["/apps/config.js", READ(getAppsConfig)],
@@ -88,13 +126,17 @@ function hostFallback(req, res, cfg, target) {
 
 // ------------------------------------------------------------------ servers
 
-function createHandler(cfg, { routes, fallback, originKey, headers }) {
+function createHandler(cfg, kind) {
+  const { fallback, originKey, headers, gated } = kind;
+  const routes = kind.routes(cfg);
   const dispatch = async (req, res) => {
     for (const [name, value] of headers) res.setHeader(name, value);
+    for (const [name, value] of cfg.headers) res.setHeader(name, value);
     if (!cfg.ready) fail(503, "Server is starting");
-    if (!isAllowedHost(req.headers.host, cfg[originKey]))
+    if (!cfg.hosted && !isAllowedHost(req.headers.host, cfg[originKey]))
       fail(400, "Unexpected Host header");
     const target = splitTarget(req.url);
+    if (gated && !guard(req, res, cfg, target)) return;
     const route = routes.get(target.pathname);
     if (!route) return fallback(req, res, cfg, target);
     const handler = Object.hasOwn(route, req.method) ? route[req.method] : null;
@@ -144,104 +186,199 @@ function closeServer(server) {
 function policies({ hostOrigin, appsOrigin }) {
   const base = "default-src 'self'; script-src 'self'; style-src 'self'";
   const end = "base-uri 'none'; object-src 'none'";
+  const frames = appsOrigin === null ? "" : `frame-src ${appsOrigin}; `;
   const hostCsp =
     `${base}; img-src 'self' data:; connect-src 'self'; ` +
-    `frame-src ${appsOrigin}; frame-ancestors 'none'; base-uri 'none'; ` +
+    `${frames}frame-ancestors 'none'; base-uri 'none'; ` +
     "form-action 'self'; object-src 'none'";
   const appsCsp =
-    `${base}; connect-src 'self'; img-src 'self' data:; ` +
-    `frame-ancestors ${hostOrigin}; ${end}`;
+    appsOrigin === null
+      ? null
+      : `${base}; connect-src 'self'; img-src 'self' data:; ` +
+        `frame-ancestors ${hostOrigin}; ${end}`;
   return { hostCsp, appsCsp };
+}
+
+/** Headers of every response that depend on the configuration. */
+function configuredHeaders({ hosted, hostOrigin }) {
+  if (!hosted) return [];
+  const headers = [["X-Robots-Tag", "noindex, nofollow"]];
+  if (hostOrigin.startsWith("https:"))
+    headers.push(["Strict-Transport-Security", "max-age=31536000"]);
+  return headers;
 }
 
 const COMMON_HEADERS = [
   ["X-Content-Type-Options", "nosniff"],
   ["Referrer-Policy", "no-referrer"],
 ];
-const SERVERS = [
-  {
-    routes: HOST_ROUTES,
-    fallback: hostFallback,
-    originKey: "hostOrigin",
-    headers: [...COMMON_HEADERS, ["Cross-Origin-Opener-Policy", "same-origin"]],
-    defaultOrigin: (port) => `http://localhost:${port}`,
-  },
-  {
-    routes: APPS_ROUTES,
-    fallback: APPS_STATIC,
-    originKey: "appsOrigin",
-    headers: COMMON_HEADERS,
-    defaultOrigin: (port) => `http://127.0.0.1:${port}`,
-  },
-];
+const HOST_KIND = {
+  routes: (cfg) =>
+    new Map([
+      ...HOST_ROUTES,
+      ...(cfg.hosted ? HOSTED_ROUTES : []),
+      ...(cfg.gate ? GATE_ROUTES : []),
+    ]),
+  fallback: hostFallback,
+  originKey: "hostOrigin",
+  headers: [...COMMON_HEADERS, ["Cross-Origin-Opener-Policy", "same-origin"]],
+  gated: true,
+  defaultOrigin: (port) => `http://localhost:${port}`,
+};
+const APPS_KIND = {
+  routes: () => APPS_ROUTES,
+  fallback: APPS_STATIC,
+  originKey: "appsOrigin",
+  headers: COMMON_HEADERS,
+  gated: false,
+  defaultOrigin: (port) => `http://127.0.0.1:${port}`,
+};
+const LOCAL_KINDS = [HOST_KIND, APPS_KIND];
+
+/** Hosted mode's one listener: picks the handler by the Host header. */
+function routeByHost(cfg, { host, apps }) {
+  const appsHost =
+    cfg.appsOrigin === null ? null : new URL(cfg.appsOrigin).hostname;
+  return (req, res) =>
+    appsHost !== null && hostnameOf(req.headers.host) === appsHost
+      ? apps(req, res)
+      : host(req, res);
+}
 
 /**
- * Starts the host and apps servers. Port 0 picks a free port; an origin
- * that is not given is derived from the actual port. `demoLogin` (default
- * true) turns on demo sign-in (`server/routes/auth.js`). `close()` ends
- * SSE streams, stops the services' store listeners and closes both
- * servers.
+ * The checked listener layout: local → two ports and optional origins
+ * (derived from the ports later); hosted → one port and the given
+ * origins (`hostOrigin` required, `appsOrigin` optional on another host).
+ */
+function readLayout(options) {
+  const { mode = "local" } = options;
+  const origins = [
+    readOrigin(options.hostOrigin, "hostOrigin"),
+    readOrigin(options.appsOrigin, "appsOrigin"),
+  ];
+  if (mode === "local") {
+    const { hostPort = 4100, appsPort = 4101 } = options;
+    const ports = [
+      readPort(hostPort, "hostPort"),
+      readPort(appsPort, "appsPort"),
+    ];
+    return { hosted: false, ports, origins };
+  }
+  if (mode !== "hosted") invalidOption('mode must be "local" or "hosted"');
+  const [hostOrigin, appsOrigin] = origins;
+  if (hostOrigin === null) invalidOption("hosted mode needs a hostOrigin");
+  if (appsOrigin !== null && sameHostname(hostOrigin, appsOrigin))
+    invalidOption("hostOrigin and appsOrigin need different hosts");
+  return { hosted: true, ports: [readPort(options.port, "port")], origins };
+}
+
+/** The shared server state route handlers receive as `cfg`. */
+async function createState(options, layout) {
+  const { store, log, demoLogin, trustProxy, now } = options;
+  const [webRoot, appsRoot] = await Promise.all(
+    ["web", "apps"].map((name) => realpath(path.join(ROOT, name))),
+  );
+  const gate =
+    options.sitePassword === null
+      ? null
+      : createGate({ password: options.sitePassword, now });
+  const sessionIdleMs = gate ? SITE_SESSION_IDLE_MS : undefined;
+  const auth = createAuth({ store, now, sessionIdleMs });
+  const { sessionActive } = auth;
+  const events = createEventHub({ store, sessionActive });
+  const cfg = { ready: false, store, auth, events, log, webRoot, appsRoot };
+  Object.assign(cfg, { schema: createSchema(), sdl: new Map(), demoLogin });
+  Object.assign(cfg, { hosted: layout.hosted, gate, trustProxy, headers: [] });
+  cfg.formLimiter = createFormLimiter({ now });
+  return cfg;
+}
+
+/**
+ * Starts the listeners of `layout` (added to `servers` as they are made,
+ * so a failed start can close them) and sets the origins local mode
+ * derives from its ports.
+ */
+async function listenAll(cfg, layout, { bind, servers }) {
+  const { ports, origins } = layout;
+  if (layout.hosted) {
+    [cfg.hostOrigin, cfg.appsOrigin] = origins;
+    const handlers = {
+      host: createHandler(cfg, HOST_KIND),
+      apps: createHandler(cfg, APPS_KIND),
+    };
+    const server = createServer(routeByHost(cfg, handlers));
+    servers.push(server);
+    await listen(server, { port: ports[0], bind });
+    return;
+  }
+  servers.push(
+    ...LOCAL_KINDS.map((kind) => createServer(createHandler(cfg, kind))),
+  );
+  for (const [index, kind] of LOCAL_KINDS.entries()) {
+    const port = await listen(servers[index], { port: ports[index], bind });
+    cfg[kind.originKey] = origins[index] ?? kind.defaultOrigin(port);
+  }
+  if (cfg.hostOrigin === cfg.appsOrigin) invalidOption("Origins must differ");
+}
+
+/**
+ * Starts the servers. `mode` "local" (default) listens on `hostPort` and
+ * `appsPort` (0 picks a free port; an origin that is not given is derived
+ * from the actual port); "hosted" listens on `port` alone and needs
+ * `hostOrigin` (`appsOrigin` null turns the app platform off).
+ * `demoLogin` (default true) turns on demo sign-in
+ * (`server/routes/auth.js`); `sitePassword` turns on the site gate;
+ * `trustProxy` takes client IPs from `X-Forwarded-For`
+ * (`routes/rate-limit.js`); `now` is the clock of sessions and rate
+ * limits. `close()` ends SSE streams, stops the services' store listeners
+ * and closes the servers.
  * @returns {Promise<{ hostOrigin, appsOrigin, hostServer, appsServer, auth,
- *   close(): Promise<void> }>}
+ *   close(): Promise<void> }>} (`appsServer` is null in hosted mode, where
+ *   `hostServer` is the one listener)
  */
 export async function startServers({
   store,
-  hostPort = 4100,
-  appsPort = 4101,
   bind = "127.0.0.1",
-  hostOrigin,
-  appsOrigin,
   log = console,
   demoLogin = true,
+  sitePassword = null,
+  trustProxy = false,
+  now = () => Date.now(),
+  ...layoutOptions
 } = {}) {
   if (typeof store?.getBoard !== "function")
     invalidOption("A store is required");
   if (typeof demoLogin !== "boolean") invalidOption("demoLogin is a boolean");
-  const ports = [
-    readPort(hostPort, "hostPort"),
-    readPort(appsPort, "appsPort"),
-  ];
-  const origins = [
-    readOrigin(hostOrigin, "hostOrigin"),
-    readOrigin(appsOrigin, "appsOrigin"),
-  ];
-  const [webRoot, appsRoot] = await Promise.all(
-    ["web", "apps"].map((name) => realpath(path.join(ROOT, name))),
+  if (typeof trustProxy !== "boolean") invalidOption("trustProxy is a boolean");
+  const layout = readLayout(layoutOptions);
+  const options = { store, log, demoLogin, sitePassword, trustProxy, now };
+  const cfg = await createState(options, layout);
+  const servers = [];
+  const stopSessions = cfg.auth.onSessionEnded((id) =>
+    cfg.events.endSession(id),
   );
-  const auth = createAuth({ store });
-  const { sessionActive } = auth;
-  const events = createEventHub({ store, sessionActive });
-  // Streams opened with a browser session end with it (SPEC-2 §4 logout).
-  const stopSessions = auth.onSessionEnded((id) => events.endSession(id));
-  const cfg = { ready: false, store, auth, events, log, webRoot, appsRoot };
-  Object.assign(cfg, { schema: createSchema(), sdl: new Map(), demoLogin });
-  cfg.formLimiter = createRateLimiter();
-  const servers = SERVERS.map((kind) => createServer(createHandler(cfg, kind)));
   const close = async () => {
     stopSessions();
-    events.close();
-    auth.close();
+    cfg.events.close();
+    cfg.auth.close();
     await Promise.all(servers.map(closeServer));
   };
   try {
-    for (const [index, kind] of SERVERS.entries()) {
-      const port = await listen(servers[index], { port: ports[index], bind });
-      cfg[kind.originKey] = origins[index] ?? kind.defaultOrigin(port);
-    }
-    if (cfg.hostOrigin === cfg.appsOrigin) invalidOption("Origins must differ");
+    await listenAll(cfg, layout, { bind, servers });
   } catch (error) {
     await close();
     throw error;
   }
-  Object.assign(cfg, policies(cfg), { ready: true });
+  Object.assign(cfg, policies(cfg), { headers: configuredHeaders(cfg) });
+  cfg.ready = true;
   let closing = null;
-  const [hostServer, appsServer] = servers;
+  const [hostServer, appsServer = null] = servers;
   return {
     hostOrigin: cfg.hostOrigin,
     appsOrigin: cfg.appsOrigin,
     hostServer,
     appsServer,
-    auth,
+    auth: cfg.auth,
     close: () => (closing ??= close()),
   };
 }

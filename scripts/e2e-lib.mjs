@@ -1,5 +1,6 @@
 /**
- * Shared harness of the browser tests (`e2e-smoke.mjs`, `e2e-roles.mjs`).
+ * Shared harness of the browser tests (`e2e-smoke.mjs`, `e2e-roles.mjs`,
+ * `e2e-hosted.mjs`).
  *
  * `runE2E({ name, steps })` starts the host and apps servers over an
  * in-memory store, launches headless Chromium and runs the steps in order,
@@ -15,17 +16,18 @@
  * neither `playwright` nor `playwright-core` can be imported, or no
  * Chromium is installed, the run prints why and exits 0. MM_E2E_CHROMIUM
  * names a browser executable; MM_HOST_PORT / MM_APPS_PORT (default 0, a
- * free port) and MM_BIND choose where the servers listen. Screenshots go
- * to `e2e-output/`.
+ * free port) and MM_BIND choose where the servers listen (a script can
+ * start other servers with `serve`, as `e2e-hosted.mjs` does). Screenshots
+ * go to `e2e-output/`.
  */
-import { access, mkdir, readdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { startServers } from "../server/http.js";
 import { readConfig } from "../server/main.js";
 import { createStore } from "../server/store.js";
+import { launchBrowser, loadPlaywright } from "./e2e-browser.mjs";
 
 export const WAIT_MS = 10_000;
 export const DESKTOP = { width: 1280, height: 860 };
@@ -33,14 +35,6 @@ export const MOBILE = { width: 360, height: 740 };
 export const OUTPUT_DIR = fileURLToPath(
   new URL("../e2e-output/", import.meta.url),
 );
-const CHROME_PATHS = {
-  linux: [
-    ["chrome-linux", "chrome"],
-    ["chrome-linux64", "chrome"],
-  ],
-  darwin: [["chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"]],
-  win32: [["chrome-win", "chrome.exe"]],
-};
 
 // ----------------------------------------------------------------- checks
 
@@ -66,61 +60,6 @@ export async function waitUntil(probe, label, timeout = WAIT_MS) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return fail(`timed out waiting for ${label}${last}`);
-}
-
-// ---------------------------------------------------------------- browser
-
-async function loadPlaywright() {
-  for (const name of ["playwright", "playwright-core"]) {
-    try {
-      const module = await import(name);
-      return module.chromium ? module : module.default;
-    } catch (error) {
-      if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
-    }
-  }
-  return null;
-}
-
-const exists = (file) =>
-  access(file).then(
-    () => true,
-    () => false,
-  );
-
-/** A Chromium from the Playwright browser cache, newest revision first. */
-async function installedChromium() {
-  const root =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ||
-    path.join(homedir(), ".cache", "ms-playwright");
-  const names = (await readdir(root).catch(() => []))
-    .filter((name) => /^chromium-\d+$/.test(name))
-    .sort((a, b) => Number(b.slice(9)) - Number(a.slice(9)));
-  for (const name of names) {
-    for (const parts of CHROME_PATHS[process.platform] ?? []) {
-      const file = path.join(root, name, ...parts);
-      if (await exists(file)) return file;
-    }
-  }
-  return null;
-}
-
-/** Launches headless Chromium, or returns null when none is installed. */
-async function launchBrowser(chromium) {
-  // Chromium refuses its sandbox when run as root (as in containers).
-  const args = process.getuid?.() === 0 ? ["--no-sandbox"] : [];
-  const executablePath = process.env.MM_E2E_CHROMIUM || undefined;
-  try {
-    return await chromium.launch({ headless: true, args, executablePath });
-  } catch (error) {
-    if (executablePath || !/Executable doesn't exist/.test(error.message)) {
-      throw error;
-    }
-  }
-  // The installed Playwright may expect a browser revision that is missing.
-  const fallback = await installedChromium();
-  if (!fallback) return null;
-  return chromium.launch({ headless: true, args, executablePath: fallback });
 }
 
 // --------------------------------------------------------------- problems
@@ -436,23 +375,29 @@ async function drive(context, { name, steps, prefix, setup }) {
   return ok;
 }
 
-async function start(options) {
-  const playwright = await loadPlaywright();
-  if (!playwright) {
-    console.log("playwright not available; skipping");
-    return 0;
-  }
+/** The default `serve`: local mode over an in-memory store. */
+async function serveLocal(log) {
   const env = process.env;
   const { hostPort, appsPort, bind } = readConfig({
     ...env,
     MM_HOST_PORT: env.MM_HOST_PORT || "0",
     MM_APPS_PORT: env.MM_APPS_PORT || "0",
   });
+  const store = await createStore({ file: null, log });
+  const servers = await startServers({ store, hostPort, appsPort, bind, log });
+  return { store, servers };
+}
+
+async function start({ serve = serveLocal, ...options }) {
+  const playwright = await loadPlaywright();
+  if (!playwright) {
+    console.log("playwright not available; skipping");
+    return 0;
+  }
   const problems = [];
   const log = problemLog(problems);
   await mkdir(OUTPUT_DIR, { recursive: true });
-  const store = await createStore({ file: null, log });
-  const servers = await startServers({ store, hostPort, appsPort, bind, log });
+  const { store, servers } = await serve(log);
   let browser = null;
   try {
     browser = await launchBrowser(playwright.chromium);
@@ -471,7 +416,9 @@ async function start(options) {
 /**
  * Runs `steps` (`[name, async step(run)]`, in order) and sets the exit
  * code. `prefix` names failure screenshots (`<prefix>failure-<n>.png`);
- * `setup(run)` runs once before the first step.
+ * `setup(run)` runs once before the first step; `serve(log)` starts the
+ * servers (`{ store, servers }`, `servers` as `startServers` returns
+ * them), local mode over an in-memory store by default.
  *
  * A step receives `run`: `{ browser, servers, store, hostOrigin,
  * appsOrigin, token, outputDir, documentCsp, screenshots, newContext(
