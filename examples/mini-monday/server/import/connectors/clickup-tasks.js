@@ -1,6 +1,8 @@
 /**
  * Boards of the ClickUp connector (SPEC-4 §3.2): one board per List,
- * named "<Folder> / <List>" (or "<List>" when folderless), private when
+ * named "<Folder> / <List>" (or "<List>" when folderless) and keeping its
+ * `folder` (`{ source_id, name }`, null when folderless) and the list's
+ * own name as `source_name` (`snapshot-board.js`), private when
  * its space, folder or list is; two groups, Open (`#579bfc`) and Closed
  * (`#00c875`), chosen by the status type (closed and done → Closed);
  * tasks and subtasks (subtasks keep `parent_source_id`); and comments
@@ -67,6 +69,8 @@ export function createBoard(ctx, entry, path) {
   const board = {
     source_id: id,
     name,
+    folder: folder && { source_id: pathId(folder.id), name: str(folder.name) },
+    source_name: str(list.name),
     description: textOrNull(list.content),
     kind: restricted ? "private" : "public",
     source_url: `${APP_URL}/${team.id}/v/li/${id}`,

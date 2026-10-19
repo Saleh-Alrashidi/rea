@@ -12,12 +12,23 @@ import { sampleSnapshot } from "./import-engine-fixtures.js";
 
 const TOKEN = "clickup-token-0123456789abcdef";
 /** A connector returning the sample snapshot as `source` data. */
-const stub = (source) => ({
-  scan: async () => ({ ...sampleSnapshot(), source }),
+const stub = (source, change = () => {}) => ({
+  scan: async () => {
+    const snapshot = { ...sampleSnapshot(), source };
+    change(snapshot);
+    return snapshot;
+  },
 });
+/** Roadmap sits in a ClickUp folder (Hiring in none). */
+const inFolder = (snapshot) => {
+  const [roadmap, hiring] = snapshot.workspaces[0].boards;
+  roadmap.folder = { source_id: "f-7", name: "Product" };
+  roadmap.source_name = "Roadmap";
+  hiring.folder = null;
+};
 const CONNECTORS = {
   monday: stub("monday"),
-  clickup: stub("clickup"),
+  clickup: stub("clickup", inFolder),
   files: stub("csv"),
 };
 const JSON_TYPE = { "Content-Type": "application/json" };
@@ -120,18 +131,20 @@ test("GraphQL shows Board.import, the import's activity label and import_data", 
       headers: s.admin,
     })
   ).json();
-  const boardId = job.report.links.find((l) => l.title === "Roadmap").id;
+  const idOf = (title) => job.report.links.find((l) => l.title === title).id;
   const api = apiClient(s.hostUrl, { headers: s.admin });
   const data = await api.data(
-    `query ($ids: [ID!]) {
+    `query ($ids: [ID!], $hiring: [ID!]) {
       me { capabilities }
       imported: boards(ids: $ids) {
-        import { source source_id source_url imported_at imported_by { id name } }
+        import { source source_id source_url source_name folder { source_id name }
+          imported_at imported_by { id name } }
         activity_logs(limit: 10) { kind actor { id } actor_label }
       }
+      hiring: boards(ids: $hiring) { import { source_name folder { name } } }
       seeded: boards(ids: ["${s.ids.boards.roadmap}"]) { import { source } }
     }`,
-    { ids: [boardId] },
+    { ids: [idOf("Roadmap")], hiring: [idOf("Hiring")] },
   );
   assert.ok(data.me.capabilities.includes("import_data"));
   const [board] = data.imported;
@@ -139,9 +152,16 @@ test("GraphQL shows Board.import, the import's activity label and import_data", 
     source: "clickup",
     source_id: "b-roadmap",
     source_url: "https://acme.monday.com/boards/101",
+    source_name: "Roadmap",
+    folder: { source_id: "f-7", name: "Product" },
     imported_at: board.import.imported_at,
     imported_by: { id: s.ids.users.alex, name: "Alex Rivera" },
   });
+  assert.deepEqual(
+    data.hiring[0].import,
+    { source_name: null, folder: null },
+    "in no folder and no source name",
+  );
   assert.equal(data.seeded[0].import, null);
   const imported = board.activity_logs.find((e) => e.kind === "board_imported");
   assert.deepEqual(imported, {

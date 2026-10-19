@@ -445,7 +445,10 @@ source and counts, and the board header shows an "Imported from
 monday.com" (or ClickUp, CSV, Excel) badge linking to the original board
 or list (`http`/`https` only, `rel="noopener noreferrer"`). The GraphQL
 API has the same as `Board.import { source source_id source_url
-imported_at imported_by }`.
+source_name folder { source_id name } imported_at imported_by }`, where
+`source_name` is the list's own name and `folder` its ClickUp folder
+(null when folderless or unknown), so boards can be placed in folders
+later without importing them again.
 
 ### What is not exact (always reported)
 

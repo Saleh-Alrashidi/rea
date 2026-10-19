@@ -90,7 +90,7 @@ test("team members and people seen in tasks become users", async () => {
 });
 
 test("spaces become workspaces and lists become boards", async () => {
-  const { snapshot } = await fullScan();
+  const { snapshot, valid } = await fullScan();
   assert.deepEqual(
     snapshot.workspaces.map((ws) => [ws.source_id, ws.name, ws.kind]),
     [
@@ -114,6 +114,23 @@ test("spaces become workspaces and lists become boards", async () => {
       [],
     ],
   );
+  // Each list keeps its folder (null when folderless) and its own name.
+  const placement = (ws) => ws.boards.map((b) => [b.source_name, b.folder]);
+  const engineering = { source_id: "90011001", name: "Engineering" };
+  const secret = { source_id: "90011002", name: "Secret projects" };
+  const placed = [
+    [
+      ["Sprint 12", engineering],
+      ["Backlog", engineering],
+      ["Plans", secret],
+      ["Inbox", null],
+    ],
+    [["Hiring", null]],
+    [["Seeds", null]],
+    [],
+  ];
+  assert.deepEqual(snapshot.workspaces.map(placement), placed);
+  assert.deepEqual(valid.snapshot.workspaces.map(placement), placed);
   const sprint = boardNamed(snapshot, SPRINT);
   assert.equal(sprint.source_id, "901101");
   assert.equal(sprint.source_url, "https://app.clickup.com/9001/v/li/901101");

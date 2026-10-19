@@ -152,6 +152,65 @@ test("names, descriptions, colors and links are normalized with warnings", () =>
   );
 });
 
+test("a board's source folder and own name are optional for any source; bad ones are left out", () => {
+  const snapshot = sampleSnapshot();
+  const [roadmap, hiring] = snapshot.workspaces[0].boards;
+  roadmap.folder = { source_id: 42, name: ` ${"f".repeat(256)} `, more: 1 };
+  roadmap.source_name = "  Roadmap ";
+  hiring.folder = null;
+  const output = checked(snapshot);
+  const [first, second] = output.workspaces[0].boards;
+  assert.deepEqual(first.folder, { source_id: "42", name: "f".repeat(255) });
+  assert.equal(first.source_name, "Roadmap");
+  assert.equal(second.folder, null, "in no folder, as the source said");
+  const old = output.workspaces[1].boards[0];
+  for (const board of [second, old])
+    assert.equal(Object.hasOwn(board, "source_name"), false);
+  assert.equal(Object.hasOwn(old, "folder"), false, "unknown stays absent");
+  assert.deepEqual(
+    validateSnapshot(structuredClone(output)).snapshot,
+    output,
+    "normalizing again changes nothing",
+  );
+  assert.deepEqual(
+    added(snapshot).map((w) => [w.path, w.code]),
+    [[`${BOARD}.folder.name`, "truncated"]],
+  );
+  const blank = sampleSnapshot();
+  roadmapOf(blank).folder = { source_id: "f-1", name: " " };
+  assert.deepEqual(roadmapOf(checked(blank)).folder, {
+    source_id: "f-1",
+    name: "Untitled folder",
+  });
+  const bad = [
+    "Engineering",
+    [],
+    { name: "Engineering" },
+    { source_id: " ", name: "Engineering" },
+    { source_id: "x".repeat(256), name: "Engineering" },
+    { source_id: "f-1", name: 7 },
+  ];
+  for (const [index, folder] of bad.entries()) {
+    const input = sampleSnapshot();
+    Object.assign(roadmapOf(input), {
+      folder,
+      source_name: [" ", 7][index % 2],
+    });
+    const board = roadmapOf(checked(input));
+    const kept = ["folder", "source_name"].filter((k) =>
+      Object.hasOwn(board, k),
+    );
+    assert.deepEqual(kept, [], JSON.stringify(folder));
+    assert.deepEqual(
+      added(input).map((w) => [w.path, w.code]),
+      [
+        [`${BOARD}.folder`, "invalid_folder"],
+        [`${BOARD}.source_name`, "invalid_source_name"],
+      ],
+    );
+  }
+});
+
 test("values take their column's format; what cannot be kept is reported", () => {
   const snapshot = sampleSnapshot();
   const board = roadmapOf(snapshot);

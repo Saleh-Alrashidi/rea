@@ -2,7 +2,8 @@
  * The store side of imports (SPEC-4 §4, `server/store/imports.js`): one
  * all-or-nothing batch per board, grants and people values checked by the
  * access rules, the `import_finished` notification, and `Board.import`
- * surviving a save and a reload.
+ * (with its optional source folder and name) surviving a save and a
+ * reload.
  */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -60,6 +61,9 @@ test("importBoard writes nothing when any part is invalid", async () => {
     (s) => (s.meta.sourceUrl = "javascript:alert(1)"),
     (s) => (s.groups = []),
     (s) => (s.items[0].creatorId = "999"),
+    (s) => (s.meta.folder = { sourceId: "", name: "Engineering" }),
+    (s) => (s.meta.folder = { sourceId: "f-1", name: " " }),
+    (s) => (s.meta.sourceName = "x".repeat(256)),
   ];
   for (const breakIt of broken) {
     const input = spec(base);
@@ -198,4 +202,63 @@ test("Board.import and import activity survive a save and a reload", async (t) =
     /malformed/,
     "null is not an import",
   );
+});
+
+test("Board.import keeps an optional source folder and name; bad ones fail to load", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "mini-monday-import-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "data.json");
+  const store = await createStore({ file });
+  const base = {
+    workspaceId: store.listWorkspaces()[0].id,
+    importerId: store.listUsers()[0].id,
+  };
+  const withMeta = (extra) => {
+    const input = spec(base);
+    input.meta = { ...input.meta, ...extra };
+    return store.importBoard(input).board;
+  };
+  const placed = withMeta({
+    folder: { sourceId: "90011001", name: " Engineering " },
+    sourceName: "Sprint 12",
+  });
+  assert.deepEqual(placed.import, {
+    source: "clickup",
+    source_id: "list-9",
+    source_url: null,
+    folder: { source_id: "90011001", name: "Engineering" },
+    source_name: "Sprint 12",
+    imported_at: placed.import.imported_at,
+    imported_by: base.importerId,
+  });
+  const plain = withMeta({});
+  const nulls = withMeta({ folder: null, sourceName: null });
+  const keys = ["source", "source_id", "source_url", "imported_at"];
+  for (const board of [plain, nulls])
+    assert.deepEqual(Object.keys(board.import), [...keys, "imported_by"]);
+  await store.flush();
+  const reloaded = await createStore({ file });
+  for (const board of [placed, plain])
+    assert.deepEqual(reloaded.getBoard(board.id).import, board.import);
+  const saved = JSON.parse(await readFile(file, "utf8"));
+  const record = saved.boards.find((b) => b.id === placed.id);
+  const meta = record.import;
+  const bad = [
+    { folder: null },
+    { folder: "Engineering" },
+    { folder: { source_id: "90011001" } },
+    { folder: { source_id: 90011001, name: "Engineering" } },
+    { folder: { source_id: "90011001", name: "Engineering", path: "/" } },
+    { source_name: null },
+    { source_name: 12 },
+  ];
+  for (const change of bad) {
+    record.import = { ...meta, ...change };
+    await writeFile(file, JSON.stringify(saved));
+    await assert.rejects(
+      createStore({ file }),
+      /boards\[\d+\] is malformed/,
+      JSON.stringify(change),
+    );
+  }
 });

@@ -75,6 +75,14 @@ test("a ClickUp scan is previewed and imported through the jobs", async (t) => {
     [board.import.source, board.import.source_id, board.import.source_url],
     ["clickup", "901101", "https://app.clickup.com/9001/v/li/901101"],
   );
+  assert.deepEqual(
+    [board.import.folder, board.import.source_name],
+    [{ source_id: "90011001", name: "Engineering" }, "Sprint 12"],
+  );
+  const inboxLink = done.report.links.find((l) => l.title === "Inbox");
+  const inbox = store.getBoard(inboxLink.id).import;
+  assert.equal(inbox.source_name, "Inbox");
+  assert.equal(Object.hasOwn(inbox, "folder"), false, "folderless: no key");
   const { items, total } = store.listItems({ boardId: board.id, limit: 500 });
   assert.equal(total, 230);
   const plan1 = items.find((item) => item.name === "Plan the sprint");

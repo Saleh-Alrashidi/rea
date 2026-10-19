@@ -12,9 +12,12 @@
  * values keep only users who can open the board (`access.canBeAssigned`,
  * as on every write path); the ones left out are reported. Activity
  * entries name the importer as actor with the import's label ("Import
- * from monday.com"). A board that would grow the data past what one save
- * can write (`ctx.maxDataBytes`, at most `persistence.js` MAX_DATA_BYTES,
- * from an estimate of its records) is refused as invalid.
+ * from monday.com"). The board's `import` record keeps the source record
+ * and, when the spec's `meta` has them, the source `folder` and the
+ * board's own `source_name` (for placing it in folders later). A board
+ * that would grow the data past what one save can write
+ * (`ctx.maxDataBytes`, at most `persistence.js` MAX_DATA_BYTES, from an
+ * estimate of its records) is refused as invalid.
  */
 import {
   GRANT_REFUSALS,
@@ -59,12 +62,36 @@ const COLUMN_BYTES = 200;
 const LABEL_BYTES = 48;
 const MIB = 1024 * 1024;
 
+function readSourceId(value, label) {
+  const id = typeof value === "string" ? value : "";
+  if (id === "" || id.length > MAX_SOURCE_ID)
+    invalid(`${label} must be 1-${MAX_SOURCE_ID} characters`);
+  return id;
+}
+
+/**
+ * The optional `folder` (`{ sourceId, name }`) and `sourceName` of `meta`
+ * as `import` keys; absent (never null) when not given.
+ */
+function readPlacement({ folder = null, sourceName = null }) {
+  const placement = {};
+  if (folder !== null) {
+    if (!isPlainObject(folder))
+      throw new TypeError("meta.folder must be an object");
+    placement.folder = {
+      source_id: readSourceId(folder.sourceId, "folder source_id"),
+      name: readName(folder.name, "Folder name"),
+    };
+  }
+  if (sourceName !== null)
+    placement.source_name = readName(sourceName, "Source name");
+  return placement;
+}
+
 function readMeta(meta) {
   if (!isPlainObject(meta)) throw new TypeError("meta must be an object");
   const { source, sourceId, sourceUrl = null } = meta;
-  const id = typeof sourceId === "string" ? sourceId : "";
-  if (id === "" || id.length > MAX_SOURCE_ID)
-    invalid(`source_id must be 1-${MAX_SOURCE_ID} characters`);
+  const id = readSourceId(sourceId, "source_id");
   const url =
     sourceUrl === null
       ? null
@@ -74,7 +101,8 @@ function readMeta(meta) {
         ? sourceUrl
         : invalid("source_url must be an http(s) URL");
   const kind = readChoice(source, IMPORT_SOURCES, "source");
-  return { source: kind, source_id: id, source_url: url };
+  const placement = readPlacement(meta);
+  return { source: kind, source_id: id, source_url: url, ...placement };
 }
 
 /**
@@ -127,7 +155,8 @@ function valueBytes(key, value) {
 
 /** About how many characters `prepared`'s records add to the data file. */
 function estimateBytes(prepared) {
-  let size = BOARD_BYTES;
+  // Plus the board's `import` record (source, folder, names) as written.
+  let size = BOARD_BYTES + JSON.stringify(prepared.meta).length;
   size += prepared.groups.prepared.length * COLUMN_BYTES;
   for (const { settings } of prepared.columns.prepared) {
     size += COLUMN_BYTES;
@@ -307,13 +336,14 @@ export function importApi(ctx) {
   return {
     /**
      * Imports one board in one batch. `spec` = `{ workspaceId, importerId,
-     * name, description, boardKind, meta: { source, sourceId, sourceUrl },
-     * label, summary, members: [{ userId, role }], groups: [{ key, title,
-     * color }], columns: [{ key, title, type, labels?: [{ label, color,
-     * type? }], role? }], items: [{ key?, parentKey?, groupKey, name,
-     * values: { [columnKey]: value }, creatorId, createdAt, updates: [{
-     * body, creatorId, createdAt, authorName? }] }], views?: [{ type, name
-     * }] }` with status values as labels and people values as user IDs
+     * name, description, boardKind, meta: { source, sourceId, sourceUrl,
+     * folder?: { sourceId, name }, sourceName? }, label, summary, members:
+     * [{ userId, role }], groups: [{ key, title, color }], columns: [{
+     * key, title, type, labels?: [{ label, color, type? }], role? }],
+     * items: [{ key?, parentKey?, groupKey, name, values: { [columnKey]:
+     * value }, creatorId, createdAt, updates: [{ body, creatorId,
+     * createdAt, authorName? }] }], views?: [{ type, name }] }` with
+     * status values as labels and people values as user IDs
      * (`import-spec.js` has the rules). Returns `{ board, counts: {
      * groups, columns, items, updates }, refused: [{ index, userId,
      * reason, message }], unassigned: [{ index, columnKey, userIds }] }`;
