@@ -112,12 +112,17 @@ export function workspaceKindBadge(kind) {
   });
 }
 
+const shownCount = (count) =>
+  Number.isSafeInteger(count) && count > 0 ? count : 0;
+const countText = (value) => (value > 99 ? "99+" : String(value));
+
 /**
  * A numeric count bubble (notifications); hidden when zero. Counts above 99
- * show as "99+". `label` is its accessible text.
+ * show as "99+". `label` is its accessible text. `setBadgeCount` changes
+ * the count it shows.
  */
 export function countBadge(count, { label } = {}) {
-  const value = Number.isSafeInteger(count) && count > 0 ? count : 0;
+  const value = shownCount(count);
   return h(
     "span",
     {
@@ -125,6 +130,13 @@ export function countBadge(count, { label } = {}) {
       hidden: value === 0,
       "aria-label": label ?? null,
     },
-    value > 99 ? "99+" : String(value),
+    countText(value),
   );
+}
+
+/** Shows `count` in `badge` (a `countBadge`). */
+export function setBadgeCount(badge, count) {
+  const value = shownCount(count);
+  badge.hidden = value === 0;
+  badge.textContent = countText(value);
 }

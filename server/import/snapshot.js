@@ -335,7 +335,7 @@ function* readWorkspace(c, raw, { path, ctx }) {
     c.error(
       `${path}.source_id`,
       "duplicate_id",
-      `Workspace ${shown(id)} appears twice`,
+      `Space ${shown(id)} appears twice`,
     );
     return null;
   }

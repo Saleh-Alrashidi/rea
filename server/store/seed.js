@@ -189,7 +189,7 @@ function seedSpaces(ctx, seed) {
     seed.workspaces[key] = workspace.id;
   };
   const main = {
-    name: "Main workspace",
+    name: "Main space",
     description: "Everyone's shared space",
   };
   space("main", { ...main, kind: "open" }, ["user:alex:owner"]);

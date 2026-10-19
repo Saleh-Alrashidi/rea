@@ -8,10 +8,13 @@
  * and the shell refreshes its board lists. When the board is still there
  * afterwards, its stream was refused (too many open streams) or ended for
  * another reason: `onLivePaused()` reports that live updates stopped.
+ * When the open task moves to another board (`item_moved_to_board`, also
+ * for a subtask whose parent moved), `onTaskMoved({ itemId, boardId })`
+ * says where it is now: `boardId` null when the user cannot open it there.
  */
 
 import { showError } from "../components/toast.js";
-import { loadBoard, loadItem } from "./board-data.js";
+import { loadBoard, loadItem, loadItemBoardId } from "./board-data.js";
 import { loadUpdates } from "./updates-data.js";
 
 const REFRESH_DELAY_MS = 250;
@@ -89,6 +92,24 @@ function createReloads(reload) {
 }
 
 /**
+ * Reports where the open task went (`onTaskMoved`) when `change` moved it
+ * to another board, unless the page moved on meanwhile (`current()`
+ * false, another task open) or it is back on this board.
+ */
+async function followMovedTask({ state, current, onTaskMoved }, change) {
+  const { card } = state;
+  if (!card || card.itemId !== String(change.item_id)) return;
+  let boardId = null;
+  try {
+    boardId = await loadItemBoardId(card.itemId);
+  } catch (error) {
+    globalThis.console?.error?.("Couldn’t find the moved task", error);
+  }
+  if (!current() || state.card !== card || boardId === state.boardId) return;
+  onTaskMoved?.({ itemId: card.itemId, boardId });
+}
+
+/**
  * Creates the sync controller for the board page `state`.
  * `forwardEvent(change)` receives every change of the open board (for app
  * views); `watchBoard(boardId, listener, onEnd) → unwatch` is `ctx.bus.watchBoard`
@@ -98,7 +119,8 @@ function createReloads(reload) {
  *   forwardEvent(change: object): void,
  *   watchBoard(boardId: string, listener: (change: object) => void,
  *     onEnd: () => void): () => void,
- *   refreshShell(): void, onLivePaused?(): void }} options
+ *   refreshShell(): void, onLivePaused?(): void,
+ *   onTaskMoved?(moved: { itemId: string, boardId: string | null }): void }} options
  */
 export function createBoardSync(options) {
   const { state, render, forwardEvent, watchBoard, refreshShell } = options;
@@ -171,6 +193,15 @@ export function createBoardSync(options) {
     const boardId = change.board_id;
     if (boardId !== undefined && String(boardId) !== state.boardId) return;
     forwardEvent(change);
+    const left =
+      change.type === "item_moved_to_board" && change.to_board_id !== undefined;
+    if (left) {
+      const current = () => !destroyed;
+      followMovedTask(
+        { state, current, onTaskMoved: options.onTaskMoved },
+        change,
+      );
+    }
     if (change.type === "board_updated" || change.type === "board_deleted") {
       refreshShell();
     }

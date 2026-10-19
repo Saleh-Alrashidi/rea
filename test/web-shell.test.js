@@ -22,7 +22,7 @@ import {
   SHARE_QUERIES,
   normalizeResource,
 } from "../web/ui/components/share-model.js";
-import { BUS_EVENTS, createBus } from "../web/ui/shell/bus.js";
+import { createBus } from "../web/ui/shell/bus.js";
 import {
   CREATE_MUTATIONS,
   CREATE_TARGETS_QUERY,
@@ -31,10 +31,12 @@ import {
   MARK_READ_MUTATION,
   NOTIFICATIONS_QUERY,
   UNREAD_COUNT_QUERY,
+  createNotifications,
 } from "../web/ui/shell/notifications.js";
 import { SHELL_QUERY, loadShellData } from "../web/ui/shell/shell-data.js";
 import { HOME_QUERY } from "../web/pages/home.js";
 import { SHARED_DETAILS_QUERY, SHARED_QUERY } from "../web/pages/shared.js";
+import { installFakeDom } from "./fake-dom.js";
 
 const ORIGIN = "http://localhost:4100";
 
@@ -291,8 +293,6 @@ test("the bus shares one stream per board and filters other boards", () => {
     },
   });
   const seen = [];
-  const relayed = [];
-  bus.on(BUS_EVENTS.boardChange, (change) => relayed.push(change.type));
   const stopA = bus.watchBoard("4", (change) => seen.push(["a", change.type]));
   const stopB = bus.watchBoard("4", (change) => seen.push(["b", change.type]));
   assert.equal(opened.length, 1);
@@ -302,7 +302,6 @@ test("the bus shares one stream per board and filters other boards", () => {
     ["a", "item_updated"],
     ["b", "item_updated"],
   ]);
-  assert.deepEqual(relayed, ["item_updated"]);
   stopA();
   stopA();
   assert.equal(opened[0].closed, false);
@@ -330,4 +329,26 @@ test("the bus shares one stream per board and filters other boards", () => {
   stopC();
   bus.watchBoard("7", () => {});
   assert.equal(opened.length, 3, "a fresh stream after the end");
+});
+
+test("the bell's unread count reaches its subscribers (the sidebar's Inbox)", (t) => {
+  installFakeDom(t);
+  const bell = createNotifications({ router: {}, toast: {} });
+  const counts = [];
+  const stop = bell.onCount((count) => counts.push(count));
+  bell.setCount(3);
+  bell.setCount(150);
+  bell.setCount(-1);
+  stop();
+  bell.setCount(7);
+  assert.deepEqual(counts, [0, 3, 150, 0], "now, then each change");
+  // The bell button holds its icon, then the count badge.
+  const badge = bell.element.childNodes.at(-1);
+  assert.equal(badge.getAttribute("class"), "count-badge");
+  assert.equal(badge.textContent, "7");
+  assert.equal(badge.hidden, false);
+  bell.setCount(120);
+  assert.equal(badge.textContent, "99+");
+  bell.setCount(0);
+  assert.equal(badge.hidden, true);
 });

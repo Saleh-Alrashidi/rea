@@ -126,7 +126,7 @@ const Mutation = wrapAll(write, {
       workspaceId: workspace.id,
       boardKind: args.board_kind,
     });
-    return storeResult(board, () => notFound("Workspace", workspace.id));
+    return storeResult(board, () => notFound("workspace", workspace.id));
   },
   update_board: updateBoard,
   delete_board: (_p, { board_id }, ctx) =>

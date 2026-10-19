@@ -77,7 +77,7 @@ export function workspaceApi(ctx) {
       creatorId = null,
     } = {}) {
       const fields = {
-        name: readName(name, "Workspace name"),
+        name: readName(name, "Space name"),
         description: readText(description, "Description"),
         kind: readChoice(kind, WORKSPACE_KINDS, "kind"),
         color: optional(color, (v) => readColor(v, "color")),
@@ -98,7 +98,7 @@ export function workspaceApi(ctx) {
       const workspace = byId(state.workspaces, id);
       if (!workspace) return null;
       const next = withChanges(workspace, {
-        name: optional(name, (v) => readName(v, "Workspace name")),
+        name: optional(name, (v) => readName(v, "Space name")),
         description: optional(description, (v) => readText(v, "Description")),
         kind: optional(kind, (v) => readChoice(v, WORKSPACE_KINDS, "kind")),
         color: optional(color, (v) => readColor(v, "color")),
@@ -121,7 +121,7 @@ export function workspaceApi(ctx) {
       if (!isEmpty(id)) {
         return failure("not_empty", {
           message:
-            "Only an empty workspace can be deleted, and this one still holds boards or docs (possibly ones shared only with others)",
+            "Only an empty Space can be deleted, and this one still holds boards or docs (possibly ones shared only with others)",
         });
       }
       removeWhere(state.workspaces, (record) => record === workspace);

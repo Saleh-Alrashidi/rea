@@ -273,7 +273,13 @@
 }
 
 .board-page[data-view="list"] .search-input {
-  width: 130px;
+  width: 120px;
+}
+
+/* The count ends the toolbar's row (or the row it wraps to). */
+.board-page[data-view="list"] .toolbar-count {
+  margin-inline-start: auto;
+  white-space: nowrap;
 }
 
 .board-page[data-view="list"] .search:focus-within {

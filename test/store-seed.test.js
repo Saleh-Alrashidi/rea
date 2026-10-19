@@ -214,7 +214,7 @@ test("SPEC-2 seed: users, teams and workspaces", async () => {
   assert.deepEqual(
     store.listWorkspaces().map((w) => [w.name, w.kind, w.members]),
     [
-      ["Main workspace", "open", [{ kind: "user", id: "1", role: "owner" }]],
+      ["Main space", "open", [{ kind: "user", id: "1", role: "owner" }]],
       [
         "Leadership",
         "closed",
@@ -225,7 +225,7 @@ test("SPEC-2 seed: users, teams and workspaces", async () => {
       ],
     ],
   );
-  assert.equal(store.getDefaultWorkspace().name, "Main workspace");
+  assert.equal(store.getDefaultWorkspace().name, "Main space");
 });
 
 test("SPEC-2 seed: boards and docs", async () => {

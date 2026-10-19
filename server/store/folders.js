@@ -88,7 +88,7 @@ export function folderProblem(state) {
       const where = `${name} ${record.id}`;
       if (!folder) return `${where} is in a missing folder ${record.folder_id}`;
       if (folder.workspace_id !== record.workspace_id) {
-        return `${where} is in folder ${folder.id} of another workspace`;
+        return `${where} is in folder ${folder.id} of another Space`;
       }
     }
   }

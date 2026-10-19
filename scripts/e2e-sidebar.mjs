@@ -15,9 +15,12 @@
  * - a task row dragged from the List view onto a List in the sidebar
  *   asks about the columns it would drop, then moves there; "Move to…"
  *   in a task's menu does the same through a board picker;
+ * - another user's sidebar and open task view follow live changes
+ *   (`e2e-sidebar-live.mjs`);
  * - the 360 px drawer; screenshots in light, dark and at 360 px.
  */
 import { listRow } from "./e2e-clickup-lib.mjs";
+import { liveSidebar, taskFollowsMoves } from "./e2e-sidebar-live.mjs";
 import { dragRow, viewSettled } from "./e2e-dnd-lib.mjs";
 import {
   MOBILE,
@@ -44,7 +47,7 @@ import {
   waitForSidebar,
 } from "./e2e-sidebar-lib.mjs";
 
-const MAIN = "Main workspace";
+const MAIN = "Main space";
 const LEAD = "Leadership";
 const ADD_DOC = `mutation ($w: ID, $t: String!) {
   create_doc(title: $t, workspace_id: $w) { id }
@@ -242,14 +245,14 @@ async function dragIntoFolderAndReorder(run) {
 
 async function dragToOtherSpace(run) {
   const page = run.alex;
-  // Alex owns Budget 2027 and edits Main workspace: it moves.
+  // Alex owns Budget 2027 and edits Main space: it moves.
   await dragTree(page, treeRow(page, "Budget 2027"), treeRow(page, MAIN), {
     zone: "inside",
   });
   await waitForSidebar(
     run,
     (state) => state.byName[MAIN].boards.includes("Budget 2027"),
-    "Budget 2027 in Main workspace",
+    "Budget 2027 in Main space",
   );
   // A folder stays in its Space: "not allowed".
   await dragTree(page, treeRow(page, "Archive"), treeRow(page, LEAD), {
@@ -475,6 +478,8 @@ runE2E({
     ["Favorites", favorites],
     ["keyboard tree navigation", keyboard],
     ["a task row dropped on a List moves there", dragTaskToList],
+    ["another user's sidebar follows live", liveSidebar],
+    ["an open task view follows its task to another board", taskFollowsMoves],
     ["dark theme and the 360 px drawer", darkAndDrawer],
   ],
 });

@@ -27,9 +27,10 @@
  *
  * Events: `board_moved` (`board_id`), `doc_moved` and `workspace_moved`
  * (`resource_kind`, `resource_id`), each with the new `workspace_id`,
- * `folder_id` and `position`. A move that changes nothing emits nothing.
+ * `folder_id` and `position`; a board or doc that changed Space adds
+ * `from_workspace_id`. A move that changes nothing emits nothing.
  */
-import { describe, isPlainObject } from "../input.js";
+import { describe, inSentence, isPlainObject } from "../input.js";
 import {
   byId,
   commit,
@@ -109,7 +110,7 @@ export function readMove(request) {
 function readNeighbor({ record, siblings, id, label }) {
   if (id === null) return null;
   if (id === record.id) {
-    const message = `A ${label.toLowerCase()} cannot be placed next to itself`;
+    const message = `A ${inSentence(label)} cannot be placed next to itself`;
     return failure("invalid_neighbor", { message });
   }
   const sibling = siblings.find((each) => each.id === id);
@@ -167,7 +168,7 @@ function readTarget(state, record, move) {
     move.workspaceId ?? folder?.workspace_id ?? record.workspace_id;
   const workspace = byId(state.workspaces, workspaceId);
   if (!workspace) {
-    const message = `Workspace ${describe(workspaceId)} was not found`;
+    const message = `Space ${describe(workspaceId)} was not found`;
     return failure("not_found", { message });
   }
   if (folder && folder.workspace_id !== workspace.id) {
@@ -190,14 +191,19 @@ function kindOf(kind) {
 }
 
 /**
- * The event of a moved board or doc (`kind`), now `record`: `board_moved`
- * names its board, `doc_moved` its resource; both carry the new place.
+ * The event of a moved board or doc (`kind`), now `record` and before
+ * `from`: `board_moved` names its board, `doc_moved` its resource; both
+ * carry the new place, and `from_workspace_id` when the Space changed (so
+ * the event hub also reaches who could open it there).
  */
-export function moveEvent(kind, record) {
+export function moveEvent(kind, record, from = record) {
   const where = {
     workspace_id: record.workspace_id,
     folder_id: record.folder_id ?? null,
     position: record.position ?? null,
+    ...(from.workspace_id === record.workspace_id
+      ? {}
+      : { from_workspace_id: from.workspace_id }),
   };
   if (kind === "board") {
     return { type: "board_moved", board_id: record.id, ...where };
@@ -227,7 +233,7 @@ function moveContent(ctx, { kind, id, request }) {
   const { position, order } = slot;
   const next = placed(record, { workspaceId, folderId, position });
   writePlace(list, { record, next, order });
-  return commit(ctx, moveEvent(kind, next), next);
+  return commit(ctx, moveEvent(kind, next, record), next);
 }
 
 function moveWorkspace(ctx, id, request) {
@@ -236,7 +242,7 @@ function moveWorkspace(ctx, id, request) {
   if (!record) return null;
   const move = readMove(request);
   const siblings = state.workspaces.filter((each) => each !== record);
-  const label = "Workspace";
+  const label = "Space";
   const slot = readPosition({ record, siblings, move, label, stays: true });
   if (slot.ok === false) return slot;
   if (slot.position === record.position) return record;

@@ -424,7 +424,7 @@ test("workspaces: create, update, delete only when empty", async () => {
     null,
   );
   assert.equal(
-    store.deleteWorkspace(workspace("Main workspace").id).reason,
+    store.deleteWorkspace(workspace("Main space").id).reason,
     "not_empty",
   );
   const doc = store.createDoc({

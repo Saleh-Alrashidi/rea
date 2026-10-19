@@ -54,7 +54,7 @@
  *   Event emitter: `on(type, listener)` → off, `emit(type, data)`,
  *   `watchBoard(boardId, listener, onEnd)` → unwatch (board SSE; `onEnd`
  *   runs when the server ends the stream). Events:
- *   "notification", "board-change", "theme", "shell", "workspace", "live"
+ *   "notification", "sidebar", "theme", "shell", "workspace", "live"
  *   (see `ui/shell/bus.js`; "live" `{ key, paused }` drives the "Live
  *   updates paused" banner, `ui/shell/live-status.js`).
  */
@@ -249,7 +249,10 @@ async function start() {
   bus.on(BUS_EVENTS.live, ({ key, paused }) => live.set(key, paused));
   try {
     api.subscribeMyEvents(
-      (event) => bus.emit(BUS_EVENTS.notification, event),
+      {
+        notification: (event) => bus.emit(BUS_EVENTS.notification, event),
+        sidebar: (change) => bus.emit(BUS_EVENTS.sidebar, change),
+      },
       () => bus.emit(BUS_EVENTS.live, { key: "me", paused: true }),
     );
   } catch (error) {

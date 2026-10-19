@@ -281,7 +281,7 @@ function workspaceFor(ctx, rawId) {
   }
   const name = `monday.com workspace ${key}`;
   const entry = addWorkspace(ctx, key, { name, kind: "closed" });
-  const message = `Workspace ${key} is not listed for this token; its boards and docs go to a closed workspace with a generic name`;
+  const message = `Workspace ${key} is not listed for this token; its boards and docs go to a closed Space with a generic name`;
   ctx.report.add("unknown_workspace", message, entry.path);
   return entry;
 }

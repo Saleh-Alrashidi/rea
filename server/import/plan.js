@@ -120,7 +120,7 @@ function readTargets(snapshot, { raw, store, importer, errors }) {
       targets.set(workspace.source_id, target);
       continue;
     }
-    const message = 'Expected "new" or a workspace you can import into';
+    const message = 'Expected "new" or a Space you can import into';
     errors.push({ path: keyPath(path, workspace.source_id), message });
   }
   return targets;

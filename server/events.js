@@ -18,14 +18,25 @@
  *   `publish(userId, name, payload)` also sends them messages that are no
  *   store change (`event: import`, the progress of the user's import
  *   jobs, SPEC-4 §5).
+ * - the same notification streams get `event: sidebar` messages
+ *   (SPEC-6 §3.3) for changes of where things sit in the sidebar:
+ *   `folder_created`, `folder_updated`, `folder_moved` and
+ *   `folder_deleted` reach the users who can see the folder's Space
+ *   (`workspaceAccess`), `workspace_moved` those who can see that Space,
+ *   and `board_moved` / `doc_moved` those who can open the board or doc,
+ *   or could open it in the Space it left (`from_workspace_id`), so their
+ *   sidebars drop it. The message carries IDs only (`sidebarPayload`):
+ *   the type and the record's ID, and a folder's Space.
  *
- * Streams are indexed by board, by user and by browser session, so a
- * change costs work only for the streams it can concern (`streamsFor`):
- * its board's streams, the streams of the users it names, the boards of a
- * changed workspace, and every board stream only for team changes (team
- * grants can sit on any board) or events of unknown scope. Doc, folder
- * and note changes reach no stream. Each board's audience (who of its streams'
- * users can still open it) is computed once per change.
+ * Streams are indexed by board, by user and by browser session, and
+ * notification streams in one set, so a change costs work only for the
+ * streams it can concern (`streamsFor`): its board's streams, the streams
+ * of the users it names, the boards of a changed workspace, every
+ * notification stream for a sidebar change, and every board stream only
+ * for team changes (team grants can sit on any board) or events of
+ * unknown scope. Other doc, folder and note changes reach no stream. Each
+ * board's audience (who of its streams' users can still open it) and
+ * each user's view of a sidebar change are computed once per change.
  *
  * A stream opened with a browser session (`sessionId`) ends with that
  * session: `endSession(id)` closes it at once (sign-out, demo switching),
@@ -41,9 +52,11 @@
 import {
   boardAccess,
   directoryName,
+  docAccess,
   isActive,
   notificationVisible,
   visibleUserIds,
+  workspaceAccess,
 } from "./access.js";
 import { renderText } from "./store/activity.js";
 
@@ -71,6 +84,62 @@ const ACCESS_REACH = Object.freeze({
   workspace: "workspace",
   team: "all",
 });
+
+const canSeeSpace = (store, user, workspaceId) =>
+  workspaceAccess(store, user, store.getWorkspace(workspaceId)) !== null;
+
+/**
+ * Whether `user` can open `record` (with `access`), or could in the Space
+ * it just left (`from`: the same record there; nothing else changed).
+ */
+function opensNowOrBefore({ store, user, access }, record, from) {
+  if (!record) return false;
+  if (access(store, user, record) !== null) return true;
+  if (from === undefined) return false;
+  return access(store, user, { ...record, workspace_id: from }) !== null;
+}
+
+const seesFolder = (store, user, event) =>
+  canSeeSpace(store, user, event.workspace_id);
+/** Who sees each sidebar change (SPEC-6 §3.3), by event type. */
+const SIDEBAR_AUDIENCES = Object.freeze({
+  folder_created: seesFolder,
+  folder_updated: seesFolder,
+  folder_moved: seesFolder,
+  folder_deleted: seesFolder,
+  workspace_moved: (store, user, event) =>
+    canSeeSpace(store, user, event.resource_id),
+  board_moved: (store, user, event) =>
+    opensNowOrBefore(
+      { store, user, access: boardAccess },
+      store.getBoard(event.board_id),
+      event.from_workspace_id,
+    ),
+  doc_moved: (store, user, event) =>
+    opensNowOrBefore(
+      { store, user, access: docAccess },
+      store.getDoc(event.resource_id),
+      event.from_workspace_id,
+    ),
+});
+const isSidebarEvent = (event) => Object.hasOwn(SIDEBAR_AUDIENCES, event.type);
+
+/**
+ * The IDs a sidebar message carries: the type, the record (`board_id`,
+ * or `resource_kind` and `resource_id`) and a folder's Space; never where
+ * a board or doc went, which someone who lost it may not see.
+ */
+function sidebarPayload(event) {
+  const { type, board_id, resource_kind, resource_id } = event;
+  if (board_id !== undefined) return { type, board_id };
+  const folder = resource_kind === "folder";
+  return {
+    type,
+    resource_kind,
+    resource_id,
+    ...(folder ? { workspace_id: event.workspace_id } : {}),
+  };
+}
 
 const message = (name, event) =>
   `event: ${name}\ndata: ${JSON.stringify(event)}\n\n`;
@@ -110,10 +179,11 @@ function removeFrom(map, key, client) {
   if (set.size === 0) map.delete(key);
 }
 
-/** Streams by board, by user and by browser session. */
+/** Streams by board, by user and by browser session; notification streams. */
 function createIndex() {
   const index = {
     all: new Set(),
+    inboxes: new Set(),
     boards: new Map(),
     users: new Map(),
     sessions: new Map(),
@@ -124,13 +194,14 @@ function createIndex() {
       index.all.add(client);
       if (client.stream === "board") {
         addTo(index.boards, client.boardId, client);
-      }
+      } else index.inboxes.add(client);
       addTo(index.users, client.userId, client);
       addTo(index.sessions, client.sessionId, client);
     },
     /** Removes `client`; false when it was not indexed. */
     remove(client) {
       if (!index.all.delete(client)) return false;
+      index.inboxes.delete(client);
       removeFrom(index.boards, client.boardId, client);
       removeFrom(index.users, client.userId, client);
       removeFrom(index.sessions, client.sessionId, client);
@@ -159,6 +230,7 @@ function streamsFor(hub, event) {
       if (!inboxOnly || client.stream === "me") found.add(client);
     }
   }
+  if (isSidebarEvent(event)) addAll(index.inboxes);
   const named = event.board_id !== undefined || event.user_ids !== undefined;
   const kind = event.resource_kind;
   const reach =
@@ -193,6 +265,12 @@ function boardDecision(store, client, { event, memo }) {
 function inboxDecision(store, client, { event, memo }) {
   const user = store.getUser(client.userId);
   if (!isActive(user)) return CLOSE;
+  if (isSidebarEvent(event)) {
+    const sees = memo(`sidebar\u0000${client.userId}`, () =>
+      SIDEBAR_AUDIENCES[event.type](store, user, event),
+    );
+    return sees ? DELIVER : SKIP;
+  }
   const mine =
     NOTIFICATION_EVENTS.has(event.type) &&
     Array.isArray(event.user_ids) &&
@@ -206,8 +284,12 @@ function inboxDecision(store, client, { event, memo }) {
   return visible ? DELIVER : SKIP;
 }
 
-/** The message a notification stream sends: the text as its user reads it. */
+/**
+ * The message a notification stream sends: a sidebar change's IDs, or a
+ * notification event with the text as its user reads it.
+ */
 function inboxMessage(store, client, event) {
+  if (isSidebarEvent(event)) return message("sidebar", sidebarPayload(event));
   if (event.type !== "notification_created") {
     return message("notification", event);
   }

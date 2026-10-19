@@ -13,7 +13,7 @@ import { request } from "../../api.js";
 import { h } from "../../dom.js";
 import { hashFromUrl } from "../../router.js";
 import { avatar } from "../components/avatar.js";
-import { countBadge } from "../components/badge.js";
+import { countBadge, setBadgeCount } from "../components/badge.js";
 import { emptyState } from "../components/empty-state.js";
 import { timeAgo } from "../components/format.js";
 import { icon } from "../components/icon.js";
@@ -49,7 +49,7 @@ function entryIcon(notification, kind) {
   const glyph = h(
     "span",
     { class: ["notification-icon", `notification-${notification.kind}`] },
-    icon(kind.icon, { size: notification.actor ? 10 : 14 }),
+    icon(kind.icon, { size: notification.actor ? 9 : 14 }),
   );
   if (!notification.actor) return glyph;
   return h(
@@ -95,11 +95,19 @@ function entry(notification, onOpen) {
   );
 }
 
+/** Sets the unread count: the bell's badge and label, then `onCount` listeners. */
 function setCount(n, count) {
   n.count = Number.isSafeInteger(count) && count > 0 ? count : 0;
-  n.badge.hidden = n.count === 0;
-  n.badge.textContent = n.count > 99 ? "99+" : String(n.count);
+  setBadgeCount(n.badge, n.count);
   n.button.setAttribute("aria-label", unreadLabel(n.count));
+  for (const listener of Array.from(n.countListeners)) listener(n.count);
+}
+
+/** Calls `listener(count)` now and on every change; returns `stop()`. */
+function onCount(n, listener) {
+  n.countListeners.add(listener);
+  listener(n.count);
+  return () => n.countListeners.delete(listener);
 }
 
 async function load(n) {
@@ -257,7 +265,10 @@ async function onNotification(n, event) {
 /**
  * Creates the bell. `router` navigates; `toast` reports failures.
  * @param {{ router: object, toast: object }} options
+ * `onCount(listener)` calls `listener(count)` with the unread count now
+ * and whenever it changes, and returns `stop()` (the sidebar's Inbox).
  * @returns {{ element: HTMLElement, setCount(count: number): void,
+ *   onCount(listener: (count: number) => void): () => void,
  *   refresh(): Promise<void>, onNotification(event: object): void,
  *   markOpened(notification: object): void }}
  */
@@ -271,6 +282,7 @@ export function createNotifications({ router, toast }) {
     popover: null,
     filter: "all",
     seq: 0,
+    countListeners: new Set(),
   };
   n.badge = countBadge(0);
   n.button = h(
@@ -290,6 +302,7 @@ export function createNotifications({ router, toast }) {
   return {
     element: n.button,
     setCount: (count) => setCount(n, count),
+    onCount: (listener) => onCount(n, listener),
     refresh: () => load(n),
     onNotification: (event) => onNotification(n, event),
     markOpened: (notification) => markOpened(n, notification),

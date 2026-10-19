@@ -9,7 +9,9 @@
  * | type           | data                                   | emitted by            |
  * | -------------- | -------------------------------------- | --------------------- |
  * | `notification` | the `stream=me` notification event     | the user stream       |
- * | `board-change` | a board change `{ type, board_id, … }` | watched board streams |
+ * | `sidebar`      | a sidebar change `{ type, … }` (IDs    | the user stream       |
+ * |                | only): a folder, List, doc or Space    |                       |
+ * |                | the user can see moved or changed      |                       |
  * | `theme`        | `{ mode, theme }`                      | the theme toggle      |
  * | `shell`        | `{ workspaces }` after a shell refresh | `refreshShell()`      |
  * | `workspace`    | a workspace ID: pages announce the     | pages (board, doc, …) |
@@ -25,7 +27,7 @@ const ID_PATTERN = /^\d{1,20}$/;
 /** Event names the shell emits or listens to. */
 export const BUS_EVENTS = Object.freeze({
   notification: "notification",
-  boardChange: "board-change",
+  sidebar: "sidebar",
   theme: "theme",
   shell: "shell",
   workspace: "workspace",
@@ -88,7 +90,6 @@ export function createBus({ subscribeBoardEvents }) {
       for (const listener of Array.from(entry.listeners)) {
         safeCall(listener, change);
       }
-      emit(BUS_EVENTS.boardChange, change);
     };
     try {
       entry.close = subscribeBoardEvents(boardId, onChange, () =>
@@ -102,7 +103,7 @@ export function createBus({ subscribeBoardEvents }) {
 
   /**
    * Calls `listener(change)` for every change of `boardId` (one shared
-   * stream per board) and re-emits them as `board-change`; `onEnd()` runs
+   * stream per board); `onEnd()` runs
    * when the server ends the stream (the board was deleted or the user lost
    * access), after which a new `watchBoard` opens a fresh one. Returns
    * `unwatch()`; the stream closes with its last watcher.

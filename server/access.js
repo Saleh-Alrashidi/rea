@@ -28,7 +28,7 @@
  * computed here as well, so no resolver re-derives a rule.
  */
 import { GraphQLError } from "./graphql/errors.js";
-import { describe } from "./input.js";
+import { describe, inSentence } from "./input.js";
 
 export const ROLE_RANK = Object.freeze({ viewer: 1, editor: 2, owner: 3 });
 export const ACCESS_ROLES = Object.freeze(["owner", "editor", "viewer"]);
@@ -64,7 +64,7 @@ const CAPABILITIES = Object.freeze({
   import_data: ["admin"],
 });
 const LABELS = Object.freeze({
-  workspace: "Workspace",
+  workspace: "Space",
   board: "Board",
   doc: "Doc",
   note: "Note",
@@ -463,7 +463,7 @@ export function canGrant({
 
 /** Human-readable `canGrant` refusals (store failures, share candidates). */
 export const GRANT_REFUSALS = Object.freeze({
-  invalid_kind: "Only workspaces, boards, docs and notes can be shared",
+  invalid_kind: "Only Spaces, boards, docs and notes can be shared",
   not_found: "Unknown resource",
   invalid_role: "That role is not available for this resource",
   unknown_subject: "Unknown user or team",
@@ -524,7 +524,7 @@ function memberReason(store, target, verdicts) {
     return `${GRANT_REFUSALS.guest_not_allowed}; this grant gives no access.`;
   }
   if (verdicts.removal === "last_owner") {
-    const noun = (LABELS[resourceKind] ?? resourceKind).toLowerCase();
+    const noun = inSentence(LABELS[resourceKind] ?? resourceKind);
     return `This ${noun} needs at least one owner who can manage it. Make someone else an owner first.`;
   }
   return verdicts.effectiveRole === knownRole(grant.role) ? null : CAPPED_NOTE;
@@ -634,7 +634,7 @@ export function notFoundError(what, id) {
 }
 
 export function forbiddenError(what, minRole) {
-  const label = (LABELS[what] ?? what).toLowerCase();
+  const label = inSentence(LABELS[what] ?? what);
   return new GraphQLError(`This needs ${minRole} access to the ${label}`, {
     code: "FORBIDDEN",
   });

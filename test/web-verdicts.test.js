@@ -397,7 +397,7 @@ test("paused streams: the banner shows while any stream is paused", () => {
   assert.deepEqual(streams.keys(), []);
 });
 
-test("the user stream reports its end once, never on a reconnect", (t) => {
+test("the user stream forwards notifications and sidebar changes, and reports its end once, never on a reconnect", (t) => {
   const sources = [];
   class FakeEventSource {
     static CONNECTING = 0;
@@ -424,12 +424,25 @@ test("the user stream reports its end once, never on a reconnect", (t) => {
     globalThis.EventSource = original;
   });
   let ended = 0;
+  const heard = [];
   subscribeMyEvents(
-    () => {},
+    {
+      notification: (event) => heard.push(["notification", event.type]),
+      sidebar: (change) => heard.push(["sidebar", change]),
+    },
     () => (ended += 1),
   );
   const [source] = sources;
   assert.equal(source.url, "/v2/events?stream=me");
+  const send = (type, data) => source.listeners.get(type)({ data });
+  send("sidebar", JSON.stringify({ type: "folder_moved", resource_id: "4" }));
+  send("sidebar", "not json");
+  send("sidebar", JSON.stringify({ resource_id: "4" }));
+  send("notification", JSON.stringify({ type: "notifications_read" }));
+  assert.deepEqual(heard, [
+    ["sidebar", { type: "folder_moved", resource_id: "4" }],
+    ["notification", "notifications_read"],
+  ]);
   source.fire("error", FakeEventSource.CONNECTING);
   assert.equal(ended, 0, "a network drop retries on its own");
   source.fire("error", FakeEventSource.CLOSED);

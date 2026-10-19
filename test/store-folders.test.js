@@ -184,7 +184,7 @@ test("a /6 file gets folders, names, positions and a .v6.bak", async (t) => {
   const positions = (records) =>
     records.map((record) => [record.name ?? record.title, record.position]);
   assert.deepEqual(positions(store.listWorkspaces()), [
-    ["Main workspace", S],
+    ["Main space", S],
     ["Leadership", 2 * S],
   ]);
   const inside = (id, list) =>

@@ -3,14 +3,14 @@
  * bar and sidebar (`sidebar.js`), the navigation drawer (under 900 px)
  * or collapsed sidebar (wider screens) and `refreshShell()`.
  *
- * The sidebar's Inbox mirrors the bell's unread count and opens its
- * list. Changes to where boards, docs, folders and Spaces sit
- * (SPEC-6 §3.3: `board_moved`, `doc_moved`, `workspace_moved`,
- * `folder_*`) that reach a watched board stream refresh the shell
- * (debounced); the sidebar refreshes it after its own changes too.
+ * The sidebar's Inbox shows the bell's unread count (`onCount`) and
+ * opens its list. Changes to where boards, docs, folders and Spaces sit
+ * that someone else made (SPEC-6 §3.3: the user stream's `sidebar`
+ * events, `bus.js`) refresh the shell (debounced); the sidebar refreshes
+ * it after its own changes too.
  */
 
-import { countBadge } from "../components/badge.js";
+import { countBadge, setBadgeCount } from "../components/badge.js";
 import { invalidateDirectory } from "../components/directory.js";
 import { changesAccess } from "../components/labels.js";
 import { isPopoverOpen } from "../components/popover.js";
@@ -25,16 +25,6 @@ import { createUserMenu } from "./user-menu.js";
 
 const DRAWER_QUERY = "(max-width: 899px)";
 const COLLAPSED_KEY = "worklane-sidebar-collapsed";
-/** Change events that move things in the sidebar's tree. */
-const SIDEBAR_EVENTS = new Set([
-  "board_moved",
-  "doc_moved",
-  "workspace_moved",
-  "folder_created",
-  "folder_updated",
-  "folder_moved",
-  "folder_deleted",
-]);
 /** Several moves arrive together (a deleted folder's boards): one refresh. */
 const LIVE_REFRESH_MS = 150;
 
@@ -61,23 +51,6 @@ function drawSidebar(sh) {
   sh.sidebar.update({ data: sh.data, route: sh.route });
 }
 
-/** Keeps `target` (the sidebar's Inbox badge) in step with the bell's. */
-function mirrorUnread(bell, target) {
-  const source = bell.querySelector(".count-badge");
-  if (!source) return;
-  const copy = () => {
-    target.textContent = source.textContent;
-    target.hidden = source.hidden;
-  };
-  copy();
-  new MutationObserver(copy).observe(source, {
-    attributes: true,
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-}
-
 /** The sidebar's Inbox: the bell's list (the drawer closes first). */
 function openInbox(sh) {
   if (sh.drawerOpen) setDrawer(sh, false, { focus: false });
@@ -87,7 +60,7 @@ function openInbox(sh) {
 function createSidebarOf(sh) {
   const inboxBadge = countBadge(0);
   inboxBadge.classList.add("sidebar-inbox-count");
-  mirrorUnread(sh.notifications.element, inboxBadge);
+  sh.notifications.onCount((count) => setBadgeCount(inboxBadge, count));
   return createSidebar({
     container: sh.elements.sidebar,
     ctx: sh.ctx,
@@ -179,9 +152,8 @@ function onRoute(sh, route) {
   drawSidebar(sh);
 }
 
-/** Refreshes the shell shortly after a change that moves sidebar nodes. */
-function onBoardChange(sh, change) {
-  if (!SIDEBAR_EVENTS.has(change?.type)) return;
+/** Refreshes the shell shortly after a change of the sidebar's tree. */
+function onSidebarChange(sh) {
   globalThis.clearTimeout(sh.liveTimer);
   sh.liveTimer = globalThis.setTimeout(() => refresh(sh), LIVE_REFRESH_MS);
 }
@@ -209,7 +181,7 @@ function wireEvents(sh) {
   ctx.router.onChange((route) => onRoute(sh, route));
   // A page shows something of this Space: the tree opens it.
   ctx.bus.on(BUS_EVENTS.workspace, (id) => sh.sidebar.reveal(id));
-  ctx.bus.on(BUS_EVENTS.boardChange, (change) => onBoardChange(sh, change));
+  ctx.bus.on(BUS_EVENTS.sidebar, () => onSidebarChange(sh));
   ctx.bus.on(BUS_EVENTS.notification, (event) => {
     sh.notifications.onNotification(event);
     // The sidebar, `ctx.me` and the create controls follow the new access.

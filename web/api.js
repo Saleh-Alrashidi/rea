@@ -239,14 +239,15 @@ export async function requestSessionToken(installId) {
 }
 
 /**
- * Opens an EventSource on `url` and forwards parsed `eventName` objects.
+ * Opens an EventSource on `url` and forwards the parsed objects of each
+ * event name in `listeners` (`{ [eventName]: onEvent }`) to its listener.
  * The server refuses a stream (429 when the user holds too many) or ends
  * one for good by refusing its reconnection (a board the user lost access
  * to answers 404): EventSource then reports an error in the CLOSED state,
  * which `onEnd()` announces once. Network drops keep the CONNECTING state
  * and retry on their own.
  */
-function subscribe(url, eventName, onEvent, onEnd = null) {
+function subscribe(url, listeners, onEnd = null) {
   const source = new globalThis.EventSource(url);
   let ended = false;
   source.addEventListener("error", () => {
@@ -254,15 +255,19 @@ function subscribe(url, eventName, onEvent, onEnd = null) {
     ended = true;
     onEnd?.();
   });
-  source.addEventListener(eventName, (event) => {
-    let payload;
-    try {
-      payload = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    if (isPlainObject(payload)) onEvent(payload);
-  });
+  for (const [eventName, onEvent] of Object.entries(listeners)) {
+    source.addEventListener(eventName, (event) => {
+      let payload;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (isPlainObject(payload) && typeof payload.type === "string") {
+        onEvent(payload);
+      }
+    });
+  }
   return () => source.close();
 }
 
@@ -280,24 +285,25 @@ function subscribe(url, eventName, onEvent, onEnd = null) {
 export function subscribeBoardEvents(boardId, onEvent, onEnd) {
   const id = readId(boardId, "boardId");
   const url = `${EVENTS_PATH}?board_id=${encodeURIComponent(id)}`;
-  const forward = (change) => {
-    if (typeof change.type === "string") onEvent(change);
-  };
-  return subscribe(url, "change", forward, onEnd);
+  return subscribe(url, { change: onEvent }, onEnd);
 }
 
 /**
- * Subscribes to the signed-in user's notification events
- * (`GET /v2/events?stream=me`, `event: notification`). `onEnd()` runs once
- * the server has refused or ended the stream for good (too many open
+ * Subscribes to the signed-in user's stream (`GET /v2/events?stream=me`):
+ * `notification(event)` receives its `event: notification` messages and
+ * `sidebar(change)` its `event: sidebar` ones (SPEC-6 §3.3: a folder,
+ * List, doc or Space the user can see moved or changed; IDs only).
+ * Events without a string `type` are ignored. `onEnd()` runs once the
+ * server has refused or ended the stream for good (too many open
  * streams, the session ended). Returns `close()`.
  *
- * @param {(notification: object) => void} onEvent
+ * @param {{ notification?(event: object): void,
+ *   sidebar?(change: object): void }} listeners
  * @param {() => void} [onEnd]
  * @returns {() => void}
  */
-export function subscribeMyEvents(onEvent, onEnd) {
-  return subscribe(`${EVENTS_PATH}?stream=me`, "notification", onEvent, onEnd);
+export function subscribeMyEvents(listeners, onEnd) {
+  return subscribe(`${EVENTS_PATH}?stream=me`, listeners, onEnd);
 }
 
 /**

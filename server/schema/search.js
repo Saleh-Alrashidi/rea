@@ -72,7 +72,7 @@ const boardResult = (board) =>
   });
 const docResult = (doc) =>
   result("doc", doc, {
-    subtitle: doc.visibility === "private" ? "Private doc" : "Workspace doc",
+    subtitle: doc.visibility === "private" ? "Private doc" : "Space doc",
     url: `#/docs/${doc.id}`,
   });
 function noteResult(ctx, note) {
@@ -126,8 +126,7 @@ function directoryResults(ctx) {
     .filter((workspace) => workspaceAccess(store, viewer, workspace) !== null)
     .map((workspace) =>
       result("workspace", workspace, {
-        subtitle:
-          workspace.kind === "open" ? "Open workspace" : "Closed workspace",
+        subtitle: workspace.kind === "open" ? "Open Space" : "Closed Space",
         url: `#/workspaces/${workspace.id}`,
       }),
     );

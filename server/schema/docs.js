@@ -53,7 +53,7 @@ const Mutation = wrapAll(write, {
       visibility: args.visibility,
       creatorId: creator.id,
     });
-    return storeResult(result, () => notFound("Workspace", workspace.id));
+    return storeResult(result, () => notFound("workspace", workspace.id));
   },
   update_doc(_p, args, ctx) {
     const doc = requireDoc(ctx, args.doc_id, "editor");
