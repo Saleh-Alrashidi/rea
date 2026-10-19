@@ -1,11 +1,11 @@
 /**
- * Task view (SPEC-5 §4, ClickUp style): how the item route shows a task
- * of a List board. A modal `<dialog class="task-view">` with the item
- * card's contract (`createModalPanel`: Escape, a backdrop click and the
- * close button close it; focus returns to the opener) holding a top bar
- * (breadcrumb, "Subtask of …", the task ID, close), a left pane that
- * scrolls (title, fields grid, description, custom fields, subtasks:
- * `task-fields.js`, `task-subtasks.js`) and the Activity pane
+ * Task view (SPEC-5 §4, SPEC-6 §1.1, ClickUp style): how the item route
+ * shows an item, from every view of every board. A modal
+ * `<dialog class="task-view">` (`createModalPanel`: Escape, a backdrop
+ * click and the close button close it; focus returns to the opener)
+ * holding a top bar (breadcrumb, "Subtask of …", the task ID, close), a
+ * left pane that scrolls (title, fields grid, description, custom fields,
+ * subtasks: `task-fields.js`, `task-subtasks.js`) and the Activity pane
  * (`task-activity.js`).
  *
  * Every editor reuses the board's actions and carries a focus key, so a
@@ -23,8 +23,8 @@ import { emptyState } from "../components/empty-state.js";
 import { findByFocusKey } from "../components/focus.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
+import { createModalPanel } from "../components/modal-panel.js";
 import { skeletonList } from "../components/skeleton.js";
-import { createModalPanel } from "./item-card.js";
 import { activityPane } from "./task-activity.js";
 import {
   customSection,
@@ -225,8 +225,7 @@ function applyScroll(scroll) {
 // -------------------------------------------------------------- view
 
 /**
- * Creates the task view. `render(props)` fills it, like the item card's:
- * `props.status` is "loading", "missing", "error" or "ready" (with
+ * Creates the task view. `render(props)` fills it: `props.status` is "loading", "missing", "error" or "ready" (with
  * `item`, `detail`, `board`, `users`, `actions`, `caps`, `draft`,
  * `onDraft`), plus `itemId` (the route's) and `repaint()`, which redraws
  * the view through the page's regions. `show()` follows each render.

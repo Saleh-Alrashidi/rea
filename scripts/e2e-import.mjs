@@ -10,9 +10,10 @@
  * review (tree, people, warnings) with one person invited, the import
  * with its progress and done step (counts, links, the warnings as a .txt
  * download), the imported board with its badge, items, statuses, people
- * and updates, then a ClickUp import (its board opens in the List view,
- * and running its scan again is refused with 409, SPEC-5 §2.5), a CSV
- * file and a monday Excel export built by
+ * and updates (every imported board opens in the List view; the checks
+ * read its Main table and open items in the task view, SPEC-6 §1.1), then
+ * a ClickUp import (running its scan again is refused with 409, SPEC-5
+ * §2.5), a CSV file and a monday Excel export built by
  * `test/fixtures/import/make-xlsx.js` (its subitems are real subitems).
  *
  * Every wizard step is photographed light, dark and 360 px wide
@@ -43,6 +44,7 @@ import {
   shots,
   startImport,
   stepTitle,
+  toMainTable,
   waitStep,
 } from "./e2e-import-lib.mjs";
 import {
@@ -260,13 +262,14 @@ async function mondayBoard(run) {
     badge: "Imported from monday.com",
     href: "https://acme.monday.com/boards/101",
   });
+  await toMainTable(page);
   await screenshot(run, page, "import-board-monday.png");
   await checkItem(page, {
     name: "Launch MVP",
     status: "Done",
     person: "Fox Mulder",
     update: "Planning started",
-    onCard: () => screenshot(run, page, "import-item-monday.png"),
+    onTask: () => screenshot(run, page, "import-item-monday.png"),
   });
   await checkSidebarFits(page);
   // The activity names the import as the way the admin acted.
@@ -324,10 +327,8 @@ async function clickupImport(run) {
     badge: "Imported from ClickUp",
     href: "https://app.clickup.com/9001/v/li/901101",
   });
-  // ClickUp boards open in the List view (SPEC-5 §3.1); the checks below
-  // read the Main table.
-  await page.locator('.board-page[data-view="list"] .list-view').waitFor();
-  await page.locator(".view-tab", { hasText: /^Main table$/ }).click();
+  // The checks below read the Main table.
+  await toMainTable(page);
   await checkItem(page, {
     name: "Plan the sprint",
     status: "in progress",
@@ -382,6 +383,7 @@ async function csvImport(run) {
     title: "Sprint plan",
     badge: "Imported from a CSV file",
   });
+  await toMainTable(page);
   await checkItem(page, {
     name: "Write the spec",
     status: "Done",
@@ -403,6 +405,7 @@ async function xlsxImport(run) {
     title: "Product roadmap",
     badge: "Imported from an Excel file",
   });
+  await toMainTable(page);
   await checkItem(page, {
     name: "Launch site",
     status: "Done",

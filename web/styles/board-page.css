@@ -1,7 +1,10 @@
 /* Board page: layout inside the page outlet, the board header (name,
    description, badges, view tabs, toolbar) and app views. In the List
    view (`.board-page[data-view="list"]`, SPEC-5 §5) the header gets the
-   ClickUp look: a breadcrumb title row, accent tabs and toolbar. */
+   ClickUp look: a breadcrumb title row, accent tabs and toolbar. The view
+   tabs scroll inside their strip; on narrow screens the List toolbar's
+   Group, Subtasks, Columns and Show closed give way to one "View
+   options" menu (SPEC-6 §1.1). */
 
 .board-page {
   display: flex;
@@ -74,10 +77,17 @@
 .view-tabs {
   display: flex;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
   margin-top: var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
+}
+
+.view-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .view-tab {
@@ -285,6 +295,10 @@
   color: var(--cu-accent-text);
 }
 
+.toolbar .list-view-options {
+  display: none;
+}
+
 /* --------------------------------------------------------- app view */
 
 .board-view.app-active {
@@ -318,6 +332,24 @@
   .board-name,
   .board-name-heading {
     font-size: var(--text-xl);
+  }
+}
+
+@media (max-width: 600px) {
+  .toolbar .list-tool-wide {
+    display: none;
+  }
+
+  .toolbar .list-view-options {
+    display: inline-flex;
+  }
+
+  .board-page[data-view="list"] .search {
+    flex: 1 1 140px;
+  }
+
+  .board-page[data-view="list"] .search-input {
+    width: 100%;
   }
 }
 

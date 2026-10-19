@@ -1,13 +1,13 @@
 /**
  * Text values with line breaks (SPEC-5 §3.4, §6) in the Main table, the
- * item card, the List view and the shared editors, on the task view's
- * fake DOM, whose text inputs drop line breaks as browsers do: a real
- * edit of a multi-line value goes through a textarea and saves its line
- * breaks; one-line values keep the inline input.
+ * List view and the shared editors, on the task view's fake DOM, whose
+ * text inputs drop line breaks as browsers do: a real edit of a
+ * multi-line value goes through a textarea and saves its line breaks;
+ * one-line values keep the inline input. (The task view's own text
+ * fields are covered in `web-task-view.test.js`.)
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createItemCard } from "../web/ui/board/item-card.js";
 import { listCell } from "../web/ui/board/list-cells.js";
 import { renderTable } from "../web/ui/board/table-view.js";
 import { closePopover, isPopoverOpen } from "../web/ui/components/popover.js";
@@ -60,7 +60,8 @@ function recorder() {
 const agenda = () =>
   meetingsBoard([task("1", "Agenda", { minuts: MINUTES, files: "plan.pdf" })]);
 
-test("the Main table edits a multi-line text cell in a textarea", (t) => {
+/** The agenda's Main table, attached, with its recorded actions. */
+function openTable(t) {
   const doc = installTaskDom(t);
   const board = agenda();
   const { actions, setValues } = recorder();
@@ -77,6 +78,11 @@ test("the Main table edits a multi-line text cell in a textarea", (t) => {
     openItem() {},
     toggleGroup() {},
   });
+  return { doc, container, setValues };
+}
+
+test("the Main table edits a multi-line text cell in a textarea", (t) => {
+  const { container, setValues } = openTable(t);
   const inputs = findAll(container, (node) => node.localName === "input");
   const labels = inputs.map((input) => input.getAttribute("aria-label"));
   assert.ok(!labels.includes("Minuts for Agenda"), "no input flattens it");
@@ -96,37 +102,25 @@ test("the Main table edits a multi-line text cell in a textarea", (t) => {
   assert.deepEqual(setValues(), [["minuts", `${MINUTES}!`]]);
 });
 
-/** The item card of the agenda, attached; `field` is its Minuts editor. */
-function openCard(t) {
-  const doc = installTaskDom(t);
-  const board = agenda();
-  const { actions, setValues } = recorder();
-  const card = createItemCard({ onClose() {} });
-  card.render({
-    status: "ready",
-    item: board.items[0],
-    detail: { id: "1", createdAt: null, creator: null, updates: [] },
-    board,
-    users: new Map(),
-    actions,
-    caps: { edit: true, viewOnly: false },
-    draft: "",
-    onDraft() {},
-  });
-  doc.body.append(card.element);
-  const field = byKey(card.element, "card-cell:minuts");
-  return { doc, field, setValues };
+/** The agenda's Minuts cell in the Main table (a text popover button). */
+function openCell(t) {
+  const { doc, container, setValues } = openTable(t);
+  return { doc, field: byKey(container, "cell:1:minuts"), setValues };
 }
 
-test("the item card edits a multi-line value: Escape cancels, leaving saves", (t) => {
-  const { doc, field, setValues } = openCard(t);
+test("the text popover: Escape cancels, leaving saves", (t) => {
+  const { doc, field, setValues } = openCell(t);
   assert.equal(field.localName, "button");
   fire(field, "click");
   let editor = popoverEditor();
   editor.value = "Changed\ntext";
   // The popover takes Escape before the textarea (capture phase).
   const escape = doc.keydown({ key: "Escape" });
-  assert.equal(escape.defaultPrevented, true, "the card stays open");
+  assert.equal(
+    escape.defaultPrevented,
+    true,
+    "Escape stays in the popover (a surrounding dialog stays open)",
+  );
   assert.equal(isPopoverOpen(), false);
   assert.equal(doc.activeElement, field, "focus returns to the field");
   assert.deepEqual(setValues(), []);
@@ -143,7 +137,7 @@ test("the item card edits a multi-line value: Escape cancels, leaving saves", (t
 });
 
 test("the text popover saves only a change, after focus comes back too", (t) => {
-  const { field, setValues } = openCard(t);
+  const { field, setValues } = openCell(t);
   fire(field, "click");
   popoverEditor();
   closePopover();

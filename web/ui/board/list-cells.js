@@ -5,7 +5,7 @@
  * other status columns as rounded pills, text on one line and numbers
  * right-aligned.
  *
- * Editors get the existing pickers (people, status labels) and inline
+ * Editors get the people picker, the compact status menu and inline
  * inputs; a date opens a popover with a date input; a multi-line text
  * value opens the task view, since only single-line values are edited
  * inline. View-only users see the same values as static elements.
@@ -17,7 +17,8 @@ import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { openPopover } from "../components/popover.js";
 import { MAX_TEXT, firstLine } from "../components/text-editor.js";
-import { cellEditor, openStatusMenu } from "./cells.js";
+import { cellEditor } from "./cells.js";
+import { openStatusMenu } from "./status-menu.js";
 import { statusOption, textColorOn } from "./values.js";
 
 /** The cell's accessible label: "<column> for <task>". */
@@ -113,7 +114,7 @@ function dateCell(ctx, { item, column, overdue }) {
   return trigger;
 }
 
-/** A status-like value the user may change from a label menu. */
+/** A status-like value editors change from the compact status menu. */
 function labelTrigger(ctx, { item, column, className, children, text }) {
   const value = item.values[column.id] ?? null;
   const label = labelOf(column, item);
@@ -134,7 +135,7 @@ function labelTrigger(ctx, { item, column, className, children, text }) {
       type: "button",
       class: className,
       "aria-label": `${label}: ${text || "not set"}. Change`,
-      "aria-haspopup": "menu",
+      "aria-haspopup": "dialog",
       "aria-expanded": "false",
       dataset: { focusKey: `${ctx.keyPrefix}:${column.id}` },
       on: {

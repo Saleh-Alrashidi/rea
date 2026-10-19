@@ -70,7 +70,7 @@ function createKit(app) {
         if (shell) app.refreshShell();
       }
     },
-    /** The loaded copies of an item: its board row and the card's detail. */
+    /** The loaded copies of an item: its board row and the task's detail. */
     copiesOf(itemId) {
       const copies = [];
       const row = state.board?.items.find((item) => item.id === itemId);

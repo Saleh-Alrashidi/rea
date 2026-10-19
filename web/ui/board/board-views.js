@@ -1,8 +1,9 @@
 /**
- * Board views (SPEC-5 §1.5, §3.1, §4.1): the tabs a board's `views`
- * records give, in record order; its default view (the first non-app
- * view); the views editors may still add; and whether an item opens as the
- * ClickUp-style task view or the item card.
+ * Board views (SPEC-5 §1.5, §3.1, SPEC-6 §1.1): the tabs a board's
+ * `views` give, in the server's tab order (List, Main table, Kanban, then
+ * apps); its default view (the first non-app view: List on every board);
+ * and the views editors may still add. Items open in the task view from
+ * every view (`pages/board.js`).
  */
 
 /** Item views with their default names (the server's) and tab icons. */
@@ -18,17 +19,19 @@ const isItemView = (type) => Object.hasOwn(ITEM_VIEWS, type);
 
 /**
  * The view `#/boards/<id>` opens: the type of the board's first non-app
- * view in record order, or "table" when it has none (or is not loaded).
+ * view in `Board.views` (tab order, so List when the board has one), or
+ * "list" when it has none or is not loaded yet, since every board has a
+ * List view (SPEC-6 §1.1).
  * @param {{ views?: object[] } | null} board
  */
 export function defaultView(board) {
   return (
-    (board?.views ?? []).find((view) => isItemView(view.type))?.type ?? "table"
+    (board?.views ?? []).find((view) => isItemView(view.type))?.type ?? "list"
   );
 }
 
 /**
- * The board's view tabs before Activity and Forms, in record order:
+ * The board's view tabs before Activity and Forms, in `Board.views` order:
  * `{ view, installId, label, icon }` (app views need an install).
  */
 export function viewTabsOf(board) {
@@ -59,18 +62,4 @@ export function missingViews(board) {
   return Object.keys(ITEM_VIEWS).filter(
     (type) => !views.some((view) => view.type === type),
   );
-}
-
-/**
- * How the item route shows an item (SPEC-5 §4.1): "task" (the task view)
- * when the view the user came from is List, or, on a direct link
- * (`lastView` null or without a view), when the board's default view is
- * List; otherwise "card" (the item card).
- * @param {{ board: object | null,
- *   lastView?: { view: string | null } | null }} options
- * @returns {"task" | "card"}
- */
-export function itemViewKind({ board, lastView = null }) {
-  const view = lastView?.view ?? defaultView(board);
-  return view === "list" ? "task" : "card";
 }

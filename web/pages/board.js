@@ -1,18 +1,19 @@
 /**
  * Board page (`#/boards/<id>` and its view and item routes): the header,
- * the list / table / kanban / app / activity / forms views and the item
- * card. The board's own link opens its default view (SPEC-5 §3.1); an
- * item route shows the item over the view the user came from.
+ * the list / table / kanban / app / activity / forms views and the task
+ * view. The board's own link opens its default view (the List view,
+ * SPEC-6 §1.1); an item route shows the item in the task view over the
+ * view the user came from, whichever it is.
  * What the user may change follows the board's `my_access`
  * (`ui/board/capabilities.js`): view-only users get read-only cells and no
  * add or delete controls, editors cannot change board settings or columns.
  *
- * One mount per board: switching views or opening an item card updates the
+ * One mount per board: switching views or opening a task updates the
  * mounted page (`ctx.router.onChange`) instead of remounting it. Rendering
- * is per region (header, view, card). A region is rebuilt from state with
- * focus and unsaved text carried over (`components/focus.js`); it is
- * deferred while a popover is open or an unkeyed editor has focus, and
- * rendered once that ends.
+ * is per region (header, view, card: the task view). A region is rebuilt
+ * from state with focus and unsaved text carried over
+ * (`components/focus.js`); it is deferred while a popover is open or an
+ * unkeyed editor has focus, and rendered once that ends.
  */
 
 import { h } from "../dom.js";
@@ -34,7 +35,7 @@ import {
   rememberView,
 } from "../ui/board/board-memory.js";
 import { createBoardSync } from "../ui/board/board-sync.js";
-import { defaultView, itemViewKind } from "../ui/board/board-views.js";
+import { defaultView } from "../ui/board/board-views.js";
 import { mountActivityView } from "../ui/board/activity-view.js";
 import { boardCapabilities } from "../ui/board/capabilities.js";
 import {
@@ -42,7 +43,6 @@ import {
   renderBoardStatus,
 } from "../ui/board/embedded-views.js";
 import { mountFormsView } from "../ui/board/forms-view.js";
-import { createItemCard } from "../ui/board/item-card.js";
 import { renderKanban } from "../ui/board/kanban-view.js";
 import { listTools } from "../ui/board/list-toolbar.js";
 import { addTaskFromToolbar, renderList } from "../ui/board/list-view.js";
@@ -54,6 +54,11 @@ import { rememberVisit } from "../ui/shell/recent.js";
 import { currentTheme } from "../ui/shell/theme.js";
 
 const NEW_ITEM_NAME = "New item";
+/** The task view's status while the board is not ready. */
+const BOARD_TASK_STATUS = Object.freeze({
+  loading: "loading",
+  missing: "missing",
+});
 const PLAIN_TITLES = {
   loading: "Loading…",
   missing: "Board not available",
@@ -244,33 +249,21 @@ function drawView(page) {
   drawItemsView(page, spec);
 }
 
-/**
- * The panel of the item route (SPEC-5 §4.1): the task view when the view
- * the user came from (or on a direct link, the board's default) is List,
- * else the item card; null on a direct link while the board loads, as its
- * default view is not known yet.
- */
-function cardPanel(page) {
-  const { state } = page;
-  const last = lastView(state.boardId);
-  if (state.boardStatus === "loading" && !last?.view) return null;
-  const kind = itemViewKind({ board: state.board, lastView: last });
-  return kind === "task" ? page.taskView : page.itemCard;
-}
-
+/** The item route's task view (SPEC-6 §1.1), from every view. */
 function drawCard(page) {
   const { state } = page;
   const { card } = state;
-  const panel = card ? cardPanel(page) : null;
-  for (const other of [page.itemCard, page.taskView]) {
-    if (other !== panel) other.hide();
+  const panel = page.taskView;
+  if (!card) {
+    panel.hide();
+    return;
   }
-  if (!panel) return;
   const item =
     state.board?.items.find((entry) => entry.id === card.itemId) ?? card.detail;
   let status = card.status;
   if (state.boardStatus !== "ready") {
-    status = state.boardStatus === "loading" ? "loading" : "error";
+    // A board that is gone or closed to the user hides its tasks too.
+    status = BOARD_TASK_STATUS[state.boardStatus] ?? "error";
   } else if (item) {
     status = "ready";
   }
@@ -348,8 +341,8 @@ function applyRoute(page, params) {
   };
   if (!state.route.itemId) rememberView(state.boardId, state.route);
   syncCard(page, state.route.itemId);
-  // Opening or closing an item card leaves the header and the view as
-  // they are: rebuilding a wide board's table would freeze the page.
+  // Opening or closing a task leaves the header and the view as they
+  // are: rebuilding a wide board's table would freeze the page.
   const cardOnly = page.routed && sameView(shown, currentViewSpec(page));
   page.routed = true;
   page.render(cardOnly ? ["card"] : undefined);
@@ -442,7 +435,7 @@ function createState(ctx, boardId) {
     boardStatus: "loading",
     route: { view: null, installId: null, itemId: null },
     search: "",
-    /** Open item card: `{ itemId, status, detail }` or null. */
+    /** The open task: `{ itemId, status, detail }` or null. */
     card: null,
     draft: "",
     pendingMutations: 0,
@@ -466,14 +459,10 @@ function createPage(container, ctx, boardId) {
   const regions = createRegions({
     header: { element: () => dom.header, draw: () => drawHeader(page) },
     view: { element: () => dom.view, draw: () => drawView(page) },
-    card: {
-      element: () => (cardPanel(page) ?? page.itemCard).element,
-      draw: () => drawCard(page),
-    },
+    card: { element: () => page.taskView.element, draw: () => drawCard(page) },
   });
   Object.assign(page, regions);
   page.slot = createEmbeddedSlot({ container: dom.view });
-  page.itemCard = createItemCard({ onClose: () => closeCard(page) });
   page.taskView = createTaskView({ onClose: () => closeCard(page) });
   page.appHost = {
     getContext: (view) => appContext(page, view),
@@ -552,7 +541,6 @@ export async function mount(container, ctx, params) {
     setLive(page, false);
     page.sync.destroy();
     page.slot.unmount();
-    page.itemCard.hide();
     page.taskView.hide();
     for (const cleanup of page.cleanups) cleanup();
   };

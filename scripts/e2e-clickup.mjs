@@ -6,17 +6,23 @@
  * fake ClickUp server and imported in code as Alex (`e2e-clickup-lib.mjs`);
  * then Chromium opens the board, which shows the List view by default, and
  * checks the status groups and their pills, nesting and expansion (mouse
- * and keyboard), a status change from the circle's menu, search that keeps
- * the ancestors of matches, the "Show closed" toggle, and the task view:
- * description, custom fields, subtasks, the activity stream with author
- * names (the ClickUp tag on authors without an account), posting a comment
- * and closing with focus back on the task's name. Text contrast is checked
- * in light and dark. Last, the Main table and the item card edit the
- * multi-line Minutes in a textarea that keeps its line breaks (SPEC-5 §6).
+ * and keyboard), status changes from the circle's compact status menu
+ * (SPEC-6 §1.1: mouse, then keyboard: typing filters, arrows move, Escape
+ * closes, Enter picks), search that keeps the ancestors of matches, the
+ * "Show closed" toggle, the 360 px toolbar's "View options" menu and the
+ * view tabs scrolling in their strip, and the task view: description,
+ * custom fields, its status menu, subtasks, the activity stream with
+ * author names (the ClickUp tag on authors without an account), posting a
+ * comment and closing with focus back on the task's name. Text contrast
+ * is checked in light and dark. Last, the Main table and the task view
+ * opened from it edit the multi-line Minutes in a textarea that keeps its
+ * line breaks (SPEC-5 §6), and closing goes back to the Main table
+ * (`e2e-clickup-views.mjs`).
  *
  * Screenshots go to `e2e-output/clickup-<list|task>[-dark|-360].png`,
- * `clickup-status-menu.png` and `clickup-task-subtasks.png`; at 360 px the
- * page must not scroll sideways.
+ * `clickup-status-menu.png`, `clickup-view-options-360.png` and
+ * `clickup-task-subtasks.png`; at 360 px the page must not scroll
+ * sideways.
  *
  * Usage: `node scripts/e2e-clickup.mjs`. The harness, environment
  * variables and skip rules are described in `e2e-lib.mjs`.
@@ -29,8 +35,10 @@ import {
   listGroup,
   listRow,
   rgbOf,
+  statusMenuState,
   subtaskNames,
 } from "./e2e-clickup-lib.mjs";
+import { multiLineEdits, narrowToolbar } from "./e2e-clickup-views.mjs";
 import { shots } from "./e2e-import-lib.mjs";
 import {
   check,
@@ -57,6 +65,7 @@ const ITEM = `query ($ids: [ID!]!) {
 /** The task with many comments and subtasks. */
 const BUSY = MEETINGS.busy;
 const TASK = "dialog.task-view[open]";
+const MENU = ".status-menu-popover";
 const COMMENT = "Thanks, see you on Sunday.\nI will bring the numbers.";
 
 const textOf = async (locator) => ((await locator.textContent()) ?? "").trim();
@@ -229,38 +238,104 @@ async function countsByLabel(page) {
   return new Map(groups.map((group) => [group.label, group.count]));
 }
 
-async function statusMenu(run) {
-  const page = run.alex;
-  const before = await countsByLabel(page);
-  const row = listRow(listGroup(page, "facility"), MEETINGS.plain);
-  await row.locator("button.list-status").click();
-  const menu = page.locator(".popover .status-picker");
-  await menu.waitFor();
-  const circle = row.locator("button.list-status");
-  check((await circle.getAttribute("aria-expanded")) === "true", "open");
-  // The picture shows the menu once it has faded in.
-  await menu.evaluate((node) =>
-    Promise.all(
-      node
-        .closest(".popover")
-        .getAnimations()
-        .map((motion) => motion.finished),
-    ),
-  );
-  await screenshot(run, page, "clickup-status-menu.png");
-  await menu.locator(".status-choice", { hasText: /^front desk$/ }).click();
-  const moved = listRow(listGroup(page, "front desk"), MEETINGS.plain);
-  await moved.waitFor();
-  const after = await countsByLabel(page);
-  check(after.get("facility") === before.get("facility") - 1, "facility");
-  check(after.get("front desk") === before.get("front desk") + 1, "front");
+/** The plain task's status as saved. */
+async function plainStatus(run) {
   const { items } = await dataAs(run, run.ids.users.alex, ITEM, {
     ids: [run.itemIds.get(MEETINGS.plain)],
   });
   const value = items[0].column_values.find(
     (entry) => entry.id === run.statusColumn,
   );
-  check(value.text === "front desk", `the saved status: ${value.text}`);
+  return value.text;
+}
+
+/**
+ * The compact menu lists every label as written with a dot in its color,
+ * checks the current one and ends with Clear; a click picks a label.
+ */
+async function statusMenu(run) {
+  const page = run.alex;
+  const before = await countsByLabel(page);
+  const row = listRow(listGroup(page, "facility"), MEETINGS.plain);
+  await row.locator("button.list-status").click();
+  const menu = page.locator(MENU);
+  await menu.waitFor();
+  const circle = row.locator("button.list-status");
+  check((await circle.getAttribute("aria-expanded")) === "true", "open");
+  const shown = await statusMenuState(page);
+  const statuses = run.data.lists[0].statuses;
+  const labels = statuses
+    .toSorted((a, b) => a.orderindex - b.orderindex)
+    .map((status) => status.status);
+  const rows = shown.labels.join("|");
+  check(rows === [...labels, "Clear"].join("|"), `menu rows: ${rows}`);
+  check(!shown.uppercase, "labels show in normal case");
+  check(shown.checked.join() === "facility", `checked: ${shown.checked}`);
+  check(shown.focused && shown.active === "facility", "opens on facility");
+  for (const status of statuses) {
+    const dot = shown.dots[status.status];
+    check(
+      dot === rgbOf(status.color.toLowerCase()),
+      `${status.status}: ${dot}`,
+    );
+  }
+  // The picture shows the menu once it has faded in.
+  await menu.evaluate((node) =>
+    Promise.all(node.getAnimations().map((motion) => motion.finished)),
+  );
+  await screenshot(run, page, "clickup-status-menu.png");
+  await menu.getByRole("option", { name: "front desk", exact: true }).click();
+  const moved = listRow(listGroup(page, "front desk"), MEETINGS.plain);
+  await moved.waitFor();
+  const after = await countsByLabel(page);
+  check(after.get("facility") === before.get("facility") - 1, "facility");
+  check(after.get("front desk") === before.get("front desk") + 1, "front");
+  const saved = await plainStatus(run);
+  check(saved === "front desk", `the saved status: ${saved}`);
+  await statusMenuKeyboard(run, { moved, before });
+}
+
+/**
+ * By keyboard: the menu opens on the current label with focus in its
+ * search box; typing filters, arrows move (wrapping), Escape closes
+ * without a change and Enter picks the active label.
+ */
+async function statusMenuKeyboard(run, { moved, before }) {
+  const page = run.alex;
+  const circle = moved.locator("button.list-status");
+  await circle.focus();
+  await page.keyboard.press("Enter");
+  await page.locator(MENU).waitFor();
+  const opened = await statusMenuState(page);
+  check(opened.focused, "focus is in the menu's search box");
+  check(opened.active === "front desk", `opens on ${opened.active}`);
+  await page.keyboard.type("FAC");
+  await waitUntil(
+    async () =>
+      (await statusMenuState(page)).labels.join("|") === "facility|Clear",
+    "typing to filter the labels",
+  );
+  check((await statusMenuState(page)).active === "facility", "first match");
+  await page.keyboard.press("ArrowDown");
+  check((await statusMenuState(page)).active === "Clear", "ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  check((await statusMenuState(page)).active === "facility", "it wraps");
+  await page.keyboard.press("Escape");
+  await page.locator(MENU).waitFor({ state: "detached" });
+  // The list may be rebuilt as the menu closes; focus follows the circle.
+  await waitUntil(
+    () => circle.evaluate((node) => node === document.activeElement),
+    "Escape to return focus to the status circle",
+  );
+  check((await plainStatus(run)) === "front desk", "Escape changed nothing");
+  await page.keyboard.press("Enter");
+  await page.locator(MENU).waitFor();
+  await page.keyboard.type("fac");
+  await page.keyboard.press("Enter");
+  await listRow(listGroup(page, "facility"), MEETINGS.plain).waitFor();
+  check((await plainStatus(run)) === "facility", "Enter picked facility");
+  const after = await countsByLabel(page);
+  check(after.get("facility") === before.get("facility"), "back in facility");
 }
 
 async function searchKeepsAncestors(run) {
@@ -396,6 +471,14 @@ async function taskView(run) {
   check(crumbs.includes(MEETINGS.board), `breadcrumb: ${crumbs}`);
   await checkTaskFields(run, page);
   await checkActivity(page);
+  // The status pill opens the same compact menu; Escape closes only it.
+  await page.locator(`${TASK} .task-status`).click();
+  await page.locator(MENU).waitFor();
+  const menu = await statusMenuState(page);
+  check(menu.checked.join() === "admin", `task status menu: ${menu.checked}`);
+  await page.keyboard.press("Escape");
+  await page.locator(MENU).waitFor({ state: "detached" });
+  check(await page.locator(TASK).isVisible(), "the task view stays open");
   await checkContrast(page, `${TASK} .task-comment-tag`, "the ClickUp tag");
   await checkContrast(page, `${TASK} .task-field-label`, "a field label");
   const cut = await page
@@ -454,63 +537,6 @@ async function closeTask(run) {
   check(focused === BUSY, `focus returns to the task's name: ${focused}`);
 }
 
-/** The busy task's Minutes as saved. */
-async function savedMinutes(run) {
-  const { items } = await dataAs(run, run.ids.users.alex, ITEM, {
-    ids: [run.itemIds.get(BUSY)],
-  });
-  return items[0].column_values.find((v) => v.id === run.minutesColumn).text;
-}
-
-/** Appends `text` in the open text popover's textarea. */
-async function typeAtEnd(page, text) {
-  const editor = page.locator(".text-popover textarea");
-  await editor.waitFor();
-  await editor.press("Control+End");
-  await page.keyboard.type(text);
-  return editor;
-}
-
-async function multiLineEdits(run) {
-  const page = run.alex;
-  await page.locator(".view-tab", { hasText: "Main table" }).click();
-  await page.locator(".table-view").waitFor();
-  const label = `Minutes for ${BUSY}`;
-  const flat = await page.locator(`input[aria-label="${label}"]`).count();
-  check(flat === 0, "no input holds the multi-line Minutes");
-  let saved = await savedMinutes(run);
-  check(saved.includes("\n"), `multi-line Minutes: ${JSON.stringify(saved)}`);
-  const cell = page.locator(
-    `.table-view button.text-lines[aria-label^="${label}:"]`,
-  );
-  await cell.click();
-  const area = page.locator(".text-popover textarea");
-  check((await area.inputValue()) === saved, "the textarea shows every line");
-  await screenshot(run, page, "clickup-table-text.png");
-  const editor = await typeAtEnd(page, "\nChecked in the table");
-  await editor.press("Control+Enter");
-  await editor.waitFor({ state: "detached" });
-  saved = `${saved}\nChecked in the table`;
-  await waitUntil(async () => (await savedMinutes(run)) === saved, "the edit");
-  // The item card: Escape cancels and keeps the card; a click outside saves.
-  await page.locator(`button.open-item[aria-label="Open ${BUSY}"]`).click();
-  const card = page.locator("dialog.item-card[open]");
-  const field = card.locator(`button.text-lines[aria-label^="${label}:"]`);
-  await field.click();
-  await typeAtEnd(page, " (draft)");
-  await page.keyboard.press("Escape");
-  await area.waitFor({ state: "detached" });
-  check(await card.isVisible(), "Escape in the editor keeps the card open");
-  check((await savedMinutes(run)) === saved, "Escape saved nothing");
-  await field.click();
-  await typeAtEnd(page, "\nReviewed in the card");
-  await card.locator("#card-fields-heading").click();
-  saved = `${saved}\nReviewed in the card`;
-  await waitUntil(async () => (await savedMinutes(run)) === saved, "the card");
-  await page.keyboard.press("Escape");
-  await card.waitFor({ state: "detached" });
-}
-
 runE2E({
   name: "e2e clickup",
   prefix: "clickup-",
@@ -523,16 +549,17 @@ runE2E({
     ["the board opens in the List view", listByDefault],
     ["status groups with colored pills, hidden empty columns", groupsAndPills],
     ["a parent expands to its subtasks (mouse and keyboard)", expandParent],
-    ["the status circle's menu moves a task to another group", statusMenu],
+    ["the compact status menu moves a task (mouse and keyboard)", statusMenu],
     [
       "search keeps ancestors; Show closed toggles the group",
       searchKeepsAncestors,
     ],
+    ["at 360 px: View options, tabs scroll in their strip", narrowToolbar],
     ["the task view: description, fields, subtasks, activity", taskView],
     ["posting a comment in the task view", postComment],
     ["closing the task view returns focus to its name", closeTask],
     [
-      "the table and the card edit multi-line text in a textarea",
+      "the table and the task view edit multi-line text in a textarea",
       multiLineEdits,
     ],
   ],

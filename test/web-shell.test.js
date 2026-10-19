@@ -32,7 +32,7 @@ import {
   NOTIFICATIONS_QUERY,
   UNREAD_COUNT_QUERY,
 } from "../web/ui/shell/notifications.js";
-import { SHELL_QUERY } from "../web/ui/shell/shell-data.js";
+import { SHELL_QUERY, loadShellData } from "../web/ui/shell/shell-data.js";
 import { HOME_QUERY } from "../web/pages/home.js";
 import { SHARED_DETAILS_QUERY, SHARED_QUERY } from "../web/pages/shared.js";
 
@@ -111,15 +111,14 @@ test("every shell and page document parses with the server parser", () => {
   }
 });
 
-test("every document validates against the SPEC-2 schema", async () => {
-  const schema = createSchema();
-  const store = await createStore({ file: null });
+/** A request context of user 1 (Alex) with every scope, over `store`. */
+function sessionContext(store) {
   const principal = {
     kind: "session",
     userId: "1",
     scopes: new Set(ALL_SCOPES),
   };
-  const context = {
+  return {
     store,
     principal,
     hostOrigin: ORIGIN,
@@ -127,6 +126,12 @@ test("every document validates against the SPEC-2 schema", async () => {
     log: { error() {} },
     requireScope() {},
   };
+}
+
+test("every document validates against the SPEC-2 schema", async () => {
+  const schema = createSchema();
+  const store = await createStore({ file: null });
+  const context = sessionContext(store);
   for (const [name, source] of Object.entries(DOCUMENTS)) {
     // Empty variables: validation runs first, then required variables fail
     // coercion before any resolver runs.
@@ -148,6 +153,28 @@ test("every document validates against the SPEC-2 schema", async () => {
       name,
     );
   }
+});
+
+test("the shell's boards carry their default view, List (SPEC-6 §1.1)", async (t) => {
+  const store = await createStore({ file: null });
+  const result = await execute({
+    schema: createSchema(),
+    document: parse(SHELL_QUERY),
+    variables: {},
+    apiVersion: "2026-01",
+    context: { ...sessionContext(store), apiVersion: "2026-01" },
+  });
+  assert.equal(result.errors, undefined);
+  stubFetch(t, () => jsonResponse(200, result));
+  const shell = await loadShellData();
+  const boards = shell.workspaces.flatMap((workspace) => workspace.boards);
+  assert.ok(boards.length > 0, "the seed has boards");
+  // The sidebar shows each with its default view's icon.
+  assert.deepEqual(
+    [...new Set(boards.map((board) => board.defaultView))],
+    ["list"],
+  );
+  assert.ok(boards.every((board) => !Object.hasOwn(board, "views")));
 });
 
 test("controls read the caller's access and the server's capability list", () => {

@@ -83,7 +83,7 @@ async function refusedAssigneeIsUndone(run) {
   const before = item.values.person ?? [];
   await dataAs(run, alex, SHARE, { b: hiring, u: priya, r: "viewer" });
   const { context, page } = await signedIn(run, alex, {
-    hash: `#/boards/${hiring}`,
+    hash: `#/boards/${hiring}/views/table`,
   });
   await page
     .locator(`button.people-button[aria-label*=" for ${item.name}: "]`)

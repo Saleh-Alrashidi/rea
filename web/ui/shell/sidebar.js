@@ -1,6 +1,7 @@
 /**
  * Sidebar: primary navigation (Home, My work, Shared with me, Notes), the
- * workspace switcher, the current workspace's boards (icon per kind), docs
+ * workspace switcher, the current workspace's boards (each with the icon
+ * of its default view, the list icon for List: SPEC-6 §1.1), docs
  * and forms, the "+ Add" menu (Board / Doc / Form, only when the user can
  * create there, plus "Import from monday.com / ClickUp" for users who may
  * import) and, at the bottom, Teams and Admin (admins only; it stays
@@ -22,6 +23,7 @@ import {
   teamsHash,
 } from "../../router.js";
 import { brandMark, icon } from "../components/icon.js";
+import { ITEM_VIEWS } from "../board/board-views.js";
 import { iconButton } from "../components/button.js";
 import { boardKind } from "../components/labels.js";
 import { openMenu } from "../components/menu.js";
@@ -130,7 +132,7 @@ function workspaceContent(props, workspace) {
   const boards = workspace.boards.map((board) =>
     navLink({
       label: board.name,
-      iconName: boardKind(board.board_kind).icon,
+      iconName: ITEM_VIEWS[board.defaultView].icon,
       hash: boardHash(board.id),
       active: isActive(route, ["board"], "boardId", board.id),
       title: `${board.name} (${boardKind(board.board_kind).label})`,

@@ -3,8 +3,8 @@
  * (`e2e-clickup.mjs`): the meetings import done in code (a scan of the
  * fake ClickUp server with a fake clock, so ClickUp's request budget
  * needs no waiting, then an engine run), the groups the List view should
- * show for the fixture, rows by task name and text contrast as the page
- * paints it.
+ * show for the fixture, rows by task name, the state of the open status
+ * menu and text contrast as the page paints it.
  */
 import { scan } from "../server/import/connectors/clickup.js";
 import { run as runImport } from "../server/import/engine.js";
@@ -105,6 +105,50 @@ export function listGroup(page, label) {
 /** List view rows of task `name` (in `scope`, the whole page by default). */
 export function listRow(scope, name) {
   return scope.locator(`.list-row:has(.list-name[title="${name}"])`);
+}
+
+/**
+ * The open status menu (SPEC-6 §1.1) as the page shows it: whether its
+ * search box has focus, the `labels` of its rows (Clear last), the
+ * `checked` ones, the `active` one (`aria-activedescendant`, marked
+ * `aria-selected`), whether any label is uppercased and each row's dot
+ * color by label.
+ */
+export function statusMenuState(page) {
+  return page.evaluate(() => {
+    const input = document.querySelector(".status-menu-input");
+    const options = [
+      ...document.querySelectorAll(".status-menu-popover [role=option]"),
+    ];
+    const labelOf = (node) =>
+      node.querySelector(".status-menu-label").textContent;
+    const activeId = input?.getAttribute("aria-activedescendant");
+    const active = options.find(
+      (node) =>
+        node.id === activeId && node.getAttribute("aria-selected") === "true",
+    );
+    const dots = options
+      .filter((node) => node.querySelector(".status-menu-dot"))
+      .map((node) => [
+        labelOf(node),
+        getComputedStyle(node.querySelector(".status-menu-dot"))
+          .backgroundColor,
+      ]);
+    return {
+      focused: Boolean(input) && document.activeElement === input,
+      labels: options.map(labelOf),
+      checked: options
+        .filter((node) => node.getAttribute("aria-checked") === "true")
+        .map(labelOf),
+      active: active ? labelOf(active) : null,
+      uppercase: options.some(
+        (node) =>
+          getComputedStyle(node.querySelector(".status-menu-label"))
+            .textTransform !== "none",
+      ),
+      dots: Object.fromEntries(dots),
+    };
+  });
 }
 
 /**

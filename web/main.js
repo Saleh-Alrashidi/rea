@@ -11,7 +11,7 @@
  * late async renders are harmless); `params` holds the route's ID params
  * (strings) and fixed params such as the board `view`. The returned function
  * runs before the next page mounts. Routes that share a mount key (board
- * views and item cards, notes and an open note, admin tabs) do not remount:
+ * views and the task view, notes and an open note, admin tabs) do not remount:
  * subscribe with `ctx.router.onChange` at the start of `mount`.
  *
  * @typedef {object} PageContext

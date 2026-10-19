@@ -10,8 +10,8 @@
  *
  * Mounting: each mount gets a fresh root element inside the outlet; the
  * previous page's cleanup runs first. Routes whose `key(params)` equals the
- * mounted page's key (the board's views and item cards, a note opened over
- * the notes grid) do not remount: the page sees the change through
+ * mounted page's key (the board's views and its task view, a note opened
+ * over the notes grid) do not remount: the page sees the change through
  * `onChange`. Pages should subscribe at the start of `mount`, before their
  * first await.
  */

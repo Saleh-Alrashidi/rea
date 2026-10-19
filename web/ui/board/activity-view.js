@@ -1,7 +1,7 @@
 /**
  * Activity view (`#/boards/<id>/views/activity`): the board's history as a
  * timeline grouped by day, with actor avatars, item names (links to the
- * item card while the item exists) and from → to chips. It owns its data
+ * task view while the item exists) and from → to chips. It owns its data
  * once mounted (`live-view.js`): it loads the newest entries, reloads on
  * the board's change events and offers "Show older activity" up to the
  * API's limit.

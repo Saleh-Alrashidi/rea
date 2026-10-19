@@ -10,22 +10,103 @@
  * source), a relative time with the full date as its title, and its body
  * as written (pre-wrap, `dir="auto"`) with http(s) URLs as links built as
  * DOM nodes (`linkParts`), never as HTML.
+ *
+ * The composer posts with `actions.addUpdate`; its text is the page's
+ * draft (`props.draft`, `props.onDraft`), so a refresh or reopening the
+ * same task keeps it.
  */
 
 import { h } from "../../dom.js";
-import { plural, timeAgo } from "../components/format.js";
+import { avatar } from "../components/avatar.js";
+import { formatTime, plural, timeAgo } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { skeletonList } from "../components/skeleton.js";
-import { authorAvatar, composer, formatTime } from "./item-card.js";
 import { activityEntries, linkParts, updateAuthor } from "./task-model.js";
 
+/** The server's limit on an update's body. */
+const MAX_UPDATE = 10_000;
+/** Initials on a neutral gray (white text at 4.8:1) for source authors. */
+const SOURCE_AUTHOR_COLOR = "#6b7280";
 const TASK_COMPOSER = Object.freeze({
   placeholder: "Write a comment…",
   label: "Write a comment",
   submit: "Comment",
   focusKey: "task-composer",
-  className: "task-composer",
 });
+
+/**
+ * The avatar of an update's author (`updateAuthor`): the directory record
+ * of the user (it carries the avatar color), or the initials of an
+ * imported update's source author on a neutral color.
+ */
+function authorAvatar(author, users) {
+  if (author.user) {
+    const user = users?.get(String(author.user.id)) ?? author.user;
+    return avatar(user, { size: "sm" });
+  }
+  return avatar(
+    { name: author.name, color: SOURCE_AUTHOR_COLOR },
+    { size: "sm" },
+  );
+}
+
+/**
+ * The comment composer: a textarea (Ctrl/⌘+Enter posts) whose text is
+ * kept in the page's draft (`props.onDraft`), posted with
+ * `actions.addUpdate`.
+ * @param {{ item: object, actions: object, draft: string,
+ *   onDraft(text: string): void }} props
+ */
+function composer(props) {
+  const { item, actions, draft, onDraft } = props;
+  const textarea = h("textarea", {
+    class: "input composer-input",
+    rows: 3,
+    maxlength: MAX_UPDATE,
+    placeholder: TASK_COMPOSER.placeholder,
+    "aria-label": TASK_COMPOSER.label,
+    dir: "auto",
+    dataset: { focusKey: TASK_COMPOSER.focusKey },
+    value: draft,
+    on: {
+      input: (event) => onDraft(event.currentTarget.value),
+      keydown(event) {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      },
+    },
+  });
+  const form = h(
+    "form",
+    {
+      class: ["composer", "task-composer"],
+      on: {
+        submit(event) {
+          event.preventDefault();
+          const body = textarea.value.trim();
+          if (!body) return;
+          textarea.value = "";
+          onDraft("");
+          actions.addUpdate(item, body);
+        },
+      },
+    },
+    textarea,
+    h(
+      "div",
+      { class: "composer-actions" },
+      h("span", { class: "muted composer-hint" }, "Ctrl + Enter to post"),
+      h(
+        "button",
+        { type: "submit", class: "btn btn-primary" },
+        TASK_COMPOSER.submit,
+      ),
+    ),
+  );
+  return form;
+}
 
 function timeElement(iso) {
   return h(
@@ -98,7 +179,7 @@ function commentEntry(props, update) {
       ),
       h(
         "p",
-        { class: "update-body task-comment-body", dir: "auto" },
+        { class: "task-comment-body", dir: "auto" },
         bodyParts(update.body),
       ),
     ),
@@ -113,11 +194,7 @@ function entryElement(props, entry) {
 
 function footer(props) {
   if (props.caps.edit) {
-    return h(
-      "div",
-      { class: "task-activity-footer" },
-      composer(props, TASK_COMPOSER),
-    );
+    return h("div", { class: "task-activity-footer" }, composer(props));
   }
   return h(
     "p",

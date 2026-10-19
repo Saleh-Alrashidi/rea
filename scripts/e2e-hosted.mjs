@@ -204,11 +204,13 @@ async function useBoard(run) {
   const { page } = run;
   run.seed = seedIds(run.store);
   await openHash(page, run, `#/boards/${run.seed.roadmap}`);
+  // The board opens in its List view (SPEC-6 §1.1).
+  await page.locator('.board-page[data-view="list"] .list-view').waitFor();
   const tabs = await page.locator(".view-tab").allTextContents();
   check(tabs.includes("Main table"), `tabs ${tabs}`);
   check(!tabs.some((text) => /status summary/i.test(text)), "no app tab");
   check((await page.locator("iframe").count()) === 0, "no app frame");
-  const input = page.locator(".add-item-input").first();
+  const input = page.locator(".list-add-input").first();
   await input.fill(ITEM_NAME);
   await input.press("Enter");
   await waitUntil(

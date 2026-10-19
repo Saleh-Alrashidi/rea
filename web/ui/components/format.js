@@ -46,6 +46,16 @@ export function formatDay(dateString, now = new Date()) {
   });
 }
 
+/** A timestamp in full: "Oct 18, 2026, 10:00 AM" (local), or "". */
+export function formatTime(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 /** "just now", "5m ago", "3h ago", "2d ago", or a date for older times. */
 export function timeAgo(iso, now = Date.now()) {
   const time = new Date(iso).getTime();

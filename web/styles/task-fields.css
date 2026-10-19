@@ -107,6 +107,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   max-width: 100%;
   height: 26px;
   padding: 0 8px;
@@ -143,11 +144,17 @@ button.task-status:hover {
   filter: brightness(0.95);
 }
 
+/* The status pill and the square "✓ Complete" button share one line. */
+.task-field-status .task-field-value {
+  flex-wrap: nowrap;
+}
+
 .task-complete {
+  flex: none;
+  width: 26px;
   height: 26px;
-  padding: 0 8px;
-  gap: 4px;
-  font-size: var(--text-xs);
+  padding: 0;
+  justify-content: center;
 }
 
 .task-complete .icon {

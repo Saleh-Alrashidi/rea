@@ -176,7 +176,7 @@ async function peoplePickerEligibility(run) {
   const { roadmap } = run.seed;
   const hiring = boardNamed(run, "Hiring plan");
   const { context, page } = await signedIn(run, run.users.alex, {
-    hash: `#/boards/${roadmap}`,
+    hash: `#/boards/${roadmap}/views/table`,
   });
   const first = run.store.listItems({ boardId: roadmap, limit: 1 }).items[0];
   let picker = await openPeople(page, first.name);
@@ -193,7 +193,7 @@ async function peoplePickerEligibility(run) {
   const { alex, noa } = run.users;
   await dataAs(run, alex, UNSHARE, { b: hiring, u: noa });
   try {
-    await openHash(page, run, `#/boards/${hiring}`);
+    await openHash(page, run, `#/boards/${hiring}/views/table`);
     picker = await openPeople(page, "Senior backend engineer");
     const row = picker.locator(".person-option", { hasText: "Noa Cohen" });
     check(
@@ -301,15 +301,18 @@ async function livePausedBanner(run) {
     const text = await banner.textContent();
     check(text.startsWith("Live updates paused"), text);
     await screenshot(run, page, "live-updates-paused.png");
-    // The board itself still works; only its live updates stopped.
-    await page.locator("tr.item-row .name-input").first().waitFor();
+    // The board itself (its List view) still works; only its live
+    // updates stopped.
+    await page.locator(".list-row .list-name").first().waitFor();
+    await page.locator(".list-add-input").first().waitFor();
   } finally {
     release();
   }
   // Let the server see the closed streams before the page opens new ones.
   await page.waitForTimeout(300);
   await banner.locator("button", { hasText: "Reload" }).click();
-  await page.locator("tr.item-row .name-input").first().waitFor();
+  await page.locator(".list-row .list-name").first().waitFor();
+  await page.locator(".list-add-input").first().waitFor();
   await page.waitForTimeout(500);
   check((await banner.count()) === 0, "reloading resumes live updates");
   await context.close();

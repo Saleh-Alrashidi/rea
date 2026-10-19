@@ -10,7 +10,7 @@ step, CDN or external font.
 It has two halves:
 
 - **A workspace app**: account roles, teams, open and closed workspaces,
-  boards (table, kanban, activity, forms and app views), block docs,
+  boards (list, table, kanban, activity, forms and app views), block docs,
   personal notes, public forms, an inbox of notifications, search, and an
   admin area. Sharing and privacy rules are enforced in one server module.
 - **An app platform** modeled on monday.com's: a GraphQL API at `/v2` with
@@ -280,17 +280,24 @@ team logs the removal on every board it was a member of.
 
 - **Shell**: a top bar (search, notifications bell with live unread count,
   theme toggle, account menu) and a sidebar (Home, My work, Shared with me,
-  Notes, the current workspace's boards, docs and forms, Teams, Admin).
+  Notes, the current workspace's boards (with the icon of their default
+  view), docs and forms, Teams, Admin).
   Ctrl/⌘+K opens the command palette over `search` plus quick actions.
 - **Home**: greeting, quick-create tiles, next due items, unread
   notifications, recent boards and docs, and what was shared with you.
 - **My work**: items assigned to you, grouped by Overdue / This week /
   Later / No date / Done (finished items are never overdue), with inline
   status changes.
-- **Boards**: the part-1 table, kanban and app views, plus a kind badge,
+- **Boards**: every board opens in its ClickUp-style **List** view, with
+  the part-1 Main table, kanban and app views as tabs, plus a kind badge,
   member avatars, Share, an **Activity** timeline (who changed what, with
-  from → to chips) and a **Forms** view. Viewers get read-only cells and a
-  "View only" badge; controls you cannot use are disabled with a reason.
+  from → to chips) and a **Forms** view. Items open in the **task view**
+  from every view; List rows, the task view, kanban cards and My work
+  change a status through one compact status menu (search, a dot per
+  label, Clear), while the Main table keeps its full-bleed label picker.
+  At phone width the List toolbar folds into one "View options" menu.
+  Viewers get read-only cells and a "View only" badge; controls you
+  cannot use are disabled with a reason.
 - **People columns** accept only people who can open the board
   (`Board.assignable_users` lists them); someone who later loses access
   stays assigned until removed. A toggle the server refuses is undone in
@@ -332,11 +339,11 @@ Board views can be iframe apps served from the separate apps origin. The
 example app, **Status summary** (`apps/status-summary/`), uses the SDK
 (`sdk/mini-monday-sdk.js`) to read the board through the host-proxied API,
 listen to live board events, keep a note in app storage with optimistic
-versioning, show host notices and open item cards, and verify a signed
-session token with its own backend. Apps act as their user: reading app
-storage needs viewer access to the install's board and writing it needs
-editor, so view-only users cannot change the shared note. Each storage
-segment holds at most 1,000 live keys.
+versioning, show host notices and open items (in the task view), and
+verify a signed session token with its own backend. Apps act as their
+user: reading app storage needs viewer access to the install's board and
+writing it needs editor, so view-only users cannot change the shared note.
+Each storage segment holds at most 1,000 live keys.
 
 ### CLI
 
@@ -751,7 +758,7 @@ node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
   submission, admin invites, role changes and deactivation, teams,
   workspaces, and a screenshot tour of every page (light; dark and 360 px
   for the main pages). Its interaction steps (`e2e-roles-ux.mjs`,
-  `e2e-roles-ux2.mjs`) cover keyboard focus (item card, drawer, popovers,
+  `e2e-roles-ux2.mjs`) cover keyboard focus (task view, drawer, popovers,
   status picker, skip link), unsaved-work guards, doc undo, number-cell
   typos, dark-mode contrast and live access changes; `e2e-roles-verdicts.mjs`
   and `e2e-roles-ux3.mjs` cover the server's verdicts and explanations in
@@ -759,8 +766,9 @@ node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
   by keyboard and at 360 px, the "/" menu next to its block and the "Live
   updates paused" banner. `e2e-clickup.mjs` imports a synthetic ClickUp
   meetings list (`test/fixtures/import/clickup-meetings-data.js`) in code
-  and covers the List view (status groups and pills, subtasks, the status
-  menu, search, Show closed) and the task view (fields, subtasks,
+  and covers the List view (status groups and pills, subtasks, the compact
+  status menu by mouse and keyboard, search, Show closed) and the task
+  view (fields, subtasks,
   activity with ClickUp authors, a new comment, focus on close), with
   contrast checks in light and dark. All of them fail on console
   errors, page errors, CSP violations, failed requests and unexpected HTTP
@@ -825,12 +833,9 @@ node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
   second).
 - **Large boards.** The table draws every item (up to 5,000) and column
   at once, without virtual scrolling: an imported board of 455 items and
-  42 columns takes about 3 s to open in Chromium, and its item card about
-  2 s.
-- **Multi-line text.** Text values keep their line breaks (monday.com
-  long text, ClickUp descriptions), but text cells and the item card edit
-  them in one-line fields, which show the lines run together and save
-  them that way when edited.
+  42 columns took about 3 s to open in the Main table in Chromium (not
+  measured again since boards open in the List view, which draws the same
+  items).
 - **In-memory sessions.** Browser sessions live in the server process
   (24 h idle timeout, 12 h behind the site gate) and are lost on restart,
   like the sign-in failure counts. The two API tokens are

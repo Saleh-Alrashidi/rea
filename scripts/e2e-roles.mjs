@@ -111,7 +111,8 @@ async function shellPaletteNotifications(run) {
   await screenshot(run, page, "shell-notifications.png");
   await entries.first().click();
   await waitUntil(() => /\/items\/\d+$/.test(page.url()), "the item route");
-  await page.locator("dialog.item-card[open]").waitFor();
+  // Items open in the task view from every view (SPEC-6 §1.1).
+  await page.locator("dialog.task-view[open] .task-title").waitFor();
   check((await bellLabel(page)) === "Notifications, 1 unread", "one read");
   await page.keyboard.press("Escape");
   // A share by Sam reaches Alex's bell through the stream=me SSE.
@@ -226,16 +227,32 @@ async function privateUntilShared(run) {
   await page
     .locator(".board-name-heading", { hasText: "Agency launch" })
     .waitFor();
-  check((await page.locator(".add-item-input").count()) > 0, "Sam can edit");
+  // The board opens in its List view, where editors can add tasks.
+  await page.locator(".list-add-input").first().waitFor();
+  check((await page.locator(".list-add-input").count()) > 0, "Sam can edit");
   check((await sidebarLinks(page)).includes("Agency launch"), "now listed");
   await context.close();
   await alex.context.close();
 }
 
 async function viewerReadOnly(run) {
+  const board = `#/boards/${run.seed.roadmap}`;
   const { context, page } = await signedIn(run, run.users.jordan, {
-    hash: `#/boards/${run.seed.roadmap}`,
+    hash: board,
   });
+  // The List view (the board's default) has no editing controls either.
+  await page.locator(".list-row").first().waitFor();
+  check(await page.locator(".view-only-badge").isVisible(), "View only");
+  for (const selector of [
+    ".list-add-input",
+    "button.list-status",
+    ".list-rename",
+    ".list-group-add",
+    ".new-item",
+  ]) {
+    check((await page.locator(selector).count()) === 0, `no ${selector}`);
+  }
+  await openHash(page, run, `${board}/views/table`);
   await page.locator("tr.item-row").first().waitFor();
   check(await page.locator(".view-only-badge").isVisible(), "View only");
   for (const selector of [
@@ -249,8 +266,14 @@ async function viewerReadOnly(run) {
   }
   await screenshot(run, page, "board-viewer-read-only.png");
   await page.locator("tr.item-row .open-item").first().click();
-  await page.locator("dialog.item-card[open]").waitFor();
-  check((await page.locator(".composer").count()) === 0, "no composer");
+  await page.locator("dialog.task-view[open] .task-title-text").waitFor();
+  check((await page.locator(".task-composer").count()) === 0, "no composer");
+  check(
+    await page
+      .locator("dialog.task-view[open] .task-readonly-note")
+      .isVisible(),
+    "the task view says comments are read-only",
+  );
   await page.keyboard.press("Escape");
   const code = await errorCodeAs(
     run,
@@ -290,7 +313,9 @@ async function guestSeesSharedOnly(run) {
       .waitFor();
   }
   await openHash(page, run, `#/boards/${run.seed.marketing}`);
-  await page.locator("tr.item-row .name-input").first().waitFor();
+  // The shared board opens (in its List view) for editing.
+  await page.locator(".list-row").first().waitFor();
+  await page.locator(".list-add-input").first().waitFor();
   const data = await dataAs(run, run.users.chris, MY_BOARDS);
   const names = data.boards.map((board) => board.name).join();
   check(names === "Marketing launch", `guest boards ${names}`);

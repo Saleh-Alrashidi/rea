@@ -19,9 +19,9 @@ import { plural } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { textEditor } from "../components/text-editor.js";
-import { openStatusMenu } from "./cells.js";
 import { listCell } from "./list-cells.js";
 import { afterClick } from "./list-view.js";
+import { openStatusMenu } from "./status-menu.js";
 import { completeOption, customFields, tagList } from "./task-model.js";
 import { isDoneOption, statusOption, textColorOn } from "./values.js";
 
@@ -162,7 +162,7 @@ function textField(props, column, { key, empty = EMPTY }) {
 
 // ---------------------------------------------------------- the grid
 
-/** The status pill (a label menu for editors) and "✓ Complete". */
+/** The status pill (the compact status menu for editors), "✓ Complete". */
 function statusValue(props, column) {
   const { item, actions } = props;
   const value = item.values[column.id] ?? null;
@@ -181,7 +181,7 @@ function statusValue(props, column) {
       {
         type: "button",
         class: classes,
-        "aria-haspopup": "menu",
+        "aria-haspopup": "dialog",
         "aria-expanded": "false",
         "aria-label": `${column.title}: ${text || "not set"}. Change`,
         dataset: { focusKey: "task-status" },
@@ -208,7 +208,10 @@ function statusValue(props, column) {
   return [pill, completeButton(props, { column, done })];
 }
 
-/** Sets the board's first `done`/`closed` label, when it has one. */
+/**
+ * A square "✓" button (its name says "Complete") that sets the board's
+ * first `done`/`closed` label, when it has one.
+ */
 function completeButton(props, { column, done }) {
   const finish = completeOption(column);
   if (!props.caps.edit || !finish || done) return null;
@@ -229,7 +232,7 @@ function completeButton(props, { column, done }) {
       },
     },
     icon("check", { size: 14 }),
-    h("span", { class: "btn-label" }, "Complete"),
+    h("span", { class: "visually-hidden" }, "Complete"),
   );
 }
 
