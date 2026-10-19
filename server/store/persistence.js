@@ -83,6 +83,10 @@ const isSlug = (v) => typeof v === "string" && /^[a-z0-9_]{1,64}$/.test(v);
 const isKey = (v) => typeof v === "string" && /^[\w-]{1,64}$/.test(v);
 const isWebUrl = (v) =>
   typeof v === "string" && v.length <= 2048 && /^https?:\/\/[^\s]+$/i.test(v);
+const importFolder = exact(
+  ["source_id", "name"],
+  (f) => isStr(f.source_id) && isStr(f.name),
+);
 const grant = (roles) =>
   exact(
     ["kind", "id", "role"],
@@ -147,13 +151,24 @@ const CHECKS = {
           : b.checked === undefined),
     ),
   ),
-  // `Board.import` (SPEC-4 §4): where an imported board came from.
+  // `Board.import` (SPEC-4 §4): where an imported board came from, with
+  // the optional source `folder` and the board's own `source_name`.
   importMeta: exact(
-    ["source", "source_id", "source_url", "imported_at", "imported_by"],
+    [
+      "source",
+      "source_id",
+      "source_url",
+      "folder",
+      "source_name",
+      "imported_at",
+      "imported_by",
+    ],
     (m) =>
       IMPORT_SOURCES.includes(m.source) &&
       isStr(m.source_id) &&
       (m.source_url === null || isWebUrl(m.source_url)) &&
+      (m.folder === undefined || importFolder(m.folder)) &&
+      (m.source_name === undefined || isStr(m.source_name)) &&
       isStr(m.imported_at) &&
       (m.imported_by === null || isId(m.imported_by)),
   ),

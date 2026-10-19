@@ -289,11 +289,6 @@ function importOneBoard(ctx, { task, workspace }) {
     name: importName(board.name, again),
     description: board.description,
     boardKind: board.kind,
-    meta: {
-      source: snapshot.source,
-      sourceId: board.source_id,
-      sourceUrl: board.source_url,
-    },
     label: importLabel(snapshot.source),
     summary: truncate(summary, LIMITS.name),
     ...built.spec,

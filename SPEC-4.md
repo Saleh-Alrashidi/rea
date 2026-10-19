@@ -50,6 +50,8 @@ Snapshot {
 Board {
   source_id, name, description | null, kind: "public" | "private" | "share",
   source_url | null,
+  folder?: { source_id, name } | null,  // source folder; null when in none
+  source_name?: string,                 // the board's own name in its source
   members: [{ user_source_id, role: "owner" | "editor" | "viewer" }],
   columns: [{ source_id, title, type: "status" | "text" | "people" | "date" | "numbers",
               original_type, labels?: [{ label, color }] }],   // labels only for status
@@ -125,8 +127,9 @@ REST with header `Authorization: <token>`.
 - `GET /team/{id}/space?archived=false`, `/space/{id}/folder?archived=false`,
   `/folder/{id}/list?archived=false`, `/space/{id}/list?archived=false`
   (folderless). Each **List** becomes a board named "<Folder> / <List>" (or
-  "<List>" when folderless), `kind` `private` when the list/folder/space is
-  private, else `public`.
+  "<List>" when folderless), with `folder` (`{ source_id, name }`, null when
+  folderless) and the list's own name as `source_name`, `kind` `private`
+  when the list/folder/space is private, else `public`.
 - `GET /list/{id}` (statuses with colors) and `/list/{id}/field` (custom fields).
 - Tasks: `GET /list/{id}/task?page=N&include_closed=true&subtasks=true&archived=false`
   until `last_page` is true (or fewer than 100 tasks). Subtasks keep
@@ -191,8 +194,9 @@ REST with header `Authorization: <token>`.
   save, no per-item events), applies `members` grants for mapped users with the
   normal guest/role rules (refused grants become warnings), adds the importer as
   owner of every created board/doc, sets `board.import = { source, source_id,
-  source_url, imported_at, imported_by }` (shown as a badge), and returns a
-  Report `{ created: {workspaces, boards, groups, columns, items, updates, docs,
+  source_url, folder?, source_name?, imported_at, imported_by }` (shown as
+  a badge; `folder` and `source_name` only when the snapshot has them), and
+  returns a Report `{ created: {workspaces, boards, groups, columns, items, updates, docs,
   users}, skipped: [...], warnings: [...], links: [{ kind, id, url, title }] }`.
 - Cancellation: `signal` stops between boards; what was created stays and is
   listed in the report.
@@ -219,7 +223,8 @@ token with `import_data`; behind the site gate in hosted mode):
   kept in jobs.
 - Progress also streams on `GET /v2/events?stream=me` as `event: import`.
 - GraphQL: `Board.import: BoardImport` (`source`, `source_url`,
-  `imported_at`, `imported_by: User`) and `me.capabilities` includes
+  `source_name`, `folder: ImportFolder { source_id, name }`, `imported_at`,
+  `imported_by: User`) and `me.capabilities` includes
   `import_data` for admins.
 
 ## 6. UI (`web/pages/import.js`, `web/ui/import/*`, `web/styles/import.css`)

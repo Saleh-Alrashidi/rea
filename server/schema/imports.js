@@ -4,6 +4,8 @@
  * open the board reads it; `imported_by` resolves through the caller's
  * directory like every other User field. Whether the caller may import
  * at all is `me.capabilities` (`import_data`, from `access.can`).
+ * `source_name` and `folder` say what the source called the board and the
+ * folder it sat in, when the import knew them (absent keys read as null).
  */
 import { lookupUser } from "./common.js";
 
@@ -19,7 +21,8 @@ export const definition = {
   types: {
     Board: "import:BoardImport",
     BoardImport: `source:String! source_id:String! source_url:String
-      imported_at:String! imported_by:User`,
+      source_name:String folder:ImportFolder imported_at:String! imported_by:User`,
+    ImportFolder: "source_id:String! name:String!",
   },
   resolvers: { Board, BoardImport },
   extras: {
@@ -29,6 +32,14 @@ export const definition = {
     },
     "BoardImport.source_url": {
       description: "The board in its source (http or https), when known.",
+    },
+    "BoardImport.source_name": {
+      description:
+        "The board's own name in its source (a ClickUp list's name, without its folder), when known.",
+    },
+    "BoardImport.folder": {
+      description:
+        "The source folder the board was in (a ClickUp folder); null when it was in none or the source has none.",
     },
   },
 };

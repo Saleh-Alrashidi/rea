@@ -148,14 +148,23 @@ export function readArray(c, value, { path, max, optional = false }) {
   return null;
 }
 
-/** A source ID: a non-empty string (trimmed) or a safe integer, as text. */
-export function readSourceId(c, value, path) {
+/**
+ * A source ID as text: a non-empty string (trimmed) of at most
+ * MAX_ID_LENGTH characters or a safe integer; anything else → null.
+ */
+export function sourceIdText(value) {
   const text = Number.isSafeInteger(value)
     ? String(value)
     : typeof value === "string"
       ? value.trim()
       : "";
-  if (text !== "" && text.length <= MAX_ID_LENGTH) return text;
+  return text !== "" && text.length <= MAX_ID_LENGTH ? text : null;
+}
+
+/** A source ID (`sourceIdText`), else an error. */
+export function readSourceId(c, value, path) {
+  const text = sourceIdText(value);
+  if (text !== null) return text;
   c.error(
     path,
     "invalid_id",

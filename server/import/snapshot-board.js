@@ -8,9 +8,15 @@
  * its deepest ancestor that is allowed to have one (`subitems_flattened`).
  * `readBoard` is a generator that yields every ITEMS_PER_STEP items
  * (`slices.js`).
+ *
+ * Beyond SPEC-4 §2, a Board may say where it sits in its source: `folder`
+ * (`{ source_id, name }`, or null when it is in none) and `source_name`
+ * (its own name, where `name` may also name the folder). Both are
+ * optional for every source; an invalid one is left out with a warning
+ * (unknown, not "in no folder").
  */
 import { ACCESS_ROLES, ROLE_RANK } from "../access.js";
-import { LIMITS } from "../input.js";
+import { LIMITS, isPlainObject } from "../input.js";
 import { BOARD_KINDS, GROUP_COLOR, deepFreeze } from "../store-state.js";
 import { MAX_SUBITEM_DEPTH } from "../store/subitems.js";
 import {
@@ -30,6 +36,7 @@ import {
   readTime,
   readUrl,
   shown,
+  sourceIdText,
   truncate,
   uniqueSourceId,
 } from "./snapshot-rules.js";
@@ -329,6 +336,45 @@ function* readItems(c, raw, ctx) {
   return items.includes(null) ? null : items;
 }
 
+// --------------------------------------------------------------- placement
+
+/** The board's `folder`: null when in none, undefined when absent or bad. */
+function readFolder(c, raw, path) {
+  if (raw === undefined || raw === null) return raw;
+  const id = isPlainObject(raw) ? sourceIdText(raw.source_id) : null;
+  if (id === null || typeof raw.name !== "string") {
+    const message = `Folder ${shown(raw)} is not { source_id, name }; it was left out`;
+    c.warn(path, "invalid_folder", message);
+    return undefined;
+  }
+  const name = readName(c, raw.name, {
+    path: `${path}.name`,
+    fallback: "Untitled folder",
+  });
+  return { source_id: id, name };
+}
+
+/** The board's `source_name` (trimmed, cut); undefined when absent or bad. */
+function readSourceName(c, value, path) {
+  if (value === undefined || value === null) return undefined;
+  // Non-blank, so readName only trims and cuts (its fallback is unused).
+  if (typeof value === "string" && value.trim() !== "")
+    return readName(c, value, { path, fallback: "" });
+  const message = `Source name ${shown(value)} is not a name; it was left out`;
+  c.warn(path, "invalid_source_name", message);
+  return undefined;
+}
+
+/** `{ folder?, source_name? }`: only what the snapshot validly says. */
+function readPlacement(c, raw, path) {
+  const placement = {};
+  const folder = readFolder(c, raw.folder, `${path}.folder`);
+  if (folder !== undefined) placement.folder = folder;
+  const name = readSourceName(c, raw.source_name, `${path}.source_name`);
+  if (name !== undefined) placement.source_name = name;
+  return placement;
+}
+
 function publicColumn({ source_id, title, type, original_type, ...rest }) {
   const column = { source_id, title, type, original_type };
   if (rest.role !== undefined) column.role = rest.role;
@@ -361,6 +407,7 @@ export function* readBoard(c, raw, { path, users, totals }) {
       choices: BOARD_KINDS,
     }),
     source_url: readUrl(c, raw.source_url, `${path}.source_url`),
+    ...readPlacement(c, raw, path),
   };
   const scope = { path, label: `board “${head.name ?? "?"}”` };
   const members = readMembers(c, raw.members, {

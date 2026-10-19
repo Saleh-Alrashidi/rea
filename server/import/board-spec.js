@@ -1,9 +1,10 @@
 /**
  * One snapshot board as a `store.importBoard` spec (SPEC-4 §4, SPEC-5
- * §2): members of mapped users, groups, columns (with their roles and
- * status label types), items in board order with their parents and
- * updates, and the board's views, with people and authors mapped to
- * Worklane users.
+ * §2): its `meta` (source record, and the source folder and own name when
+ * the snapshot has them), members of mapped users, groups, columns (with
+ * their roles and status label types), items in board order with their
+ * parents and updates, and the board's views, with people and authors
+ * mapped to Worklane users.
  *
  * Items keep their source ID as `key` and name their parent by its key
  * (`parentKey`), so a subitem stays a subitem of its parent whatever its
@@ -78,6 +79,19 @@ function itemUpdates(item, people) {
   });
 }
 
+/** The `meta` of `board`: `folder` and `sourceName` only when known. */
+function importMeta(board, source) {
+  const meta = {
+    source,
+    sourceId: board.source_id,
+    sourceUrl: board.source_url,
+  };
+  const { folder, source_name: sourceName } = board;
+  if (folder) meta.folder = { sourceId: folder.source_id, name: folder.name };
+  if (sourceName !== undefined) meta.sourceName = sourceName;
+  return meta;
+}
+
 function specColumn({ source_id, title, type, labels, role }) {
   const column = { key: source_id, title, type, labels };
   return role === undefined ? column : { ...column, role };
@@ -86,7 +100,7 @@ function specColumn({ source_id, title, type, labels, role }) {
 /**
  * The spec for `board` of a `source` snapshot. `people` maps user source
  * IDs to `{ userId (null when skipped), name }`. Returns `{ spec: {
- * members, groups, columns, items, views }, memberIndex, itemIndex,
+ * meta, members, groups, columns, items, views }, memberIndex, itemIndex,
  * notes: { members: [names], people: Map(column key → { names: Set,
  * items }) } }`, where `memberIndex[i]` / `itemIndex[i]` is the snapshot
  * index of `spec.members[i]` / `spec.items[i]`.
@@ -126,6 +140,7 @@ export function boardSpec(board, { people, source }) {
   }));
   const views = source === "clickup" ? CLICKUP_VIEWS : DEFAULT_VIEWS;
   const spec = {
+    meta: importMeta(board, source),
     members,
     groups,
     columns: board.columns.map(specColumn),
