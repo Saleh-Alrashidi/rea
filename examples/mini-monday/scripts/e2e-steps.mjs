@@ -12,6 +12,8 @@ import path from "node:path";
 import { DESKTOP, WAIT_MS, check, fail, waitUntil } from "./e2e-lib.mjs";
 
 const ITEM_NAME = "Smoke test item";
+/** The open task view (SPEC-6 §1.1: items open in it from every view). */
+const TASK = "dialog.task-view[open]";
 const RENAMED = "Smoke test item (renamed)";
 const UPDATE_BODY = "Posted by the smoke test <img src=x onerror=alert(1)>";
 const NOTE_TEXT = "Launch checklist from the smoke test";
@@ -154,6 +156,27 @@ async function boardLoads(run) {
     `board name ${board.name}`,
   );
   const items = board.items_page.items.length;
+  // Every board opens in its List view (SPEC-6 §1.1), which the sidebar
+  // shows with the List icon.
+  await page.locator('.board-page[data-view="list"] .list-view').waitFor();
+  const active = (await page.locator(".view-tab.active").textContent()).trim();
+  check(active === "List", `the default view: ${active}`);
+  await waitUntil(
+    async () =>
+      (await page.locator("#toolbar-count").textContent()) === `${items} tasks`,
+    `the List view's ${items} tasks`,
+  );
+  const link = page.locator("#sidebar .nav-link", { hasText: board.name });
+  const sidebarIcon = await link.locator("svg").innerHTML();
+  const listIcon = await tab(run, "List").locator("svg").innerHTML();
+  check(sidebarIcon === listIcon, "the sidebar shows the List icon");
+  await screenshot(run, "list.png");
+  // The Main table has its own route.
+  await tab(run, "Main table").click();
+  await waitUntil(
+    () => page.url().endsWith(`#/boards/${run.boardId}/views/table`),
+    "the Main table route",
+  );
   await waitUntil(
     async () =>
       (await page.locator("section.group").count()) === board.groups.length &&
@@ -285,32 +308,50 @@ async function kanbanDrag(run) {
   await done.locator(`.kanban-card[data-item-id="${id}"]`).waitFor();
   run.cardItemId = id;
   await screenshot(run, "kanban.png");
+  // A card's status pill opens the compact status menu (SPEC-6 §1.1).
+  await viewSettled(run);
+  await done.locator(`.kanban-card[data-item-id="${id}"] .status-pill`).click();
+  const menu = page.locator(".status-menu-popover");
+  const current = menu.locator('[role=option][aria-checked="true"]');
+  await waitUntil(
+    async () => (await current.textContent()) === "Done",
+    "the menu checks Done",
+  );
+  await page.keyboard.press("Escape");
+  await menu.waitFor({ state: "detached" });
 }
 
-async function itemCardUpdate(run) {
+async function taskViewUpdate(run) {
   const { page } = run;
   const id = run.cardItemId;
   const title = `.kanban-card[data-item-id="${id}"] .kanban-card-title`;
   await page.locator(title).click();
-  await page.locator("dialog.item-card[open] .card-title").waitFor();
-  check(page.url().endsWith(`/items/${id}`), `card route ${page.url()}`);
+  await page.locator(`${TASK} .task-title`).waitFor();
+  check(page.url().endsWith(`/items/${id}`), `task route ${page.url()}`);
   const { name } = await itemFromApi(run, id);
-  check((await page.inputValue(".card-title")) === name, "card title");
-  await page.fill(".composer-input", UPDATE_BODY);
-  await page.click(".composer button[type=submit]");
+  check(
+    (await page.inputValue(`${TASK} .task-title`)) === name,
+    "task view title",
+  );
+  await page.fill(`${TASK} .task-composer textarea`, UPDATE_BODY);
+  await page.click(`${TASK} .task-composer button[type=submit]`);
   await waitUntil(
     async () => (await itemFromApi(run, id)).updates[0]?.body === UPDATE_BODY,
     "API update",
   );
-  const newest = page.locator(".update-body").first();
+  // The activity runs oldest first: the newest comment is the last one.
+  const newest = page.locator(`${TASK} .task-comment-body`).last();
   await waitUntil(
     async () => (await newest.textContent()) === UPDATE_BODY,
     "update shown as text",
   );
-  check((await page.locator(".update-list img").count()) === 0, "no markup");
-  await screenshot(run, "item-card.png");
+  check(
+    (await page.locator(`${TASK} .task-stream img`).count()) === 0,
+    "no markup",
+  );
+  await screenshot(run, "task-view.png");
   await page.keyboard.press("Escape");
-  await page.locator("dialog.item-card").waitFor({ state: "detached" });
+  await page.locator("dialog.task-view").waitFor({ state: "detached" });
   check(page.url().endsWith("/views/kanban"), `back to kanban ${page.url()}`);
 }
 
@@ -429,7 +470,7 @@ export const STEPS = [
   ["set a date and a number", dateAndNumber],
   ["add a group and a column", addGroupAndColumn],
   ["kanban drag changes the status", kanbanDrag],
-  ["item card posts an update", itemCardUpdate],
+  ["a kanban card opens the task view, which posts an update", taskViewUpdate],
   ["Status summary app shows the counts", appViewCounts],
   ["app notice, note storage and session token", appPlatform],
   ["dark mode", darkMode],

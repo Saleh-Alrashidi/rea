@@ -4,6 +4,10 @@
  * menu (collapsed or expanded), the Columns menu (show or hide each
  * column; the name always shows) and the "Show closed" toggle. Choices go
  * to the board's session memory through `change(mutate)`.
+ *
+ * On narrow screens (board-page.css) those four give way to one "View
+ * options" menu holding the same choices, with "Columns…" opening the
+ * Columns menu from it (SPEC-6 §1.1).
  */
 
 import { h } from "../../dom.js";
@@ -22,18 +26,22 @@ const MISSING = Object.freeze({
   assignee: "This board has no people column",
 });
 
-/** A ghost toolbar button that opens a menu built by `items()`. */
-function menuTool({ key, iconName, label, value, items }) {
+/**
+ * A ghost toolbar button that opens a menu built by `items(trigger)`.
+ * `className` marks the wide-screen tools and the narrow-screen menu.
+ */
+function menuTool({ key, iconName, label, value, items, className }) {
   const trigger = h(
     "button",
     {
       type: "button",
-      class: "btn btn-ghost btn-sm list-tool",
+      class: ["btn btn-ghost btn-sm list-tool", className],
       "aria-haspopup": "menu",
       "aria-expanded": "false",
       dataset: { focusKey: `list-tool:${key}` },
       on: {
-        click: () => openMenu({ anchor: trigger, label, items: items() }),
+        click: () =>
+          openMenu({ anchor: trigger, label, items: items(trigger) }),
       },
     },
     icon(iconName),
@@ -104,8 +112,45 @@ function columnItems({ board, prefs, change }) {
   ];
 }
 
+/** The "Show closed" choice as a menu item. */
+function closedItem({ prefs, change }) {
+  return {
+    label: "Show closed",
+    checked: prefs.showClosed,
+    onSelect: () => change((next) => (next.showClosed = !next.showClosed)),
+  };
+}
+
 /**
- * The List view's toolbar controls for `board`.
+ * The narrow screens' "View options" menu: Group by, Subtasks and Show
+ * closed, then "Columns…", which opens the Columns menu from `trigger`
+ * once this menu has closed.
+ */
+function viewOptionItems(options, trigger) {
+  return [
+    ...groupByItems(options),
+    { type: "separator" },
+    { type: "heading", label: "Subtasks" },
+    ...subtaskItems(options),
+    { type: "separator" },
+    closedItem(options),
+    {
+      label: "Columns…",
+      icon: "columns",
+      onSelect: () =>
+        openMenu({
+          anchor: trigger,
+          label: "Columns",
+          items: columnItems(options),
+        }),
+    },
+  ];
+}
+
+/**
+ * The List view's toolbar controls for `board`: the wide screens' tools
+ * (`list-tool-wide`) and the narrow screens' "View options" menu
+ * (`list-view-options`); CSS shows one set or the other.
  * @param {{ board: object, prefs: object,
  *   change(mutate: (prefs: object) => void): void }} options
  * @returns {HTMLElement[]}
@@ -114,6 +159,7 @@ export function listTools({ board, prefs, change }) {
   const { roles } = listColumns(board, prefs);
   const options = { board, prefs, roles, change };
   const groupBy = effectiveGroupBy(prefs.groupBy, roles);
+  const wide = "list-tool-wide";
   return [
     menuTool({
       key: "group",
@@ -121,6 +167,7 @@ export function listTools({ board, prefs, change }) {
       label: "Group",
       value: GROUP_BY[groupBy],
       items: () => groupByItems(options),
+      className: wide,
     }),
     menuTool({
       key: "subtasks",
@@ -128,6 +175,7 @@ export function listTools({ board, prefs, change }) {
       label: "Subtasks",
       value: SUBTASKS[prefs.subtasks],
       items: () => subtaskItems(options),
+      className: wide,
     }),
     menuTool({
       key: "columns",
@@ -135,6 +183,7 @@ export function listTools({ board, prefs, change }) {
       label: "Columns",
       value: null,
       items: () => columnItems(options),
+      className: wide,
     }),
     h(
       "button",
@@ -145,6 +194,7 @@ export function listTools({ board, prefs, change }) {
           "btn-ghost",
           "btn-sm",
           "list-tool",
+          wide,
           prefs.showClosed && "on",
         ],
         "aria-pressed": String(prefs.showClosed),
@@ -156,5 +206,13 @@ export function listTools({ board, prefs, change }) {
       icon("eye"),
       h("span", { class: "btn-label" }, "Show closed"),
     ),
+    menuTool({
+      key: "options",
+      iconName: "settings",
+      label: "View options",
+      value: null,
+      items: (trigger) => viewOptionItems(options, trigger),
+      className: "list-view-options",
+    }),
   ];
 }

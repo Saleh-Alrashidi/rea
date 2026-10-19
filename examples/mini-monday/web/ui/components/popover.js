@@ -7,8 +7,9 @@
  * In the tab order it sits right after its anchor. `update()` keeps focus
  * on the control with the same `data-focus-key`, else the first control.
  * `reposition()` places it again after its content changed size (it stays
- * on the same side of the anchor while that side fits). `onClose(reason)`
- * hears "escape" when Escape closed it, else "close".
+ * on the same side of the anchor while that side fits). A popover taller
+ * than the room beside its anchor is capped to that room and scrolls.
+ * `onClose(reason)` hears "escape" when Escape closed it, else "close".
  *
  * ```js
  * const popover = openPopover({ anchor, label: "Choose status",
@@ -24,6 +25,8 @@ import { findByFocusKey } from "./focus.js";
 
 const MARGIN = 8;
 const GAP = 4;
+/** A capped popover keeps at least this height (px), so it stays usable. */
+const MIN_HEIGHT = 120;
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -47,27 +50,43 @@ export function closePopover() {
 }
 
 /**
- * Places `element` below `anchor`, or above it when only that fits, and
- * returns the side used. `side` (from the last placement) is kept while it
+ * The side of the anchor for a popover `height` pixels tall, given the
+ * `room` below and above it: `side` (from the last placement) while it
  * still fits, so content that shrinks or grows (a filtered list) stays
- * against its anchor instead of jumping across it.
+ * against its anchor instead of jumping across it; else below, or above
+ * when only that fits; else the roomier side.
+ */
+function chooseSide({ side, height, room }) {
+  const fits = (which) => height <= room[which];
+  if (side && fits(side)) return side;
+  if (fits("below")) return "below";
+  if (fits("above")) return "above";
+  return room.below >= room.above ? "below" : "above";
+}
+
+/**
+ * Places `element` against `anchor` (`chooseSide`) and returns the side
+ * used. A popover taller than the room on that side (a long menu on a
+ * phone) is capped to it and scrolls, so every item stays reachable.
  */
 function position(element, anchor, { placement, side = null }) {
   const doc = globalThis.document;
   const viewWidth = doc.documentElement.clientWidth;
   const viewHeight = doc.documentElement.clientHeight;
   const box = anchor.getBoundingClientRect();
+  // Measure at the stylesheet's own maximum height first.
+  element.style.maxHeight = "";
   const width = element.offsetWidth;
+  const room = {
+    below: viewHeight - MARGIN - box.bottom - GAP,
+    above: box.top - GAP - MARGIN,
+  };
+  const chosen = chooseSide({ side, height: element.offsetHeight, room });
+  if (element.offsetHeight > room[chosen]) {
+    element.style.maxHeight = `${Math.max(MIN_HEIGHT, room[chosen])}px`;
+  }
   const height = element.offsetHeight;
-  const below = box.bottom + GAP;
-  const above = box.top - height - GAP;
-  const fitsBelow = below + height <= viewHeight - MARGIN;
-  const fitsAbove = above > MARGIN;
-  let chosen = side;
-  if ((chosen === "above" && !fitsAbove) || (chosen === "below" && !fitsBelow))
-    chosen = null;
-  chosen ??= !fitsBelow && fitsAbove ? "above" : "below";
-  const top = chosen === "above" ? above : below;
+  const top = chosen === "above" ? box.top - GAP - height : box.bottom + GAP;
   const preferred = placement === "bottom-end" ? box.right - width : box.left;
   const left = Math.min(
     Math.max(MARGIN, preferred),

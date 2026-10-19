@@ -1,10 +1,11 @@
 /**
  * Screenshot tour of `e2e-roles.mjs`: every page of SPEC-2 §5.1 in light
- * mode (`page-<name>.png`), and the main pages (home, board, doc, notes,
- * form builder, public form, admin) in dark mode (`dark-<name>.png`) and
- * at 360 px (`mobile-<name>.png`), where none may scroll sideways. Runs
- * after the other steps, so the pages show the content they created.
- * Record IDs come from `run.seed` (`seedIds` in `e2e-lib.mjs`).
+ * mode (`page-<name>.png`), and the main pages (home, board in its List
+ * view and its Main table, doc, notes, form builder, public form, admin)
+ * in dark mode (`dark-<name>.png`) and at 360 px (`mobile-<name>.png`),
+ * where none may scroll sideways. Runs after the other steps, so the
+ * pages show the content they created. Record IDs come from `run.seed`
+ * (`seedIds` in `e2e-lib.mjs`).
  */
 import {
   DESKTOP,
@@ -25,12 +26,17 @@ function tourPages(ids) {
     ["shared", "#/shared"],
     ["workspace", `#/workspaces/${ids.workspace}`],
     ["workspace-settings", `#/workspaces/${ids.workspace}/settings`],
-    ["board", board, "tr.item-row"],
+    ["board", board, ".list-row"],
+    ["board-table", `${board}/views/table`, "tr.item-row"],
     ["board-kanban", `${board}/views/kanban`, ".kanban-card"],
     ["board-activity", `${board}/views/activity`, ".activity-entry"],
     ["board-forms", `${board}/views/forms`, ".form-card"],
     ["board-app", `${board}/views/app-${ids.install}`, "iframe.app-frame"],
-    ["item-card", `${board}/items/${ids.item}`, "dialog.item-card[open]"],
+    [
+      "task",
+      `${board}/items/${ids.item}`,
+      "dialog.task-view[open] .task-title",
+    ],
     ["docs", "#/docs", ".doc-row"],
     ["doc", `#/docs/${ids.vision}`, ".doc-block"],
     ["notes", "#/notes", ".note-card"],
@@ -44,8 +50,8 @@ function tourPages(ids) {
   ];
 }
 
-const MAIN_PAGES = new Set(["home", "board", "doc", "notes", "form-builder"]);
-MAIN_PAGES.add("admin");
+const MAIN_PAGES = new Set(["home", "board", "board-table", "doc", "notes"]);
+MAIN_PAGES.add("form-builder").add("admin");
 
 async function visit(run, page, [name, hash, ready]) {
   await openHash(page, run, hash);

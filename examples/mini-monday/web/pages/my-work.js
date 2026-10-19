@@ -32,6 +32,7 @@ function statusControl(item, onChange) {
     label: `${item.statusColumn.title} for ${item.name}`,
     placeholder: "Set status",
     focusKey: `work-status:${item.id}`,
+    compact: true,
     onChange: (index) => onChange(item, index),
   });
 }

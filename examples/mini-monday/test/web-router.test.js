@@ -19,7 +19,6 @@ import {
 } from "../web/router.js";
 import {
   defaultView,
-  itemViewKind,
   missingViews,
   viewTabsOf,
 } from "../web/ui/board/board-views.js";
@@ -244,9 +243,9 @@ test("a board's default view is its first non-app view", () => {
     defaultView({ views: [MONDAY_VIEWS[2], ...CLICKUP_VIEWS] }),
     "list",
   );
-  // Not loaded yet, or no item views: the table.
-  assert.equal(defaultView(null), "table");
-  assert.equal(defaultView({ views: [MONDAY_VIEWS[2]] }), "table");
+  // Not loaded yet, or no item views: List, which every board has.
+  assert.equal(defaultView(null), "list");
+  assert.equal(defaultView({ views: [MONDAY_VIEWS[2]] }), "list");
 });
 
 test("view tabs follow Board.views; editors may add the missing ones", () => {
@@ -274,31 +273,6 @@ test("view tabs follow Board.views; editors may add the missing ones", () => {
     view(String(index), "app", "App", { app_install_id: index + 1 }),
   );
   assert.deepEqual(missingViews({ views: full }), []);
-});
-
-test("items open as a task view from List, else as the item card", () => {
-  const clickup = { views: CLICKUP_VIEWS };
-  const monday = { views: MONDAY_VIEWS };
-  // A direct link (or the board's own link) follows the default view.
-  assert.equal(itemViewKind({ board: clickup }), "task");
-  assert.equal(
-    itemViewKind({ board: clickup, lastView: { view: null } }),
-    "task",
-  );
-  assert.equal(itemViewKind({ board: monday }), "card");
-  // Otherwise the view the user came from decides.
-  assert.equal(
-    itemViewKind({ board: clickup, lastView: { view: "table" } }),
-    "card",
-  );
-  assert.equal(
-    itemViewKind({ board: monday, lastView: { view: "list" } }),
-    "task",
-  );
-  assert.equal(
-    itemViewKind({ board: clickup, lastView: { view: "activity" } }),
-    "card",
-  );
 });
 
 test("hashFromUrl accepts only in-app links", () => {

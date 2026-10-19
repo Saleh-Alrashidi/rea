@@ -50,7 +50,7 @@ async function drawerKeepsFocus(run) {
 
 async function keyboardPopovers(run) {
   const { context, page } = await signedIn(run, run.users.alex, {
-    hash: `#/boards/${run.seed.roadmap}`,
+    hash: `#/boards/${run.seed.roadmap}/views/table`,
   });
   const panel = page.locator(".notifications-panel");
   await page.locator(".notifications-btn").focus();
@@ -67,7 +67,8 @@ async function keyboardPopovers(run) {
   await page.locator(".popover-menu [role^=menuitem]").first().waitFor();
   await page.keyboard.press("Tab");
   check((await page.locator(".popover-menu").count()) === 0, "Tab closes");
-  // The status picker opens on the current label and arrows move.
+  // The Main table's status picker opens on the current label and arrows
+  // move.
   const pill = page.locator("button.status-pill").first();
   const current = /: (.*)\. Change status$/.exec(
     await pill.getAttribute("aria-label"),
@@ -166,7 +167,7 @@ async function ownerAndGroupHints(run) {
     await dataAs(run, run.users.alex, drop, { b: board.id, g: group.id });
   }
   const { context, page } = await signedIn(run, run.users.alex, {
-    hash: `#/boards/${board.id}`,
+    hash: `#/boards/${board.id}/views/table`,
   });
   await page.locator("button.group-menu").first().click();
   const item = page.locator(".menu-item", { hasText: "Delete group" });

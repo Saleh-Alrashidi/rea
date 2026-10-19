@@ -8,6 +8,11 @@
  * Toolbar choices, collapsed groups and expanded tasks live in the
  * board's session memory (`ctx.prefs`), changed through `ctx.change`.
  * View-only users get static cells and no add or rename controls.
+ *
+ * What dropping rows into a group (SPEC-6 §1.4) builds on: each group's
+ * section carries `data-group-key`, and its `create` (`listGroups`: the
+ * board group and the column values of the grouping) is what a task
+ * moved into that group takes; rows are built by `listRow`.
  */
 
 import { clear, h } from "../../dom.js";

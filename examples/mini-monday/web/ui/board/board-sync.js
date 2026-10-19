@@ -1,6 +1,6 @@
 /**
  * Keeps the open board current: single-flight board reloads (with stale
- * results discarded), the open item card's detail and the board's
+ * results discarded), the open task's detail and the board's
  * server-sent change stream (through `ctx.bus.watchBoard`; debounced
  * refresh on each change). Board renames and deletions refresh the shell.
  * When the server ends the stream (the user lost access, the board was

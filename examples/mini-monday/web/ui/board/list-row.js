@@ -1,13 +1,19 @@
 /**
  * One task row of the List view (SPEC-5 §3.4): a treegrid row whose name
  * cell holds, in order, the expand toggle (tasks with subtasks), the
- * status circle (a label menu for editors), the name (opens the task),
+ * status circle (the status menu for editors), the name (opens the task),
  * the rename pencil (editors), the subtask chip, the description
  * indicator and the comment chip; then the visible cells
  * (`list-cells.js`).
  *
  * The same task can show in several groups (grouped by assignee), so
  * focus keys carry the group key as well as the item ID.
+ *
+ * What moving rows (SPEC-6 §1.4) builds on: a row carries `data-item-id`,
+ * `data-parent-id` (none at the top level) and `data-group-key`, and its
+ * `aria-level` is its depth + 1; each item has its `position` in the
+ * board's manual order (`decodeItem`); a drag handle belongs at the start
+ * of the name cell (`nameCell`), before the expand toggle.
  */
 
 import { h } from "../../dom.js";
@@ -15,9 +21,9 @@ import { iconButton } from "../components/button.js";
 import { isRebuilding } from "../components/focus.js";
 import { plural } from "../components/format.js";
 import { icon } from "../components/icon.js";
-import { openStatusMenu } from "./cells.js";
 import { listCell } from "./list-cells.js";
 import { highlightParts } from "./list-model.js";
+import { openStatusMenu } from "./status-menu.js";
 import {
   isDoneOption,
   isEmptyValue,
@@ -43,7 +49,7 @@ function expandToggle(ctx, { row, key }) {
 
 /**
  * A 14px ring in the status color, checked for finished labels; editors
- * get a label menu. `key` makes its focus key unique (`list-status:<key>`).
+ * get the compact status menu. `key` makes its focus key unique (`list-status:<key>`).
  * The task view's subtask rows share it.
  * @param {{ roles: object, caps: object, actions: object }} ctx
  * @param {{ item: object, key: string }} options
@@ -66,7 +72,7 @@ export function statusCircle(ctx, { item, key }) {
         class: classes,
         title: text,
         "aria-label": `${column.title} of ${item.name}: ${text}. Change`,
-        "aria-haspopup": "menu",
+        "aria-haspopup": "dialog",
         "aria-expanded": "false",
         dataset: { focusKey: `list-status:${key}` },
         on: {
@@ -243,7 +249,11 @@ export function listRow(ctx, { row, group, cells }) {
       class: ["list-row", done && "done"],
       "aria-level": String(row.depth + 1),
       "aria-expanded": row.childCount > 0 ? String(row.expanded) : null,
-      dataset: { itemId: item.id },
+      dataset: {
+        itemId: item.id,
+        parentId: item.parentId ?? null,
+        groupKey: group.key,
+      },
     },
     nameCell(ctx, { row, key }),
     cells.map((cell) =>

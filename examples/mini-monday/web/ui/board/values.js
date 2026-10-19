@@ -203,6 +203,8 @@ export function decodeItem(raw, columns) {
     createdAt: raw.created_at ?? null,
     // SPEC-5 §1.6: null at the top level (and when not selected).
     parentId: parent === null || parent === undefined ? null : String(parent),
+    // The item's place in the board's manual order (SPEC-6 §1.2).
+    position: Number.isFinite(raw.position) ? raw.position : null,
     updatesCount: Number.isSafeInteger(raw.updates_count)
       ? raw.updates_count
       : 0,

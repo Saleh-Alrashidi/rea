@@ -1,7 +1,9 @@
 /**
- * Column value editors shared by the table, kanban cards and the item card:
- * status pills with a label picker, people avatars with a picker, date,
- * numbers and text inputs. Text goes through `textInput`, so a multi-line
+ * Column value editors shared by the Main table, kanban cards, My work and
+ * the List and task views: status pills with a label picker, people
+ * avatars with a picker, date, numbers and text inputs. The Main table's
+ * status pills open the full-bleed label picker; everywhere else a pill
+ * opens the compact status menu (`status-menu.js`, SPEC-6 §1.1). Text goes through `textInput`, so a multi-line
  * value is edited in a textarea, never in an input that would drop its
  * line breaks. Editors receive decoded UI values (`values.js`) and report
  * changes through `onChange(nextValue)`, which may return a promise of
@@ -27,6 +29,7 @@ import { inlineInput } from "../components/inline-edit.js";
 import { onMenuKeydown } from "../components/menu.js";
 import { openPopover } from "../components/popover.js";
 import { MAX_TEXT, textInput } from "../components/text-editor.js";
+import { openStatusMenu } from "./status-menu.js";
 import { personOf, statusOption, textColorOn } from "./values.js";
 
 const ASSIGN_HINT = "Only people who can open this board can be assigned.";
@@ -66,14 +69,14 @@ function statusChoice({ option, selected, onPick }) {
 }
 
 /**
- * Opens the label picker of status `column` next to `anchor`: a menu of
- * radio items (arrow keys, Home/End and typeahead move; focus starts on
- * the current label) plus "Clear". `onChange(index | null)` runs only for
- * a different label.
+ * Opens the Main table's full-bleed label picker of status `column` next
+ * to `anchor`: a menu of radio items in the label colors (arrow keys,
+ * Home/End and typeahead move; focus starts on the current label) plus
+ * "Clear". `onChange(index | null)` runs only for a different label.
  * @param {{ anchor: HTMLElement, column: object, value: number | null,
  *   onChange(index: number | null): void }} options
  */
-export function openStatusMenu({ anchor, column, value, onChange }) {
+function openLabelPicker({ anchor, column, value, onChange }) {
   const popover = openPopover({
     anchor,
     label: `Choose ${column.title}`,
@@ -114,26 +117,28 @@ export function openStatusMenu({ anchor, column, value, onChange }) {
 }
 
 /**
- * Colored status pill; clicking opens the label picker (`openStatusMenu`).
+ * Colored status pill; clicking opens the Main table's label picker
+ * (`openLabelPicker`), or with `compact` the compact status menu.
  * @param {{ column: object, value: number | null, label: string,
  *   onChange(index: number | null): void, focusKey?: string,
- *   placeholder?: string }} options
+ *   placeholder?: string, compact?: boolean }} options
  */
 export function statusPill(options) {
   const { column, value, label, onChange, focusKey, placeholder } = options;
   const option = statusOption(column, value);
   const text = option?.label ?? "";
+  const open = options.compact ? openStatusMenu : openLabelPicker;
   const pill = h(
     "button",
     {
       type: "button",
       class: ["status-pill", !text && "empty"],
-      "aria-haspopup": "menu",
+      "aria-haspopup": options.compact ? "dialog" : "menu",
       "aria-expanded": "false",
       "aria-label": `${label}: ${text || "not set"}. Change status`,
       dataset: { focusKey },
       on: {
-        click: () => openStatusMenu({ anchor: pill, column, value, onChange }),
+        click: () => open({ anchor: pill, column, value, onChange }),
       },
     },
     text ||

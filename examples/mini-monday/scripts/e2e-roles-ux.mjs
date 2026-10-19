@@ -3,7 +3,7 @@
  * (`e2e-roles.mjs` runs them after the tour): the Status summary note is
  * read-only for viewers, a mistyped number keeps its value, note edits
  * survive a reload, undo in a doc follows the doc's own history, focus
- * returns to what opened the item card, readable danger buttons in dark
+ * returns to what opened the task view, readable danger buttons in dark
  * mode, the modal navigation drawer, keyboard popovers and menus, the skip
  * link, headings of error pages, unsaved settings, Home notifications,
  * last-owner and last-group hints, a demotion reaching the shell and a
@@ -49,7 +49,7 @@ async function appNoteReadOnly(run) {
 async function numberTypoKeepsValue(run) {
   const { roadmap } = run.seed;
   const { context, page } = await signedIn(run, run.users.alex, {
-    hash: `#/boards/${roadmap}`,
+    hash: `#/boards/${roadmap}/views/table`,
   });
   const name = "Set up CI pipeline";
   const before = itemNamed(run, roadmap, name).values.estimate;
@@ -211,20 +211,21 @@ async function slashMenuFilters(run, page) {
   );
 }
 
-async function cardFocusReturns(run) {
+/** The Main table's "Open" shows the task view; closing it refocuses "Open". */
+async function taskFocusReturns(run) {
   const { roadmap } = run.seed;
   const { context, page } = await signedIn(run, run.users.alex, {
-    hash: `#/boards/${roadmap}`,
+    hash: `#/boards/${roadmap}/views/table`,
   });
   const item = itemNamed(run, roadmap, "Set up CI pipeline");
   const key = `open:${item.id}`;
   await page.locator(`[data-focus-key="${key}"]`).focus();
   await page.keyboard.press("Enter");
-  await page.locator("dialog.item-card[open]").waitFor();
+  await page.locator("dialog.task-view[open] .task-title").waitFor();
   await page.keyboard.press("Escape");
   await waitUntil(async () => (await focusedKey(page)) === key, "focus back");
   await page.keyboard.press("Enter");
-  await page.locator("dialog.item-card[open] .card-close").click();
+  await page.locator("dialog.task-view[open] .task-close").click();
   await waitUntil(async () => (await focusedKey(page)) === key, "after ×");
   await context.close();
 }
@@ -250,7 +251,7 @@ const colorsOf = (locator) =>
 
 async function darkDangerContrast(run) {
   const { context, page } = await signedIn(run, run.users.alex, {
-    hash: `#/boards/${run.seed.roadmap}`,
+    hash: `#/boards/${run.seed.roadmap}/views/table`,
     colorScheme: "dark",
   });
   await page.locator("button.row-delete").first().click();
@@ -267,7 +268,7 @@ export const UX_STEPS = [
   ["a mistyped number keeps the saved value", numberTypoKeepsValue],
   ["note edits survive an immediate reload", noteSurvivesReload],
   ["doc undo follows the doc; the / menu filters", docUndoAndSlashMenu],
-  ["closing the item card returns focus", cardFocusReturns],
+  ["closing the task view returns focus", taskFocusReturns],
   ["danger buttons stay readable in dark mode", darkDangerContrast],
   ...UX_STEPS_2,
 ];

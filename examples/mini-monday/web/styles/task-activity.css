@@ -120,6 +120,9 @@
 }
 
 .task-comment-body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   font-size: var(--text-md);
   line-height: 1.5;
   text-align: start;
@@ -139,7 +142,20 @@
 }
 
 .task-composer {
+  display: grid;
+  gap: var(--space-2);
   margin: 0;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.composer-hint {
+  font-size: var(--text-xs);
 }
 
 .task-composer .composer-input {

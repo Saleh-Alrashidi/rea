@@ -2,8 +2,14 @@
  * Kanban view: one lane per status label of the board's status column
  * (`column-roles.js`: the `status` role, else the first status column),
  * plus "No status". Cards move between lanes with HTML5 drag and drop or,
- * from the keyboard, with each card's status pill. View-only users see the
- * same lanes without dragging, status pickers or "+ Add item".
+ * from the keyboard, with each card's status pill (the compact status
+ * menu, SPEC-6 §1.1); a card's title opens the task view. View-only users
+ * see the same lanes without dragging, status menus or "+ Add item".
+ *
+ * Every card carries `data-item-id` and every lane `data-lane-key` (its
+ * `laneKey`), and each item its `position` in the board's manual order
+ * (`decodeItem`): what reordering cards inside a lane (SPEC-6 §1.5) needs
+ * to name a card's neighbors.
  */
 
 import { clear, h } from "../../dom.js";
@@ -65,6 +71,7 @@ function cardStatus(ctx, item, column) {
     label: `${column.title} for ${item.name}`,
     focusKey: `kanban-status:${item.id}`,
     placeholder: "Set status",
+    compact: true,
     onChange: (next) => ctx.actions.setValue(item, column, next),
   });
 }
@@ -169,6 +176,7 @@ function laneElement(ctx, { lane, column, items }) {
     {
       class: "lane",
       "aria-labelledby": headingId,
+      dataset: { laneKey: lane.key },
       on: editable ? dropHandlers(ctx, { lane, column }) : null,
     },
     h(

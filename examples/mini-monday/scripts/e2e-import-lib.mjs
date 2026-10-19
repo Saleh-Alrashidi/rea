@@ -140,14 +140,16 @@ export function itemRow(page, name) {
 }
 
 /**
- * Opens done-step link `title` (an imported board) and checks the board
- * header's badge: `badge` text, and for a source URL an external link
- * that opens a new tab without referrer.
+ * Opens done-step link `title` (an imported board), which shows the List
+ * view like every board (SPEC-6 §1.1), and checks the board header's
+ * badge: `badge` text, and for a source URL an external link that opens a
+ * new tab without referrer.
  */
 export async function openImportedBoard(page, { title, badge, href = null }) {
   const name = page.getByText(title, { exact: true });
   await page.locator("a.import-link", { has: name }).first().click();
   await page.locator(".board-header").waitFor();
+  await page.locator('.board-page[data-view="list"] .list-view').waitFor();
   await pageReady(page);
   const element = page.locator(".board-header .import-badge");
   const text = await element.textContent();
@@ -164,14 +166,21 @@ export async function openImportedBoard(page, { title, badge, href = null }) {
   check((await element.getAttribute("target")) === "_blank", "new tab");
 }
 
+/** Switches the open board to its Main table, whose cells the checks read. */
+export async function toMainTable(page) {
+  await page.locator(".view-tab", { hasText: /^Main table$/ }).click();
+  await waitUntil(() => page.url().endsWith("/views/table"), "the table");
+  await page.locator(".table-view").waitFor();
+}
+
 /**
- * Checks row `name` of the open board: its first status pill reads
- * `status`, its first people cell names `person`, and (when `update` is
- * given) the item card lists an update containing it, then `onCard()`
- * runs and the card is closed again.
+ * Checks row `name` of the open board's Main table: its first status pill
+ * reads `status`, its first people cell names `person`, and (when
+ * `update` is given) the task view opened from the row lists an update
+ * containing it, then `onTask()` runs and the task view is closed again.
  */
 export async function checkItem(page, options) {
-  const { name, status, person, update, onCard } = options;
+  const { name, status, person, update, onTask } = options;
   const row = itemRow(page, name);
   await row.waitFor();
   const pill = (await row.locator(".status-pill").first().textContent()) ?? "";
@@ -184,20 +193,23 @@ export async function checkItem(page, options) {
   if (!update) return;
   const kept = await row.elementHandle();
   await row.locator("button.open-item").click();
-  await page.locator("dialog.item-card[open] .card-title").waitFor();
+  const task = "dialog.task-view[open]";
+  await page.locator(`${task} .task-title`).waitFor();
   await waitUntil(async () => {
-    const bodies = await page.locator(".update-body").allTextContents();
+    const bodies = await page
+      .locator(`${task} .task-comment-body`)
+      .allTextContents();
     return bodies.some((body) => body.includes(update));
   }, `the update "${update}" on ${name}`);
-  // The card opens over the table, which is not rebuilt: on a wide board
-  // that would freeze the page for seconds.
+  // The task view opens over the table, which is not rebuilt: on a wide
+  // board that would freeze the page for seconds.
   const stays = await kept.evaluate((node) => node.isConnected);
-  check(stays, "opening the item card keeps the table as it is");
-  await onCard?.();
+  check(stays, "opening the task view keeps the table as it is");
+  await onTask?.();
   await page.keyboard.press("Escape");
-  await page.locator("dialog.item-card").waitFor({ state: "detached" });
+  await page.locator("dialog.task-view").waitFor({ state: "detached" });
   const still = await kept.evaluate((node) => node.isConnected);
-  check(still, "closing the item card keeps the table as it is");
+  check(still, "closing the task view keeps the table as it is");
 }
 
 /**

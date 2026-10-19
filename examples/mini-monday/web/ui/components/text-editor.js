@@ -10,8 +10,8 @@
  *   the text popover): a textarea, or an input for one-line text, that
  *   saves only a changed text (`textCommit`);
  * - `textInput` edits an optional value in place where space is short
- *   (table cells, the item card, the board description): the inline
- *   input for one-line text, else the first line as a button that opens
+ *   (Main table cells, the board description): the inline input for
+ *   one-line text, else the first line as a button that opens
  *   `textEditor` in a popover (`openTextPopover`).
  */
 

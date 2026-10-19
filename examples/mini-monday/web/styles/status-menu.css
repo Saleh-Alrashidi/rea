@@ -1,0 +1,150 @@
+/* The compact status menu (SPEC-6 §1.1, ClickUp style) of List rows, the
+   task view, Kanban cards and My work: a search box, then one row per
+   label with a dot in its color (`--dot-color`, set from JS), the label
+   in normal case and a check on the current one, then "Clear". The
+   active row (keyboard or pointer) is the one with
+   `aria-selected="true"`. Logical properties only. */
+
+/* The popover may be capped to the room beside its anchor; the list
+   then scrolls under the search box. */
+.status-menu-popover {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.status-menu {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.status-menu-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--cu-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-text-muted);
+}
+
+.status-menu-search:focus-within {
+  border-color: var(--cu-accent);
+  box-shadow: 0 0 0 2px var(--cu-accent-soft);
+}
+
+.status-menu-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.status-menu-input:focus-visible {
+  outline: none;
+}
+
+.status-menu-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.status-menu-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 6px 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.status-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.status-menu-option[aria-selected="true"] {
+  background: var(--color-hover);
+}
+
+.status-menu-option.current {
+  font-weight: var(--weight-semibold);
+}
+
+.status-menu-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dot-color, var(--color-status-empty));
+}
+
+.status-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.status-menu-check {
+  flex: none;
+  color: var(--cu-accent-text);
+}
+
+.status-menu-clear {
+  position: relative;
+  margin-top: 7px;
+  color: var(--color-text-secondary);
+}
+
+.status-menu-clear::before {
+  position: absolute;
+  inset-inline: -6px;
+  top: -4px;
+  border-top: 1px solid var(--cu-border);
+  content: "";
+}
+
+.status-menu-icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.status-menu-empty {
+  margin: 0;
+  padding: 6px 14px 8px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.status-menu-empty[hidden] {
+  display: none;
+}
+
+@media (hover: none) {
+  .status-menu-option {
+    min-height: 40px;
+  }
+}
