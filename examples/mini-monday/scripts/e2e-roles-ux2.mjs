@@ -116,14 +116,14 @@ async function unsavedSettingsAsk(run) {
     await (answers.shift() === "dismiss" ? dialog.dismiss() : dialog.accept());
   });
   const name = page.locator("#ws-name");
-  await name.fill("Main workspace (draft)");
+  await name.fill("Main space (draft)");
   await page.locator("#sidebar .nav-link", { hasText: "Home" }).click();
   await page.waitForTimeout(300);
   check(page.url().endsWith("/settings"), "staying keeps the page");
-  check((await name.inputValue()) === "Main workspace (draft)", "kept");
+  check((await name.inputValue()) === "Main space (draft)", "kept");
   await page.reload();
   check(asked.join() === "confirm,beforeunload", `asked: ${asked}`);
-  check(run.store.getWorkspace(workspace).name === "Main workspace", "unsaved");
+  check(run.store.getWorkspace(workspace).name === "Main space", "unsaved");
   await context.close();
 }
 

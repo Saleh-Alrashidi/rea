@@ -42,7 +42,7 @@ const accessOf = (ctx, workspace) =>
  */
 export function requireTargetWorkspace(ctx, workspaceId) {
   const id = workspaceId ?? ctx.store.getDefaultWorkspace()?.id ?? null;
-  if (id === null) notFound("Workspace", "default");
+  if (id === null) notFound("workspace", "default");
   return requireWorkspace(ctx, id, "editor");
 }
 
@@ -87,7 +87,7 @@ const Mutation = wrapAll(write, {
   create_workspace(_p, args, ctx) {
     const creator = requireCapability(ctx, "create_workspace");
     const result = ctx.store.createWorkspace({
-      name: readName(args.name, "Workspace name"),
+      name: readName(args.name, "Space name"),
       description: readDescription(args.description) ?? null,
       kind: args.kind,
       creatorId: creator.id,
@@ -97,19 +97,18 @@ const Mutation = wrapAll(write, {
   update_workspace(_p, args, ctx) {
     const workspace = requireWorkspace(ctx, args.workspace_id, "owner");
     const changes = {
-      name:
-        args.name == null ? undefined : readName(args.name, "Workspace name"),
+      name: args.name == null ? undefined : readName(args.name, "Space name"),
       description: readDescription(args.description),
       kind: args.kind ?? undefined,
       color: args.color ?? undefined,
     };
     const result = ctx.store.updateWorkspace(workspace.id, changes);
-    return storeResult(result, () => notFound("Workspace", workspace.id));
+    return storeResult(result, () => notFound("workspace", workspace.id));
   },
   delete_workspace(_p, args, ctx) {
     const workspace = requireWorkspace(ctx, args.workspace_id, "owner");
     const result = ctx.store.deleteWorkspace(workspace.id);
-    return storeResult(result, () => notFound("Workspace", workspace.id));
+    return storeResult(result, () => notFound("workspace", workspace.id));
   },
 });
 

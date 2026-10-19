@@ -195,7 +195,7 @@ export function seedIds(store) {
     users,
     roadmap,
     marketing: named(boards, "name", "Marketing launch"),
-    workspace: named(store.listWorkspaces(), "name", "Main workspace"),
+    workspace: named(store.listWorkspaces(), "name", "Main space"),
     install: store.listInstalls({ boardId: roadmap })[0].id,
     item: store.listItems({ boardId: roadmap, limit: 1 }).items[0].id,
     vision: named(store.listDocs({}), "title", "Product vision"),

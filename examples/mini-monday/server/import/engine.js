@@ -297,7 +297,7 @@ function importOneBoard(ctx, { task, workspace }) {
     ...built.spec,
   });
   if (!result || result.ok === false) {
-    const message = `“${board.name}” could not be imported: ${result?.message ?? "its workspace is gone"}`;
+    const message = `“${board.name}” could not be imported: ${result?.message ?? "its Space is gone"}`;
     warn(report, { code: "board_failed", message, path: task.path });
     skip(report, { ...task, reason: "failed" });
     return;
@@ -320,7 +320,7 @@ function importOneDoc(ctx, { task, workspace }) {
     blocks,
   });
   if (!doc || doc.ok === false) {
-    const message = `“${title}” could not be imported: ${doc?.message ?? "its workspace is gone"}`;
+    const message = `“${title}” could not be imported: ${doc?.message ?? "its Space is gone"}`;
     warn(report, { code: "doc_failed", message, path: task.path });
     skip(report, { ...task, reason: "failed" });
     return;

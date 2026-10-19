@@ -449,6 +449,19 @@ function onBoardReady(page) {
   }
 }
 
+/**
+ * The open task moved to another board (SPEC-6 §3.2): it opens there when
+ * the user can open that board, else the task view closes with a note.
+ */
+function followTask(page, { itemId, boardId }) {
+  if (boardId) {
+    navigate(page, itemHash(boardId, itemId));
+    return;
+  }
+  closeCard(page);
+  page.ctx.toast.info("This task was moved to another board");
+}
+
 /** Reports whether this board's live updates are paused (the banner). */
 function setLive(page, paused) {
   const key = `board:${page.state.boardId}`;
@@ -523,6 +536,7 @@ function wire(page) {
       ctx.bus.watchBoard(boardId, listener, onEnd),
     refreshShell: () => ctx.refreshShell(),
     onLivePaused: () => setLive(page, true),
+    onTaskMoved: (moved) => followTask(page, moved),
   });
   page.actions = createActions({
     state,

@@ -100,7 +100,7 @@ test("drops, Undo and new folders reach the server as the tree shows them", asyn
   const store = await createStore({ file: null });
   serve(t, store);
   let spaces = await spacesNow();
-  const main = spaces.find((space) => space.name === "Main workspace");
+  const main = spaces.find((space) => space.name === "Main space");
   const folderId = await createFolder(main.id, "Q4");
   const extra = await request(CREATE_MUTATIONS.doc, {
     title: "Retro",
@@ -154,7 +154,7 @@ test("Spaces reorder for admins; the server refuses others", async (t) => {
   const store = await createStore({ file: null });
   serve(t, store);
   let spaces = await spacesNow();
-  assert.deepEqual(names(spaces), ["Main workspace", "Leadership"]);
+  assert.deepEqual(names(spaces), ["Main space", "Leadership"]);
   const move = resolveDrop(spaces, {
     dragKey: spaces[1].key,
     targetKey: spaces[0].key,
@@ -162,8 +162,8 @@ test("Spaces reorder for admins; the server refuses others", async (t) => {
   }).move;
   await runMove(move);
   spaces = await spacesNow();
-  assert.deepEqual(names(spaces), ["Leadership", "Main workspace"]);
-  // Sam (a member) sees only Main workspace.
+  assert.deepEqual(names(spaces), ["Leadership", "Main space"]);
+  // Sam (a member) sees only Main space.
   serve(t, store, "2");
   const main = { node: spaces[1], place: {} };
   await assert.rejects(runMove(main), (error) => {

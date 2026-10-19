@@ -3,7 +3,9 @@
  * servers: the catch-up reload after a board's stream opens redraws only
  * when the board changed, keeping the drawn page's objects (a redraw of a
  * wide imported board's table freezes the page for seconds), while every
- * other reload redraws, also when it is merged with a catch-up.
+ * other reload redraws, also when it is merged with a catch-up. An open
+ * task that moves to another board reports where it went, or that the
+ * user cannot follow it (SPEC-6 §3.2).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -11,12 +13,12 @@ import { mutate } from "../web/ui/board/board-data.js";
 import { createBoardSync } from "../web/ui/board/board-sync.js";
 import { startTestServers } from "./helpers.js";
 
-/** The UI's `request()` reaches the real `/v2` as Alex. */
-async function signedIn(t) {
+/** The UI's `request()` reaches the real `/v2` as `user` (Alex). */
+async function signedIn(t, user = "alex") {
   const started = await startTestServers();
   t.after(() => started.close());
   const original = globalThis.fetch;
-  const headers = started.sessionFor(started.ids.users.alex);
+  const headers = started.sessionFor(started.ids.users[user]);
   globalThis.fetch = (url, init = {}) =>
     original(new URL(url, started.hostOrigin), {
       ...init,
@@ -28,7 +30,8 @@ async function signedIn(t) {
   return started;
 }
 
-function syncFor(boardId) {
+function syncFor(boardId, { watchBoard = () => () => {} } = {}) {
+  const moves = [];
   const state = {
     boardId,
     board: null,
@@ -43,10 +46,11 @@ function syncFor(boardId) {
     state,
     render: (parts) => draws.push(parts ?? "all"),
     forwardEvent() {},
-    watchBoard: () => () => {},
+    watchBoard,
     refreshShell() {},
+    onTaskMoved: (moved) => moves.push(moved),
   });
-  return { state, draws, sync };
+  return { state, draws, sync, moves };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
@@ -87,4 +91,58 @@ test("a scheduled reload merged with a catch-up still redraws", async (t) => {
   await settle();
   assert.deepEqual(draws, ["all", "all", ["card"]]);
   sync.destroy();
+});
+
+/**
+ * The roadmap's sync for `user` with the task `pick(items)` open, its
+ * stream fed by the store's changes; `moves` records `onTaskMoved`.
+ */
+async function openTask(t, { user, pick }) {
+  const started = await signedIn(t, user);
+  const { store, ids } = started;
+  const listeners = [];
+  const unsubscribe = store.on((change) => listeners.forEach((l) => l(change)));
+  t.after(unsubscribe);
+  const watchBoard = (_boardId, listener) => {
+    listeners.push(listener);
+    return () => {};
+  };
+  const roadmap = ids.boards.roadmap;
+  const { state, sync, moves } = syncFor(roadmap, { watchBoard });
+  t.after(() => sync.destroy());
+  const items = store.listItems({ boardId: roadmap }).items;
+  const item = pick(items);
+  state.card = { itemId: item.id, updates: {} };
+  sync.subscribe(roadmap);
+  return { ...started, item, items, state, moves };
+}
+
+const moveTo = ({ store, ids }, item, boardId) =>
+  store.moveItemToBoard(item.id, { boardId }, { actorId: ids.users.alex });
+
+test("an open task that moves to a board the user can open is followed there", async (t) => {
+  const run = await openTask(t, { user: "alex", pick: (items) => items[0] });
+  const { ids, moves, item, items } = run;
+  // Another task's move does not concern the open task.
+  moveTo(run, items[1], ids.boards.budget);
+  await settle();
+  assert.deepEqual(moves, []);
+  moveTo(run, item, ids.boards.budget);
+  await settle();
+  assert.deepEqual(moves, [{ itemId: item.id, boardId: ids.boards.budget }]);
+});
+
+test("an open subtask whose parent moves where the user cannot follow is reported as such", async (t) => {
+  // Sam cannot open Budget 2027 in the closed Leadership Space.
+  const run = await openTask(t, { user: "sam", pick: (items) => items[2] });
+  const { ids, moves, store, state, item: parent } = run;
+  const child = store.createItem({
+    boardId: ids.boards.roadmap,
+    name: "Child",
+    parentId: parent.id,
+  });
+  state.card = { itemId: child.id, updates: {} };
+  moveTo(run, parent, ids.boards.budget);
+  await settle();
+  assert.deepEqual(moves, [{ itemId: child.id, boardId: null }]);
 });

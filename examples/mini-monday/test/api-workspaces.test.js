@@ -32,7 +32,7 @@ test("workspaces show accessible boards and docs and the caller's access", async
   assert.deepEqual(workspaces, [
     {
       id: ids.workspaces.main,
-      name: "Main workspace",
+      name: "Main space",
       description: "Everyone's shared space",
       kind: "open",
       color: workspaces[0].color,
@@ -109,7 +109,7 @@ test("create_workspace, update_workspace and delete_workspace", async (t) => {
   const remove = `mutation D($w: ID!) { delete_workspace(workspace_id: $w) { id } }`;
   const busy = await users.noa.error(remove, { w: made.id });
   assert.equal(busy.extensions.code, "BAD_USER_INPUT");
-  assert.match(busy.message, /only an empty workspace/i);
+  assert.match(busy.message, /only an empty Space/i);
   await users.noa.data(
     `mutation D($b: ID!) { delete_board(board_id: $b) { id } }`,
     { b: create_board.id },
@@ -174,7 +174,7 @@ test("content reached without workspace access shows a redacted workspace", asyn
     .boards;
   assert.deepEqual(board.workspace, {
     id: ids.workspaces.main,
-    name: "Main workspace",
+    name: "Main space",
     description: null,
     kind: "open",
     color: board.workspace.color,
@@ -193,5 +193,39 @@ test("content reached without workspace access shows a redacted workspace", asyn
       noa.workspace.docs,
     ],
     ["Leadership", [], [{ name: "Hiring plan" }], []],
+  );
+});
+
+test("errors call workspaces Spaces (SPEC-6 §3.1)", async (t) => {
+  const { users, ids } = await setup(t);
+  const { leadership, main } = ids.workspaces;
+  const message = async (client, query) => (await client.error(query)).message;
+  assert.equal(
+    await message(
+      users.sam,
+      `mutation { update_workspace(workspace_id: "${leadership}", name: "X") { id } }`,
+    ),
+    `Space "${leadership}" was not found`,
+  );
+  assert.equal(
+    await message(
+      users.jordan,
+      `mutation { create_folder(workspace_id: "${main}", name: "X") { id } }`,
+    ),
+    "This needs editor access to the Space",
+  );
+  assert.equal(
+    await message(
+      users.alex,
+      `mutation { create_workspace(name: "   ") { id } }`,
+    ),
+    "Space name must be 1-255 characters",
+  );
+  assert.match(
+    await message(
+      users.alex,
+      `mutation { move_workspace(workspace_id: "${main}", after_id: "${main}") { id } }`,
+    ),
+    /^A Space cannot be placed next to itself/,
   );
 });

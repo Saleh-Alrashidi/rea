@@ -167,7 +167,7 @@ test("workspaces tell whether the caller can open and delete them", async (t) =>
   assert.deepEqual(design, { ...made, can_delete: false });
   const remove = `mutation D($w: ID!) { delete_workspace(workspace_id: $w) { id } }`;
   const refused = await users.sam.error(remove, { w: made.id });
-  assert.match(refused.message, /^Only an empty workspace can be deleted/);
+  assert.match(refused.message, /^Only an empty Space can be deleted/);
   assert.doesNotMatch(refused.message, /[Mm]ove/, "there is no move API");
 });
 

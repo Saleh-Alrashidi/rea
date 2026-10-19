@@ -41,7 +41,7 @@ async function seeded() {
 test("seeded workspaces and boards give each person the spec's access", async () => {
   const { store, users, workspace, board } = await seeded();
   const columns = [
-    workspace("Main workspace"),
+    workspace("Main space"),
     workspace("Leadership"),
     board("Product roadmap"),
     board("Marketing launch"),

@@ -42,7 +42,7 @@ test("canGrant: roles per resource kind, subjects and guests", async () => {
   const roadmap = board("Product roadmap");
   const marketing = board("Marketing launch");
   const hiring = board("Hiring plan");
-  const main = workspace("Main workspace");
+  const main = workspace("Main space");
   const brief = doc("Launch brief");
   const ideas = note("Ideas for Q1");
   assert.equal(

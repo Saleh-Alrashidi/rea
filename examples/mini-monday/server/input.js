@@ -58,3 +58,10 @@ export function describe(value) {
       : text;
   return JSON.stringify(shown);
 }
+
+/**
+ * A record label ("Board", "Space") inside a sentence: lower case, except
+ * "Space", which messages always capitalize (SPEC-6 §3.1).
+ */
+export const inSentence = (label) =>
+  label === "Space" ? label : label.toLowerCase();

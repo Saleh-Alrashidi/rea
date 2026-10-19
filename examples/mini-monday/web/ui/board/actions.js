@@ -7,6 +7,7 @@
 
 import { request } from "../../api.js";
 import { formHash, viewHash } from "../../router.js";
+import { boardDeletion } from "../components/delete-confirms.js";
 import { confirmDialog, formDialog } from "../components/dialog.js";
 import { BOARD_KINDS } from "../components/labels.js";
 import { boardKindConfirmation } from "../components/share-model.js";
@@ -162,12 +163,9 @@ function boardActions(app, kit) {
     },
     async deleteBoard() {
       const board = state.board;
-      const confirmed = await confirmDialog({
-        title: "Delete board?",
-        message: `“${board.name}” and its ${plural(board.items.length, "item")} will be deleted for everyone.`,
-        confirmButton: "Delete board",
-        danger: true,
-      });
+      const confirmed = await confirmDialog(
+        boardDeletion(board, board.itemsCount),
+      );
       if (!confirmed) return;
       const deleted = await run(
         "deleteBoard",

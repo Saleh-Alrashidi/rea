@@ -261,6 +261,7 @@ test("a board stream sees the move; one that loses access to the board ends", as
     workspace_id: leadership,
     folder_id: null,
     position: 3 * S,
+    from_workspace_id: main,
   });
   // Noa could open the public board in Main, not in closed Leadership.
   assert.doesNotMatch(await noa.ends(), /board_moved/);
@@ -371,9 +372,9 @@ test("admins reorder Spaces", async (t) => {
   });
   const names = async (client) =>
     (await client.data(SIDEBAR)).workspaces.map((w) => w.name);
-  assert.deepEqual(await names(as.alex), ["Leadership", "Main workspace"]);
+  assert.deepEqual(await names(as.alex), ["Leadership", "Main space"]);
   await as.alex.data(MOVE_SPACE, { i: main, b: leadership });
-  assert.deepEqual(await names(as.alex), ["Main workspace", "Leadership"]);
+  assert.deepEqual(await names(as.alex), ["Main space", "Leadership"]);
   const refused = await as.sam.error(MOVE_SPACE, { i: main, a: main });
   assert.equal(refused.extensions.code, "FORBIDDEN");
   assert.equal(await as.sam.code(MOVE_SPACE, { i: leadership }), "NOT_FOUND");

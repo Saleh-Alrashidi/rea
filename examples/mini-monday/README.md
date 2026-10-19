@@ -709,17 +709,24 @@ change events (`event: change`) after an access check, re-checks access on
 every change that can move it and ends the stream when access is lost.
 `GET /v2/events?stream=me` streams the signed-in user's notification
 events (`event: notification`, with the notification's `kind`, `url` and
-`text` rendered for that user) and ends when the user is deactivated. A
-stream opened with a browser session ends with that session (sign-out,
-user switching, idle expiry at the next delivery or heartbeat). Streams
-are indexed by board, user and session: a board change reaches only its
-board's streams, with one access check per user; a user change only that
-user's streams; a workspace change the streams of its boards; a team
-change every board stream; doc and note changes none, so streams on
-other boards cost a change nothing. The hub accepts
+`text` rendered for that user) and ends when the user is deactivated.
+It also carries `event: sidebar` with the IDs of a sidebar change
+(`folder_created`, `folder_updated`, `folder_moved`, `folder_deleted`,
+`workspace_moved`, `board_moved`, `doc_moved`) to the users who can see
+the folder's Space, the moved Space, or the moved board or doc (also in
+the Space it left); nobody else hears of it. A stream opened with a
+browser session ends with that session (sign-out, user switching, idle
+expiry at the next delivery or heartbeat). Streams are indexed by board,
+user and session: a board change reaches only its board's streams, with
+one access check per user; a user change only that user's streams; a
+workspace change the streams of its boards; a team change every board
+stream; a sidebar change the user streams; other doc and note changes
+none, so streams on other boards cost a change nothing. The hub accepts
 1,000 streams, at most 32 per user (more → 429). The web app refreshes
-boards, the activity view, form response counts and the notification bell
-from these streams.
+boards, the activity view, form response counts, the sidebar and the
+notification bell from these streams, and a task view left open follows
+its task to another board (or closes with a note when the user cannot
+open that board).
 
 ## Security model
 

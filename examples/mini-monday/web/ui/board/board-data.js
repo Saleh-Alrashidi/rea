@@ -81,6 +81,12 @@ const ITEM_QUERY = `query HostItem($ids: [ID!]!) {
   }
 }`;
 
+// Where a task sits now: the board page follows a task that moved to
+// another board (SPEC-6 §3.2).
+const ITEM_BOARD_QUERY = `query ItemBoard($ids: [ID!]!) {
+  items(ids: $ids) { id board { id } }
+}`;
+
 /** Items per page for `columnCount` columns, within FIELD_BUDGET. */
 function itemsPageLimit(columnCount) {
   // Each item resolves its own fields plus 3 per column value.
@@ -170,6 +176,16 @@ export async function loadItem(itemId, columns) {
       ? raw.subitems_count
       : 0,
   };
+}
+
+/**
+ * The ID of the board item `itemId` sits on, or null when it is gone or
+ * on a board the user cannot open.
+ */
+export async function loadItemBoardId(itemId) {
+  const data = await request(ITEM_BOARD_QUERY, { ids: [itemId] });
+  const raw = data.items[0];
+  return raw ? String(raw.board.id) : null;
 }
 
 const ACTIVITY_QUERY = `query BoardActivity($ids: [ID!], $limit: Int) {
@@ -321,6 +337,7 @@ export const BOARD_QUERIES = Object.freeze({
   BOARD_QUERY,
   BOARD_ITEMS_QUERY,
   ITEM_QUERY,
+  ITEM_BOARD_QUERY,
   ACTIVITY_QUERY,
   BOARD_FORMS_QUERY,
   CREATE_SUBITEM: MUTATIONS.createSubitem,

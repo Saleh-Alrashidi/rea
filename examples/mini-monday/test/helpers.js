@@ -159,7 +159,7 @@ export function seedIds(store) {
       store.listTeams().map((team) => [team.name.toLowerCase(), team.id]),
     ),
     workspaces: byName(store.listWorkspaces(), {
-      main: "Main workspace",
+      main: "Main space",
       leadership: "Leadership",
     }),
     boards: byName(store.listBoards({ limit: 1000 }), {
