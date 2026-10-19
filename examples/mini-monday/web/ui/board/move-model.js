@@ -18,11 +18,17 @@
  * them, the moved rows take a provisional place (`applyMove`) that
  * follows the same neighbor rule.
  *
- * `undoMoves` records, before a move, what puts each task back: the item
- * before it in the manual order outside its own subtree (else the next
- * item that does not move), its parent, its group and the values the
- * move changes. The records come in the tasks' original manual order, so
- * each lands next to an item that is already back in place.
+ * `undoMoves` records, before a move, what puts each task back: its place
+ * in the manual order (`placeOf`), its parent, its group and the values
+ * the move changes. The records come in the tasks' original manual order,
+ * so each lands next to an item that is already back in place.
+ *
+ * Limit: `move_item` refuses the moved task's own subtasks as neighbors,
+ * so no request names a place strictly between two of them in the manual
+ * order (one of them right before the place, one right after it), nor
+ * one before (after) a run of them that starts (ends) the board. Undo
+ * then puts the task back after the run, or before it when the run ends
+ * the board (`placeOf`); a kanban drop there is refused (`laneMove`).
  */
 
 import { byManualOrder, descendantIds } from "./list-model.js";
@@ -38,19 +44,13 @@ export function manualOrder(items, skip = new Set()) {
 
 /**
  * The neighbor that puts a task at `index` of `siblings` (in display
- * order, the moved tasks left out): the sibling before that place, else
- * the first one after it, else none. Siblings in `skip` (the moved task's
- * own subtasks, which `move_item` refuses as neighbors; a kanban lane can
- * show them) are passed over: the next sibling after the place is taken
- * instead, else the nearest one before it.
+ * order, the moved tasks and their subtasks left out): the sibling before
+ * that place, else the first one after it, else none.
  */
-export function neighborsAt(siblings, index, skip = new Set()) {
-  const free = (sibling) => sibling && !skip.has(sibling.id);
-  if (free(siblings[index - 1])) return { afterId: siblings[index - 1].id };
-  const next = siblings.slice(index).find(free);
-  if (next) return { beforeId: next.id };
-  const earlier = siblings.slice(0, index).findLast(free);
-  return earlier ? { afterId: earlier.id } : {};
+export function neighborsAt(siblings, index) {
+  const before = siblings[Math.min(index, siblings.length) - 1];
+  if (before) return { afterId: before.id };
+  return siblings.length > 0 ? { beforeId: siblings[0].id } : {};
 }
 
 /**
@@ -96,27 +96,37 @@ export function applyMove(board, request, users) {
 
 /**
  * Where `item` sits in `order` (the board's manual order): after the
- * nearest earlier item outside its `subtree`, else before the nearest
- * later one that neither belongs to it nor `moves`, else nowhere.
+ * item right before it when that is outside its `subtree`; else (first,
+ * or right after one of its own subtasks) before the nearest later item
+ * outside the subtree that is not `moved` either (it is still in place
+ * when this record runs); else after the nearest earlier item outside the
+ * subtree; else nowhere. Between two of its own subtasks it comes back
+ * after the run of later ones (the limit in the module comment).
  */
 function placeOf(order, item, { subtree, moved }) {
   const index = order.indexOf(item);
-  for (let at = index - 1; at >= 0; at -= 1) {
-    if (!subtree.has(order[at].id)) return { afterId: order[at].id };
-  }
-  for (let at = index + 1; at < order.length; at += 1) {
-    const { id } = order[at];
-    if (!subtree.has(id) && !moved.has(id)) return { beforeId: id };
-  }
-  return {};
+  const free = (entry) => !subtree.has(entry.id);
+  const previous = order[index - 1];
+  if (previous && free(previous)) return { afterId: previous.id };
+  const later = order
+    .slice(index + 1)
+    .find((entry) => free(entry) && !moved.has(entry.id));
+  if (later) return { beforeId: later.id };
+  const earlier = order.slice(0, index).findLast(free);
+  return earlier ? { afterId: earlier.id } : {};
 }
 
 const copy = (value) => (value === undefined ? null : structuredClone(value));
 
+/** Whether `request` names no neighbors: `move_item` keeps the position. */
+const keepsPlace = (request) =>
+  (request.afterId ?? null) === null && (request.beforeId ?? null) === null;
+
 /**
  * The requests that undo `requests` on `board`, recorded before they are
- * applied: each task's place, and its parent, group and values where a
- * request changes them; in the tasks' original manual order.
+ * applied: each task's place (none when its request keeps the position),
+ * and its parent, group and values where a request changes them; in the
+ * tasks' original manual order.
  */
 export function undoMoves(board, requests) {
   const order = manualOrder(board.items);
@@ -125,11 +135,11 @@ export function undoMoves(board, requests) {
   for (const request of requests) {
     const item = order.find((entry) => entry.id === request.itemId);
     if (!item) continue;
-    const subtree = descendantIds(board.items, item.id).add(item.id);
-    const back = {
-      itemId: item.id,
-      ...placeOf(order, item, { subtree, moved }),
-    };
+    const back = { itemId: item.id };
+    if (!keepsPlace(request)) {
+      const subtree = descendantIds(board.items, item.id).add(item.id);
+      Object.assign(back, placeOf(order, item, { subtree, moved }));
+    }
     if (request.parentId !== undefined) back.parentId = item.parentId;
     if (request.groupId !== undefined) back.groupId = item.groupId;
     if (request.values) {
@@ -144,20 +154,71 @@ export function undoMoves(board, requests) {
 }
 
 /**
+ * The neighbors that put a kanban card between the lane's cards
+ * `previous` and `next` (either may be missing), resolved in the board's
+ * manual `order` (the card left out) rather than in the lane: the lane
+ * can show the card's own subtasks (`subtree`), which are no neighbors,
+ * and items of other lanes sit between its cards. "Free" items are
+ * outside the subtree.
+ * - After `previous` when it is free, else before the first free item
+ *   after it (past its run of subtasks) unless that is past `next`.
+ * - First in the lane: before `next` when it is free, else after the last
+ *   free item before it.
+ * Null when no neighbors name that place (the module comment's limit).
+ */
+function laneNeighbors(order, { previous, next, subtree }) {
+  const free = (entry) => entry !== undefined && !subtree.has(entry.id);
+  const at = (card) => order.findIndex((entry) => entry.id === card.id);
+  if (free(previous)) return { afterId: previous.id };
+  if (previous) {
+    const later = order.slice(at(previous) + 1).find(free);
+    const fits = later && (!next || at(later) <= at(next));
+    return fits ? { beforeId: later.id } : null;
+  }
+  if (!next) return {};
+  if (free(next)) return { beforeId: next.id };
+  const earlier = order.slice(0, at(next)).findLast(free);
+  return earlier ? { afterId: earlier.id } : null;
+}
+
+/**
+ * Where kanban card `item` lands between the lane's cards `previous` and
+ * `next` among the board's `items`: `{ stays, neighbors }`, `stays` when
+ * it already sits there in the manual order (no neighbors needed), else
+ * `laneNeighbors` (null when none name the place).
+ */
+function lanePlace(items, item, { previous, next }) {
+  const full = manualOrder(items);
+  const own = full.findIndex((entry) => entry.id === item.id);
+  const order = full.filter((entry) => entry.id !== item.id);
+  const at = (id) => order.findIndex((entry) => entry.id === id);
+  const there =
+    (!previous || at(previous.id) < own) && (!next || own <= at(next.id));
+  if (there) return { stays: true, neighbors: {} };
+  const subtree = descendantIds(items, item.id);
+  const neighbors = laneNeighbors(order, { previous, next, subtree });
+  return { stays: false, neighbors };
+}
+
+/**
  * Dropping kanban card `item` at `index` of `lane` (of status `column`):
- * `cards` are the lane's cards in display order (the card itself among
- * them when it comes from this lane, `fromKey` being its lane's key) and
- * `items` the board's, whose subtasks of `item` are no neighbors.
- * Returns the move request (its new neighbors and, from another lane, the
- * lane's label, or none for "No status"), or null when nothing changes.
+ * `cards` are the lane's cards in display order, which is the manual
+ * order (the card itself among them when it comes from this lane,
+ * `fromKey` being its lane's key), and `items` the board's. Returns the
+ * move request (from another lane the lane's label, or none for "No
+ * status"; the neighbors that put the card at that place, none when it
+ * already sits there, `lanePlace`), or null when the drop changes nothing
+ * (dropped where it is, in its own lane) or no request lands it there
+ * (a place only its own subtasks could name, the module comment's limit).
  */
 export function laneMove({ item, items, cards, index, lane, column, fromKey }) {
   const others = cards.filter((card) => card.id !== item.id);
   const slot = Math.max(0, Math.min(index, others.length));
   const same = fromKey === lane.key;
-  if (same && cards.indexOf(item) === slot) return null;
-  const subtree = descendantIds(items, item.id);
-  const request = { itemId: item.id, ...neighborsAt(others, slot, subtree) };
+  const place = { previous: others[slot - 1], next: others[slot] };
+  const { stays, neighbors } = lanePlace(items, item, place);
+  if (!neighbors || (same && stays)) return null;
+  const request = { itemId: item.id, ...neighbors };
   if (!same) request.values = { [column.id]: lane.index };
   return request;
 }

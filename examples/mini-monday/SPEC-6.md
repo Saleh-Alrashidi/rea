@@ -196,7 +196,8 @@ group changes nothing.
 **What a drop does:**
 
 - **Between groups:** dropping into another group applies that group's
-  value through `column_values`.
+  value through `column_values`. Only a drag does this; keyboard moves
+  and the row menu keep the task's own values.
   - Status / Priority: that label.
   - Assignee: replace the assignees with that person, or none for
     "Unassigned".
@@ -230,7 +231,9 @@ nothing:
 - **Keyboard alternatives:**
   - On a focused row, Alt+↑ / Alt+↓ move it among its siblings.
   - Alt+→ makes it a subtask of the previous sibling.
-  - Alt+← moves it out of its parent.
+  - Alt+← moves it out of its parent, right after the parent. It keeps
+    its own values (status, priority, assignees and board group), so it
+    may land in another group than the parent's.
   - The row's "…" menu offers Move up, Move down, Make subtask of…, Move
     out of parent, and Move to… (another board, Phase 3).
   - Moves are announced in a polite live region.
@@ -238,7 +241,11 @@ nothing:
   - Every move shows a toast "Moved "<name>" · Undo" for 8s.
   - Ctrl/⌘+Z undoes the last move while the toast is showing.
   - Undo calls `move_item` back to the recorded neighbors, parent, group
-    and previous values.
+    and previous values. A move without neighbors kept the position, so
+    its undo names none either.
+  - Limit: `move_item` refuses a task's own subitems as neighbors, so a
+    task that sat strictly between two of its subitems in the manual
+    order comes back after them.
 - **Optimistic updates:** the row moves at once. A refused call reverts it
   and shows the error toast.
 
@@ -247,6 +254,11 @@ nothing:
 - Cards reorder within a lane using `move_item` with neighbors. Lanes
   already change status.
 - Each lane shows the same drop line as the List view.
+- The neighbors come from the board's manual order, since a lane can show
+  the card's own subtasks (no neighbors) and other lanes' items sit
+  between its cards. A drop that changes nothing, or at a place only the
+  card's own subtasks could name, shows red and does nothing: no call and
+  no "Moved" toast.
 - Kanban cards open the task view.
 
 ---

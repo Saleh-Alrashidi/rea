@@ -270,16 +270,59 @@ test("keyboard moves: among siblings, into the previous, out of the parent", () 
     keyboardTarget(layout, { rowKey: `${F}:7`, key: "ArrowRight" }),
     null,
   );
-  // Out of the parent: right after it, in its group.
+  // Out of the parent: right after it, keeping its own values. A1 is
+  // Closed, a group not shown before the move; A2 lands in psych dept.
   const out = move(`${F}:2`, "ArrowLeft");
-  assert.deepEqual(out.moves, [
-    { itemId: "2", afterId: "1", parentId: null, values: { status: 0 } },
+  assert.deepEqual(out.moves, [{ itemId: "2", afterId: "1", parentId: null }]);
+  assert.equal(out.place.group, null);
+  assert.equal(moveMessage(layout, out), "Moved “A1” after “A”");
+  const second = move(`${F}:3`, "ArrowLeft");
+  assert.deepEqual(second.moves, [
+    { itemId: "3", afterId: "1", parentId: null },
   ]);
-  assert.equal(moveMessage(layout, out), "Moved “A1” after “A” in facility");
+  assert.equal(
+    moveMessage(layout, second),
+    "Moved “A2” after “A” in psych dept",
+  );
+  // Dragged to the same place, the task takes the group's values.
+  const target = keyboardTarget(layout, { rowKey: `${F}:2`, key: "ArrowLeft" });
+  assert.deepEqual(
+    drop(layout, ["2"], { ...target, keepValues: false }).moves,
+    [{ itemId: "2", afterId: "1", parentId: null, values: { status: 0 } }],
+  );
   assert.equal(
     keyboardTarget(layout, { rowKey: `${F}:1`, key: "ArrowLeft" }),
     null,
   );
+});
+
+test("moving out of a parent keeps the board group and the assignees", () => {
+  const board = moveBoard();
+  board.items.find((item) => item.id === "3").groupId = "closed";
+  const byGroup = layoutOf(board, {
+    groupBy: "group",
+    expanded: expanded("1"),
+  });
+  const out = keyboardTarget(byGroup, {
+    rowKey: "group:open:3",
+    key: "ArrowLeft",
+  });
+  const resolution = drop(byGroup, ["3"], out);
+  assert.deepEqual(resolution.moves, [
+    { itemId: "3", afterId: "1", parentId: null },
+  ]);
+  assert.equal(resolution.place.group.key, "group:closed");
+  const people = layoutOf(moveBoard(), {
+    groupBy: "assignee",
+    expanded: expanded("1"),
+  });
+  const rowKey = "assignee:2:2";
+  const target = keyboardTarget(people, { rowKey, key: "ArrowLeft" });
+  const unassigned = drop(people, ["2"], target);
+  assert.deepEqual(unassigned.moves, [
+    { itemId: "2", afterId: "1", parentId: null },
+  ]);
+  assert.equal(unassigned.place.group.label, "Unassigned");
 });
 
 test("parent choices skip the task's subtree, its parent and full depths", () => {
