@@ -13,6 +13,7 @@ import {
   noteHash,
   registerAppRoutes,
   teamHash,
+  updateHash,
   viewHash,
   workspaceHash,
   workspaceSettingsHash,
@@ -147,6 +148,12 @@ test("every SPEC-2 route resolves to its page and params", () => {
       "board",
       { boardId: "12", view: null, itemId: "40" },
     ],
+    // SPEC-6 §2.3: an update (or reply) in the task view.
+    [
+      "#/boards/12/items/40/updates/7",
+      "board",
+      { boardId: "12", view: null, itemId: "40", updateId: "7" },
+    ],
     ["#/docs", "docs", {}],
     ["#/docs/5", "doc-editor", { docId: "5" }],
     ["#/notes", "notes", {}],
@@ -169,6 +176,8 @@ test("every SPEC-2 route resolves to its page and params", () => {
     "#/boards/x",
     "#/boards/1/views/app-",
     "#/boards/1/items/1/x",
+    "#/boards/1/items/1/updates/x",
+    "#/boards/1/items/1/updates",
     "#/boards/1/views/grid",
     "#/nope",
     "#/docs/../admin",
@@ -186,6 +195,7 @@ test("board views and item cards share one mount; other pages do not", () => {
   assert.equal(key("#/boards/12"), key("#/boards/12/views/list"));
   assert.equal(key("#/boards/12"), key("#/boards/12/views/table"));
   assert.equal(key("#/boards/12"), key("#/boards/12/items/40"));
+  assert.equal(key("#/boards/12"), key("#/boards/12/items/40/updates/7"));
   assert.notEqual(key("#/boards/12"), key("#/boards/13"));
   assert.equal(key("#/notes"), key("#/notes/6"));
   assert.equal(key("#/admin"), key("#/admin/content"));
@@ -204,6 +214,7 @@ test("hash builders produce routes that resolve back", () => {
     [viewHash("3", { view: "app" }), "#/boards/3"],
     [viewHash("3", { view: "bogus" }), "#/boards/3"],
     [itemHash("3", "4"), "#/boards/3/items/4"],
+    [updateHash("3", "4", "5"), "#/boards/3/items/4/updates/5"],
     [boardHash("3"), "#/boards/3"],
     [docHash("5"), "#/docs/5"],
     [noteHash("6"), "#/notes/6"],

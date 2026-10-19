@@ -63,7 +63,8 @@ function onTabKeydown(event) {
 
 /**
  * @param {{ label: string, items: { id: string, label: string, icon?: string,
- *   count?: number, href?: string, disabled?: boolean, controls?: string }[],
+ *   count?: number, href?: string, disabled?: boolean, controls?: string,
+ *   focusKey?: string }[],
  *   active: string, onSelect?: (id: string) => void, className?: string }} options
  * @returns {HTMLElement}
  */
@@ -90,7 +91,7 @@ export function tabs(options) {
           "aria-controls": item.controls ?? null,
           tabindex: selected ? "0" : "-1",
           disabled: item.disabled ?? false,
-          dataset: { tab: item.id },
+          dataset: { tab: item.id, focusKey: item.focusKey },
           on: { click: () => !selected && onSelect?.(item.id) },
         },
         tabContent(item),

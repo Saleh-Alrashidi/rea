@@ -1,15 +1,19 @@
 /**
- * Creation flows shared by the sidebar "+ Add" menu, the command palette,
- * the Home quick-create tiles and the workspace page: a short dialog, the
+ * Creation flows shared by the sidebar's "+" menus, the command palette,
+ * the Home quick-create tiles and the Space page: a short dialog, the
  * mutation, a shell refresh and navigation to the new record.
  *
- * Each flow loads the workspaces and boards the user may create in at the
- * moment it opens, so the choices are never stale, and resolves with the
- * new record's ID (or null when cancelled or failed).
+ * Each flow loads the Spaces (workspaces) and boards the user may create
+ * in at the moment it opens, so the choices are never stale, and
+ * resolves with the new record's ID (or null when cancelled or failed).
+ * A board or doc created from a folder's "+" (`folderId`) goes into its
+ * Space and then into the folder (`move_board` / `move_doc`, SPEC-6
+ * §3.3); the dialog then asks for no Space.
  *
  * ```js
  * const flows = createFlows(ctx);
  * await flows.board({ workspaceId });
+ * await flows.board({ workspaceId, folderId, noun: "list" });
  * await flows.note();
  * ```
  */
@@ -30,6 +34,7 @@ import {
 } from "../components/labels.js";
 import { canCreateIn, hasRole } from "../components/permissions.js";
 import { BUS_EVENTS } from "./bus.js";
+import { moveIntoFolder } from "./sidebar-data.js";
 
 export const CREATE_TARGETS_QUERY = `query CreateTargets {
   workspaces { id name my_access boards { id name my_access } }
@@ -73,7 +78,7 @@ function workspaceField(workspaces, workspaceId) {
   );
   return {
     name: "workspaceId",
-    label: "Workspace",
+    label: "Space",
     type: "select",
     value: preferred ? String(workspaceId) : workspaces[0].id,
     options: workspaces.map((entry) => ({
@@ -95,19 +100,41 @@ async function attempt(ctx, work, failure) {
 }
 
 function noTarget(ctx, what) {
-  ctx.toast.info(`There’s no workspace where you can create a ${what}.`);
+  ctx.toast.info(`There’s no Space where you can create a ${what}.`);
   return null;
 }
 
-async function createBoard(ctx, { workspaceId } = {}) {
+/** The Space field, unless a folder (of Space `workspaceId`) fixes it. */
+const placeFields = (workspaces, { workspaceId, folderId }) =>
+  folderId ? [] : [workspaceField(workspaces, workspaceId)];
+
+/** Puts the new board or doc `id` into `folderId`; a refusal only warns. */
+async function intoFolder(ctx, { kind, id, folderId }) {
+  if (!id || !folderId) return;
+  try {
+    await moveIntoFolder(kind, id, folderId);
+  } catch (error) {
+    ctx.toast.error(error, "Couldn’t put it in the folder");
+  }
+}
+
+const capital = (word) => `${word[0].toUpperCase()}${word.slice(1)}`;
+
+async function createBoard(ctx, options = {}) {
+  const { workspaceId, folderId = null, noun = "board" } = options;
   const workspaces = await editableWorkspaces(ctx);
-  if (workspaces.length === 0) return noTarget(ctx, "board");
+  if (workspaces.length === 0) return noTarget(ctx, noun);
   const values = await ctx.dialog.form({
-    title: "New board",
-    submitLabel: "Create board",
+    title: `New ${noun}`,
+    submitLabel: `Create ${noun}`,
     fields: [
-      { name: "name", label: "Board name", required: true, autofocus: true },
-      workspaceField(workspaces, workspaceId),
+      {
+        name: "name",
+        label: `${capital(noun)} name`,
+        required: true,
+        autofocus: true,
+      },
+      ...placeFields(workspaces, { workspaceId, folderId }),
       {
         name: "kind",
         label: "Who can see it",
@@ -118,24 +145,22 @@ async function createBoard(ctx, { workspaceId } = {}) {
     ],
   });
   if (!values?.name) return null;
+  const space = values.workspaceId ?? String(workspaceId);
   const id = await attempt(
     ctx,
     () =>
       mutate("createBoard", {
         name: values.name,
-        workspaceId: values.workspaceId,
+        workspaceId: space,
         kind: values.kind,
       }),
-    "Couldn’t create the board",
+    `Couldn’t create the ${noun}`,
   );
-  return finish(ctx, {
-    id,
-    hash: id && boardHash(id),
-    workspaceId: values.workspaceId,
-  });
+  await intoFolder(ctx, { kind: "board", id, folderId });
+  return finish(ctx, { id, hash: id && boardHash(id), workspaceId: space });
 }
 
-async function createDoc(ctx, { workspaceId } = {}) {
+async function createDoc(ctx, { workspaceId, folderId = null } = {}) {
   const workspaces = await editableWorkspaces(ctx);
   if (workspaces.length === 0) return noTarget(ctx, "doc");
   const values = await ctx.dialog.form({
@@ -143,7 +168,7 @@ async function createDoc(ctx, { workspaceId } = {}) {
     submitLabel: "Create doc",
     fields: [
       { name: "title", label: "Title", required: true, autofocus: true },
-      workspaceField(workspaces, workspaceId),
+      ...placeFields(workspaces, { workspaceId, folderId }),
       {
         name: "visibility",
         label: "Who can read it",
@@ -154,16 +179,15 @@ async function createDoc(ctx, { workspaceId } = {}) {
     ],
   });
   if (!values?.title) return null;
+  const space = values.workspaceId ?? String(workspaceId);
+  const variables = { ...values, workspaceId: space };
   const id = await attempt(
     ctx,
-    async () => (await request(CREATE_MUTATIONS.doc, values)).create_doc,
+    async () => (await request(CREATE_MUTATIONS.doc, variables)).create_doc,
     "Couldn’t create the doc",
   );
-  return finish(ctx, {
-    id,
-    hash: id && docHash(id),
-    workspaceId: values.workspaceId,
-  });
+  await intoFolder(ctx, { kind: "doc", id, folderId });
+  return finish(ctx, { id, hash: id && docHash(id), workspaceId: space });
 }
 
 async function createNote(ctx) {
@@ -218,12 +242,12 @@ async function createForm(ctx, { boardId } = {}) {
 
 async function createWorkspace(ctx) {
   const values = await ctx.dialog.form({
-    title: "New workspace",
-    submitLabel: "Create workspace",
+    title: "New Space",
+    submitLabel: "Create Space",
     fields: [
       {
         name: "name",
-        label: "Workspace name",
+        label: "Space name",
         required: true,
         autofocus: true,
       },
@@ -248,7 +272,7 @@ async function createWorkspace(ctx) {
     ctx,
     async () =>
       (await request(CREATE_MUTATIONS.workspace, variables)).create_workspace,
-    "Couldn’t create the workspace",
+    "Couldn’t create the Space",
   );
   return finish(ctx, { id, hash: id && workspaceHash(id), workspaceId: id });
 }

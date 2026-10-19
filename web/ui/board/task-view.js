@@ -5,14 +5,15 @@
  * click and the close button close it; focus returns to the opener)
  * holding a top bar (breadcrumb, "Subtask of …", the task ID, close), a
  * left pane that scrolls (title, fields grid, description, custom fields,
- * subtasks: `task-fields.js`, `task-subtasks.js`) and the Activity pane
- * (`task-activity.js`).
+ * subtasks: `task-fields.js`, `task-subtasks.js`) and the monday-style
+ * Updates pane (`updates-pane.js`, SPEC-6 §2.3).
  *
  * Every editor reuses the board's actions and carries a focus key, so a
  * live refresh keeps focus and unsaved text. The view keeps its own UI
  * state across renders (the text field being edited, whether empty
- * fields show) and the panes' scroll positions across refreshes; a newly
- * opened task starts at its top with its activity scrolled to the end.
+ * fields show, the Updates pane's drafts and open boxes) and the panes'
+ * scroll positions across refreshes; a newly opened task starts at the
+ * top of both panes, or at the update its route names.
  */
 
 import { h } from "../../dom.js";
@@ -25,7 +26,6 @@ import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { createModalPanel } from "../components/modal-panel.js";
 import { skeletonList } from "../components/skeleton.js";
-import { activityPane } from "./task-activity.js";
 import {
   customSection,
   descriptionSection,
@@ -33,6 +33,7 @@ import {
 } from "./task-fields.js";
 import { taskLayout, taskParent } from "./task-model.js";
 import { subtasksSection } from "./task-subtasks.js";
+import { createUpdatesUi, revealTarget, updatesPane } from "./updates-pane.js";
 import { isDoneStatus } from "./values.js";
 
 /** A missing task and one on another board read the same (no leaks). */
@@ -47,10 +48,8 @@ const TASK_MESSAGES = Object.freeze({
     text: "Check your connection and try again.",
   },
 });
-/** Scrolled within this many pixels of the end counts as at the end. */
-const END_SLACK = 24;
 /** The panes whose scroll position survives a refresh. */
-const SCROLLERS = Object.freeze(["task-body", "task-main"]);
+const SCROLLERS = Object.freeze(["task-body", "task-main", "task-stream"]);
 
 function closeButton(onClose) {
   return iconButton({
@@ -170,7 +169,7 @@ function taskContent(props) {
         customSection(view, layout),
         subtasksSection(view, layout),
       ),
-      activityPane(view),
+      updatesPane(view),
     ),
   );
 }
@@ -200,35 +199,25 @@ function statusContent(props, { title, text, busy = false }) {
 
 const byId = (id) => globalThis.document.getElementById?.(id) ?? null;
 
-/**
- * The scroll positions to keep: each pane's offset, and the stream's
- * unless it sits at its end (then it stays at the end as comments come).
- */
-function readScroll() {
-  const panes = SCROLLERS.map((id) => byId(id)?.scrollTop ?? 0);
-  const stream = byId("task-stream");
-  const atEnd =
-    !stream ||
-    stream.scrollHeight - stream.scrollTop - stream.clientHeight < END_SLACK;
-  return { panes, stream: atEnd ? null : stream.scrollTop };
-}
+/** The scroll positions to keep: each pane's offset. */
+const readScroll = () => SCROLLERS.map((id) => byId(id)?.scrollTop ?? 0);
 
 function applyScroll(scroll) {
   SCROLLERS.forEach((id, index) => {
     const pane = byId(id);
-    if (pane) pane.scrollTop = scroll?.panes[index] ?? 0;
+    if (pane) pane.scrollTop = scroll?.[index] ?? 0;
   });
-  const stream = byId("task-stream");
-  if (stream) stream.scrollTop = scroll?.stream ?? stream.scrollHeight;
 }
 
 // -------------------------------------------------------------- view
 
 /**
- * Creates the task view. `render(props)` fills it: `props.status` is "loading", "missing", "error" or "ready" (with
- * `item`, `detail`, `board`, `users`, `actions`, `caps`, `draft`,
- * `onDraft`), plus `itemId` (the route's) and `repaint()`, which redraws
- * the view through the page's regions. `show()` follows each render.
+ * Creates the task view. `render(props)` fills it: `props.status` is
+ * "loading", "missing", "error" or "ready" (with `item`, `detail`,
+ * `board`, `users`, `people`, `me`, `actions`, `caps`, `updates` and
+ * `target`, see `updates-pane.js`), plus `itemId` (the route's) and
+ * `repaint()`, which redraws the view through the page's regions.
+ * `show()` follows each render.
  *
  * @param {{ onClose(): void }} options
  */
@@ -240,7 +229,12 @@ export function createTaskView({ onClose }) {
   });
   const dialog = panel.element;
   /** What the view shows of the task in `itemId` beyond the data. */
-  const ui = { itemId: null, editing: null, showEmpty: false };
+  const ui = {
+    itemId: null,
+    editing: null,
+    showEmpty: false,
+    updates: createUpdatesUi(),
+  };
   let props = null;
   let scroll = null;
 
@@ -281,16 +275,21 @@ export function createTaskView({ onClose }) {
 
   return {
     element: dialog,
-    /** Opens the view (idempotent) and restores its panes' scroll. */
+    /**
+     * Opens the view (idempotent), restores its panes' scroll and shows
+     * the update a route points at.
+     */
     show() {
       panel.show();
       applyScroll(scroll);
+      revealTarget(ui.updates);
     },
     /** Closes the view; focus returns to its opener. */
     hide() {
       panel.hide();
       ui.itemId = null;
       ui.editing = null;
+      ui.updates = createUpdatesUi();
     },
     render(next) {
       const same = next.itemId === ui.itemId;
@@ -298,6 +297,7 @@ export function createTaskView({ onClose }) {
       if (!same) {
         ui.itemId = next.itemId;
         ui.editing = null;
+        ui.updates = createUpdatesUi();
       }
       props = { ...next, ...controls, onClose };
       const ready = next.status === "ready" && next.item;

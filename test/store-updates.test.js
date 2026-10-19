@@ -274,9 +274,12 @@ test("mentions the author cannot see become text; at most 50 per body", async ()
   const many = Array.from({ length: 51 }, () => "@[S](user:999)").join(" ");
   const refused = post({ itemId: launch.id, body: many, creatorId: users.sam });
   assert.equal(refused.reason, "too_many_mentions");
-  // The 10,000-character limit counts the tokens as written.
+  // The 10,000-character limit counts the body as it reads: a mention as
+  // "@<display>", escapes not at all.
   const token = `@[Sam](user:${users.sam})`;
-  const fits = token + "x".repeat(10_000 - token.length);
+  const literal = "\\@[x](user:1)";
+  const fits = `${token}${literal}${"x".repeat(10_000 - 4 - 12)}`;
+  assert.ok(fits.length > 10_000);
   assert.equal(post({ itemId: launch.id, body: fits }).body, fits);
   const over = post({ itemId: launch.id, body: `${fits}x` });
   assert.equal(over.reason, "invalid");

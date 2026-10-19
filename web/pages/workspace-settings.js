@@ -1,8 +1,9 @@
 /**
- * Workspace settings (`#/workspaces/<id>/settings`): rename, description,
- * color and kind (Open / Closed) saved together with "Save changes";
- * members through the shared share dialog; and deleting the workspace once
- * it holds no boards or docs. Owners only (`can_manage`); other members
+ * Space settings (`#/workspaces/<id>/settings`; Spaces are the API's
+ * workspaces, SPEC-6 §3.1): rename, description, color and kind (Open /
+ * Closed) saved together with "Save changes"; members through the shared
+ * share dialog; and deleting the Space once it holds no boards or docs
+ * (the shared confirmation, `delete-confirms.js`). Owners only (`can_manage`); other members
  * see the settings read-only. An inaccessible workspace reads like a
  * missing one. Unsaved changes are confirmed before leaving the page,
  * reloading or closing the tab.
@@ -13,6 +14,7 @@ import { homeHash, workspaceHash } from "../router.js";
 import { subjectAvatar } from "../ui/components/avatar.js";
 import { button } from "../ui/components/button.js";
 import { choiceCards } from "../ui/components/choice.js";
+import { spaceDeletion } from "../ui/components/delete-confirms.js";
 import { emptyState } from "../ui/components/empty-state.js";
 import { icon } from "../ui/components/icon.js";
 import { guardUnsaved } from "../ui/components/leave-guard.js";
@@ -72,7 +74,7 @@ function updateSaveBar(s) {
   s.save.disabled = !dirty || invalid || s.busy;
   s.reset.disabled = !dirty || s.busy;
   s.status.textContent = invalid
-    ? "A workspace needs a name"
+    ? "A Space needs a name"
     : dirty
       ? "Unsaved changes"
       : "";
@@ -163,7 +165,7 @@ async function save(s, event) {
       id: s.workspace.id,
       ...changes,
     });
-    s.ctx.toast.success("Workspace settings saved");
+    s.ctx.toast.success("Space settings saved");
     await s.ctx.refreshShell();
     await load(s);
   } catch (error) {
@@ -183,8 +185,8 @@ function membersPanel(s) {
       "p",
       { class: "field-hint" },
       workspace.kind === "open"
-        ? "Everyone in the account except guests can join an open workspace; these people and teams have explicit roles."
-        : "Only these people and teams can see this closed workspace.",
+        ? "Everyone in the account except guests can join an open Space; these people and teams have explicit roles."
+        : "Only these people and teams can see this closed Space.",
     ),
     h(
       "ul",
@@ -214,7 +216,7 @@ function membersPanel(s) {
       icon: "userPlus",
       disabledReason: workspace.canManage
         ? null
-        : "Only workspace owners can do this",
+        : "Only Space owners can do this",
       onClick: async () => {
         const result = await s.ctx.openShare({
           resourceKind: "workspace",
@@ -228,18 +230,12 @@ function membersPanel(s) {
 
 async function remove(s) {
   const { ctx, workspace } = s;
-  const confirmed = await ctx.dialog.confirm({
-    title: `Delete ${workspace.name}?`,
-    message:
-      "The empty workspace and its member list are removed. This can’t be undone.",
-    confirmButton: "Delete workspace",
-    danger: true,
-  });
+  const confirmed = await ctx.dialog.confirm(spaceDeletion(workspace));
   if (!confirmed) return;
   try {
     await ctx.api.request(WORKSPACE_MUTATIONS.remove, { id: workspace.id });
   } catch (error) {
-    ctx.toast.error(error, "Couldn’t delete the workspace");
+    ctx.toast.error(error, "Couldn’t delete the Space");
     return;
   }
   ctx.toast.success(`${workspace.name} was deleted`);
@@ -256,7 +252,7 @@ function dangerPanel(s) {
     h(
       "div",
       { class: "panel-header" },
-      h("h2", { class: "panel-title" }, icon("alert"), "Delete workspace"),
+      h("h2", { class: "panel-title" }, icon("alert"), "Delete Space"),
     ),
     h(
       "div",
@@ -265,11 +261,11 @@ function dangerPanel(s) {
         "p",
         null,
         reason && s.workspace.canManage
-          ? `${reason}. A workspace can be deleted only when it is empty.`
-          : "Deleting removes the workspace for everyone. It must be empty.",
+          ? `${reason}. A Space can be deleted only when it is empty.`
+          : "Deleting removes the Space for everyone. It must be empty.",
       ),
       button({
-        label: "Delete workspace",
+        label: "Delete Space",
         icon: "trash",
         variant: "danger",
         disabledReason: reason,
@@ -299,7 +295,7 @@ function render(s) {
           icon("chevronLeft", { size: 14 }),
           workspace.name,
         ),
-        title: "Workspace settings",
+        title: "Space settings",
         icon: "settings",
         iconColor: workspace.color,
       }),
@@ -309,7 +305,7 @@ function render(s) {
             "p",
             { class: "banner banner-info" },
             icon("lock"),
-            h("span", null, "Only workspace owners can change these settings."),
+            h("span", null, "Only Space owners can change these settings."),
           ),
       generalPanel(s),
       membersPanel(s),
@@ -325,7 +321,7 @@ async function load(s) {
     if (!s.active) return;
     if (!workspace) {
       setDocumentTitle("Not found");
-      s.container.replaceChildren(notFoundView({ what: "workspace" }));
+      s.container.replaceChildren(notFoundView({ what: "Space" }));
       return;
     }
     s.workspace = workspace;
@@ -353,7 +349,7 @@ async function load(s) {
 
 /** Page contract. */
 export async function mount(container, ctx, params) {
-  setDocumentTitle("Workspace settings");
+  setDocumentTitle("Space settings");
   const s = {
     ctx,
     container,
@@ -371,7 +367,7 @@ export async function mount(container, ctx, params) {
   ctx.bus.emit(BUS_EVENTS.workspace, params.workspaceId);
   const offs = [
     ctx.router.guard(() =>
-      isDirty(s) ? "Discard your unsaved workspace settings?" : null,
+      isDirty(s) ? "Discard your unsaved Space settings?" : null,
     ),
     guardUnsaved({ unsaved: () => isDirty(s) }),
   ];

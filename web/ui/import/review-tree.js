@@ -1,8 +1,8 @@
 /**
  * The review step's tree (SPEC-4 §6.3): source workspaces → boards/lists
  * → docs, each with an include checkbox and its counts, and per
- * workspace the target ("New workspace" or an existing workspace the
- * admin may import into, from the preview's `targets`). A workspace's
+ * workspace the target ("New Space" or an existing Space the admin may
+ * import into, from the preview's `targets`). A workspace's
  * checkbox includes or leaves out everything in it and shows a mixed
  * state when only some is included.
  *
@@ -173,11 +173,11 @@ function targetSelect(t, workspace) {
         },
       },
     },
-    h("option", { value: "new" }, `New workspace “${workspace.name}”`),
+    h("option", { value: "new" }, `New Space “${workspace.name}”`),
     t.preview.targets.length > 0
       ? h(
           "optgroup",
-          { label: "Existing workspaces" },
+          { label: "Existing Spaces" },
           t.preview.targets.map((target) =>
             h("option", { value: String(target.id) }, target.name),
           ),
@@ -304,7 +304,7 @@ export function reviewTree({ preview, selection, onChange }) {
   };
   const list = h(
     "ul",
-    { class: "import-tree", "aria-label": "Source workspaces" },
+    { class: "import-tree", "aria-label": "Spaces to import" },
     preview.workspaces.map((workspace) => workspaceBlock(t, workspace)),
   );
   t.element = h(

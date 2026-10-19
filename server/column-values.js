@@ -406,3 +406,28 @@ export function formatColumnValue(column, stored, options = {}) {
   }
   return FORMATTERS[type](stored, column, options);
 }
+
+/**
+ * `stored`, a value of column `from`, as a value of `to`: a column of the
+ * same type on another board (SPEC-6 §3.2 `move_item_to_board`). A
+ * status keeps its label when `to` has one of that name (exact, else
+ * case-insensitive); people keep the users `keepUser(id)` accepts; text,
+ * numbers and dates carry over as they are. Null when nothing carries
+ * over.
+ */
+export function convertStoredValue({ from, to, stored, keepUser }) {
+  if (stored === null || stored === undefined || from?.type !== to?.type) {
+    return null;
+  }
+  if (to.type === "status") {
+    const label = statusLabels(from)[String(stored.index)];
+    if (typeof label !== "string") return null;
+    const match = statusFromLabel(to, label);
+    return match.ok ? match.value : null;
+  }
+  if (to.type === "people") {
+    const kept = peopleIds(from, stored).filter((id) => keepUser(id));
+    return kept.length > 0 ? kept : null;
+  }
+  return isValidStoredValue(to, stored) ? structuredClone(stored) : null;
+}

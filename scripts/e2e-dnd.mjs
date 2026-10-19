@@ -13,7 +13,7 @@
  *   cursor and changes nothing; pressing on a name does not drag;
  * - Alt+arrows and the row's "…" menu move the focused row;
  * - a Shift / Ctrl selection drags together, with a count badge and the
- *   bulk bar (Move to… disabled until Phase 3);
+ *   bulk bar (Move to… another board is enabled; e2e-sidebar.mjs uses it);
  * - a viewer gets no handles and cannot drag;
  * - Kanban: a card reorders within its lane and moves to another lane;
  * - ClickUp: a drop on a group header, holding over a collapsed parent
@@ -288,9 +288,9 @@ async function rowMenu(run) {
   );
   const want = "Move up|Move down|Make subtask of…|Move out of parent|Move to…";
   check(labels === want, `the row menu: ${labels}`);
-  const later = menu.locator(".menu-item", { hasText: "Move to…" });
-  check((await later.getAttribute("aria-disabled")) === "true", "Move to…");
-  check((await later.getAttribute("title")).startsWith("Coming soon"), "soon");
+  // Move to… another board (SPEC-6 §3.2; e2e-sidebar.mjs moves one).
+  const other = menu.locator(".menu-item", { hasText: "Move to…" });
+  check((await other.getAttribute("aria-disabled")) === null, "Move to…");
   const out = menu.locator(".menu-item", { hasText: "Move out of parent" });
   check((await out.getAttribute("aria-disabled")) === "true", "top level");
   await menu.locator(".menu-item", { hasText: "Move down" }).click();
@@ -364,9 +364,8 @@ async function selectionDrag(run) {
     async () => (await count.textContent()) === "3 selected",
     "three",
   );
-  const later = page.locator(".list-bulk-move");
-  check((await later.getAttribute("aria-disabled")) === "true", "Move to…");
-  check((await later.getAttribute("title")).startsWith("Coming soon"), "soon");
+  const other = page.locator(".list-bulk-move");
+  check((await other.getAttribute("aria-disabled")) === null, "Move to…");
   await screenshot(run, page, "dnd-selection.png");
   const during = async () => {
     const paint = await dropPaint(page);

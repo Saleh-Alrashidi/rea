@@ -1,11 +1,13 @@
 /**
  * Board activity logs and per-user notifications (SPEC-2 §2).
  *
- * Texts that name users (notification texts, activity `from_text` and
- * `to_text`) are stored as "rich text": a plain string, or an array of
- * parts `{ text }` and `{ user_id }` that `renderText` turns into a string
- * for one viewer at read time, so a guest sees "Someone" for people
- * outside their directory (SPEC-2 §6). Activity actors are their
+ * Texts that name users or other boards (notification texts, activity
+ * `from_text` and `to_text`) are stored as "rich text": a plain string,
+ * or an array of parts `{ text }`, `{ user_id }` and `{ board_id }` that
+ * `renderText` turns into a string for one viewer at read time, so a
+ * guest sees "Someone" for people outside their directory (SPEC-2 §6)
+ * and a board reads as OTHER_BOARD to anyone who cannot open it (SPEC-6
+ * §3.2 `move_item_to_board`). Activity actors are their
  * `actor_id`; `actor_label` is stored for non-user actors (forms) and for
  * changes a user made through a tool that names itself (imports: actor
  * the importing admin, label "Import from monday.com", SPEC-4 §1).
@@ -19,7 +21,10 @@
  * notification points at (checked through `server/access.js`).
  *
  * Retention is bounded: each board keeps its newest MAX_ACTIVITY entries
- * and each user their newest MAX_NOTIFICATIONS notifications.
+ * and each user their newest MAX_NOTIFICATIONS notifications. `notify`
+ * trims once per batch (`trimNotifications`: one pass counting the
+ * recipients' notifications, one dropping their oldest beyond the cap),
+ * so a team mention costs about the same as notifying one person.
  */
 import { HIDDEN_USER_NAME, isActive, resourceAccess } from "../access.js";
 import {
@@ -54,6 +59,12 @@ export function resourceUrl(kind, id, itemId = null) {
 /** A rich-text part naming user `userId`. */
 export const mention = (userId) => ({ user_id: userId });
 
+/** A rich-text part naming board `boardId`. */
+export const boardRef = (boardId) => ({ board_id: boardId });
+
+/** How a board reads to a viewer who cannot open it. */
+export const OTHER_BOARD = "another board";
+
 /**
  * "<actor><rest>": the actor as a mention, or `fallback` when the change
  * has no acting user.
@@ -72,16 +83,19 @@ export function peopleText(userIds) {
 }
 
 /**
- * Renders rich text for one viewer: `nameOf(userId)` is the name that
- * viewer sees. Plain strings and null are returned as they are.
+ * Renders rich text for one viewer: `nameOf(userId)` is the name of a
+ * user and `boardNameOf(boardId)` the name of a board that viewer sees
+ * (without one, every board reads as OTHER_BOARD). Plain strings and
+ * null are returned as they are.
  */
-export function renderText(text, nameOf) {
+export function renderText(text, nameOf, boardNameOf = () => OTHER_BOARD) {
   if (!Array.isArray(text)) return text ?? null;
-  return text
-    .map((part) =>
-      part.user_id === undefined ? part.text : nameOf(part.user_id),
-    )
-    .join("");
+  const shown = (part) => {
+    if (part.user_id !== undefined) return nameOf(part.user_id);
+    if (part.board_id !== undefined) return boardNameOf(part.board_id);
+    return part.text;
+  };
+  return text.map(shown).join("");
 }
 
 /**
@@ -129,11 +143,10 @@ export function recordActivity(ctx, entry) {
   return record;
 }
 
-/** Inserts one notification record (seed and `notify`); `text` is rich text. */
-export function insertNotification(ctx, fields) {
-  const { state } = ctx;
-  const record = push(state.notifications, {
-    id: nextId(state),
+/** Appends one notification record; `text` is rich text. */
+function appendNotification(ctx, fields) {
+  return push(ctx.state.notifications, {
+    id: nextId(ctx.state),
     user_id: fields.userId,
     kind: fields.kind,
     text: fields.text,
@@ -144,8 +157,34 @@ export function insertNotification(ctx, fields) {
     resource_id: fields.resource?.id ?? null,
     created_at: ctx.now(),
   });
-  const mine = (r) => r.user_id === fields.userId;
-  trim(state.notifications, mine, MAX_NOTIFICATIONS);
+}
+
+/**
+ * Keeps the newest MAX_NOTIFICATIONS notifications of each of `userIds`
+ * (a Set): one pass counts theirs, one more drops each one's oldest
+ * beyond the cap (notifications are kept oldest first).
+ */
+function trimNotifications(state, userIds) {
+  const counts = new Map();
+  for (const { user_id: id } of state.notifications) {
+    if (userIds.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  const excess = new Map();
+  for (const [id, count] of counts) {
+    if (count > MAX_NOTIFICATIONS) excess.set(id, count - MAX_NOTIFICATIONS);
+  }
+  if (excess.size === 0) return;
+  removeWhere(state.notifications, (record) => {
+    const left = excess.get(record.user_id) ?? 0;
+    if (left > 0) excess.set(record.user_id, left - 1);
+    return left > 0;
+  });
+}
+
+/** Inserts one notification record (seed and imports); `text` is rich text. */
+export function insertNotification(ctx, fields) {
+  const record = appendNotification(ctx, fields);
+  trimNotifications(ctx.state, new Set([fields.userId]));
   return record;
 }
 
@@ -159,24 +198,28 @@ export function notify(
   ctx,
   { userIds, actorId = null, kind, text, url, resource = null },
 ) {
+  const users = new Map(ctx.state.users.map((user) => [user.id, user]));
+  const target = resource && { kind: resource.kind, id: resource.id };
   const created = [];
   for (const userId of new Set(userIds)) {
-    const user = byId(ctx.state.users, userId);
+    const user = users.get(userId);
     if (!isActive(user) || userId === actorId) continue;
     const reachable =
       resource === null ||
       resourceAccess(ctx.reader, user, resource.kind, resource.record) !== null;
     if (!reachable) continue;
-    const target = resource && { kind: resource.kind, id: resource.id };
     const fields = { userId, kind, text, url, actorId, resource: target };
-    const record = insertNotification(ctx, fields);
+    created.push(appendNotification(ctx, fields));
+  }
+  if (created.length === 0) return created;
+  trimNotifications(ctx.state, new Set(created.map((r) => r.user_id)));
+  for (const record of created) {
     ctx.pending.push({
       type: "notification_created",
-      user_ids: [userId],
+      user_ids: [record.user_id],
       resource_kind: "notification",
       resource_id: record.id,
     });
-    created.push(record);
   }
   return created;
 }

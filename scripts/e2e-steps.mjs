@@ -333,20 +333,21 @@ async function taskViewUpdate(run) {
     (await page.inputValue(`${TASK} .task-title`)) === name,
     "task view title",
   );
-  await page.fill(`${TASK} .task-composer textarea`, UPDATE_BODY);
-  await page.click(`${TASK} .task-composer button[type=submit]`);
+  const composer = `${TASK} .update-main-composer`;
+  await page.fill(`${composer} textarea`, UPDATE_BODY);
+  await page.click(`${composer} .update-composer-submit`);
   await waitUntil(
     async () => (await itemFromApi(run, id)).updates[0]?.body === UPDATE_BODY,
     "API update",
   );
-  // The activity runs oldest first: the newest comment is the last one.
-  const newest = page.locator(`${TASK} .task-comment-body`).last();
+  // The Updates pane runs newest first: the new update leads the feed.
+  const newest = page.locator(`${TASK} .update-card .update-body`).first();
   await waitUntil(
     async () => (await newest.textContent()) === UPDATE_BODY,
     "update shown as text",
   );
   check(
-    (await page.locator(`${TASK} .task-stream img`).count()) === 0,
+    (await page.locator(`${TASK} .task-updates img`).count()) === 0,
     "no markup",
   );
   await screenshot(run, "task-view.png");

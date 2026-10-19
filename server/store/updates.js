@@ -8,13 +8,19 @@
  * A reply keeps its item's `item_id`, so an item's updates and replies
  * are found and counted (`countUpdatesByItem`) the same way. Top-level
  * updates are listed pinned first, then newest first (by ID); replies
- * oldest first. `removeUpdates` is the one way updates leave the store:
- * it takes their replies and the likes of all of them along, and item,
- * group and board deletions reach it through `boards.removeItems`.
+ * oldest first. Pages start after a position (`updatePosition`,
+ * `updatesAfter`) or before a reply (`newestReplies`), so a page stays
+ * where it was while updates come and go. `removeUpdates` is the one
+ * way updates leave the store: it takes their replies and the likes of
+ * all of them along, and item, group and board deletions reach it
+ * through `boards.removeItems`.
  *
- * Bodies are trimmed and 1-10,000 characters as submitted (tokens
- * included), with at most MAX_MENTIONS tokens. A mention of something its
- * author cannot see becomes plain text "@<display>": an unknown user,
+ * Bodies are trimmed and read as 1-10,000 characters
+ * (`mentions.readLength`: escapes do not count and a mention counts as
+ * "@<display>", as a composer shows it, so an upgraded `/5` body that
+ * reads as written saves again), with at most MAX_MENTIONS tokens. A
+ * mention of something its author cannot see becomes plain text
+ * "@<display>": an unknown user,
  * team or item, a user outside a guest author's directory, a team a guest
  * is not in, an item on a board the author cannot open (`access.js`). The
  * body is stored canonically (`mentions.serializeBody`).
@@ -48,6 +54,7 @@ import {
   checkMentions,
   escapeText,
   mentionsOf,
+  readLength,
 } from "../mentions.js";
 import {
   byId,
@@ -72,6 +79,42 @@ const oldestFirst = (a, b) => Number(a.id) - Number(b.id);
 const updateOrder = (a, b) =>
   Number(isPinned(b)) - Number(isPinned(a)) || oldestFirst(b, a);
 const knownUser = (state, id) => id === null || byId(state.users, id) !== null;
+
+/**
+ * Where `update` stands in its item's order, for `updatesAfter`: pinned
+ * or not, and its ID.
+ */
+export const updatePosition = (update) => ({
+  pinned: isPinned(update),
+  id: update.id,
+});
+
+/**
+ * What follows `position` (an `updatePosition`, whose update may have
+ * changed or gone since) in `list`, an item's top-level updates in item
+ * order.
+ */
+export function updatesAfter(list, { pinned, id }) {
+  const index = list.findIndex((update) =>
+    isPinned(update) === pinned ? Number(update.id) < Number(id) : pinned,
+  );
+  return index === -1 ? [] : list.slice(index);
+}
+
+/**
+ * The newest `limit` (null: all) of `replies` (a thread, oldest first)
+ * older than reply `beforeId` (null: any), oldest first.
+ */
+export function newestReplies(replies, { limit = null, beforeId = null }) {
+  const end =
+    beforeId === null
+      ? -1
+      : replies.findIndex((reply) => Number(reply.id) >= Number(beforeId));
+  const older = end === -1 ? replies : replies.slice(0, end);
+  return limit === null
+    ? older
+    : older.slice(Math.max(0, older.length - limit));
+}
 
 /** The hash URL of `update` on board `boardId` (its task view, at it). */
 export const updateUrl = (boardId, update) =>
@@ -174,7 +217,7 @@ function mentionable(ctx, authorId) {
 function readBody(ctx, value, authorId) {
   if (typeof value !== "string") throw new TypeError("body must be a string");
   const body = value.trim();
-  if (body === "" || body.length > LIMITS.updateBody) invalid(BODY_RULE);
+  if (body === "" || readLength(body) > LIMITS.updateBody) invalid(BODY_RULE);
   const checked = checkMentions(body, mentionable(ctx, authorId));
   if (checked === null) {
     const message = `An update can mention at most ${MAX_MENTIONS} people, teams or tasks`;

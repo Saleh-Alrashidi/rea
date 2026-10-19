@@ -184,7 +184,8 @@ async function ownerAndGroupHints(run) {
 async function demotionReachesShell(run) {
   const { sam, alex } = run.users;
   const { context, page } = await signedIn(run, sam);
-  const add = page.locator("#sidebar [aria-label='Add to workspace']");
+  // A Space's "+" shows while there is something to add (SPEC-6 §3.3).
+  const add = page.locator("#sidebar .tree-add");
   await add.first().waitFor();
   await dataAs(run, alex, ROLE, { u: sam, r: "viewer" });
   // The notification arrives as a toast, and the shell reloads Sam's role.
@@ -227,7 +228,7 @@ export const UX_STEPS_2 = [
   ["the open navigation drawer keeps Tab inside", drawerKeepsFocus],
   ["popovers, menus and the status picker by keyboard", keyboardPopovers],
   ["skip link and h1 on error pages", skipLinkAndHeadings],
-  ["unsaved workspace settings ask before leaving", unsavedSettingsAsk],
+  ["unsaved Space settings ask before leaving", unsavedSettingsAsk],
   ["opening a notification from Home reads it", homeNotificationRead],
   ["last-owner and last-group hints", ownerAndGroupHints],
   ["a demotion shows a toast and reaches the shell", demotionReachesShell],

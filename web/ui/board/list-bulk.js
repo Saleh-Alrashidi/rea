@@ -2,13 +2,12 @@
  * The List view's bulk bar (SPEC-6 §1.4): while tasks are selected
  * (editors only), a bar at the bottom of the view says how many and
  * offers Set status (the compact status menu, for every selected task),
- * Move to… (another board arrives in Phase 3: disabled, "coming soon"),
- * Delete (one confirmation for all, subtasks counted) and Clear.
+ * Move to… (another board, `board-transfer.js`), Delete (one
+ * confirmation for all, subtasks counted) and Clear.
  */
 
 import { h } from "../../dom.js";
 import { button } from "../components/button.js";
-import { MOVE_TO_BOARD_SOON } from "./list-moves.js";
 import { openStatusMenu } from "./status-menu.js";
 
 /** The status every one of `items` has in `column`, else null. */
@@ -38,6 +37,15 @@ function statusButton(view, items) {
   return trigger;
 }
 
+/** The IDs of `items` in display order (hidden ones last), as drags move them. */
+function displayOrder(view, items) {
+  const index = new Map(
+    view.layout.rows.map((row) => [row.item.id, row.index]),
+  );
+  const at = (item) => index.get(item.id) ?? Infinity;
+  return [...items].sort((a, b) => at(a) - at(b)).map((item) => item.id);
+}
+
 /**
  * The bulk bar for the selected tasks of `view` (the list's context with
  * its `layout`), or null when none is selected.
@@ -63,8 +71,8 @@ export function bulkBar(view) {
       variant: "ghost",
       size: "sm",
       className: "list-bulk-move",
-      disabledReason: MOVE_TO_BOARD_SOON,
       dataset: { focusKey: "list-bulk:move" },
+      onClick: () => view.actions.moveItemsToBoard(displayOrder(view, items)),
     }),
     button({
       label: "Delete",

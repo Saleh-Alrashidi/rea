@@ -17,7 +17,9 @@
  * (`store/moves.js`); `move_item_to_group` is the same store move with
  * only a group, to the end of that group. Refusals map as store results
  * do: `not_found` → NOT_FOUND, `invalid_parent` / `invalid_neighbor` →
- * BAD_USER_INPUT.
+ * BAD_USER_INPUT. `move_item_to_board` (SPEC-6 §3.2) moves an item with
+ * its subitems and updates to another board (editor access on both,
+ * `store/transfers.js`) and reports the columns whose values it dropped.
  */
 import {
   HIDDEN_USER_NAME,
@@ -204,6 +206,21 @@ function moveItem(_p, args, ctx) {
   return storeResult(result, () => notFound("Item", item.id));
 }
 
+/**
+ * Moves an item to another board (editor access on both boards): to
+ * `group_id` or the target's first group.
+ */
+function moveItemToBoard(_p, args, ctx) {
+  const item = requireItem(ctx, args.item_id, "editor");
+  const board = requireBoard(ctx, args.board_id, "editor");
+  const groupId = args.group_id ?? null;
+  if (groupId !== null) groupOf(ctx.store, board.id, groupId);
+  const request = { boardId: board.id, groupId };
+  const result = ctx.store.moveItemToBoard(item.id, request, actor(ctx));
+  const moved = storeResult(result, () => notFound("Item", item.id));
+  return { item: moved.item, dropped_columns: moved.droppedColumns };
+}
+
 /** Sets every value in one store change (all validated first). */
 function changeMultipleValues(_p, args, ctx) {
   const item = boardItem(ctx, args);
@@ -273,6 +290,7 @@ const Mutation = wrapAll(write, {
   change_simple_column_value: changeValue(parseSimpleColumnValue),
   change_multiple_column_values: changeMultipleValues,
   move_item: moveItem,
+  move_item_to_board: moveItemToBoard,
   move_item_to_group(_p, args, ctx) {
     const item = requireItem(ctx, args.item_id, "editor");
     const group = groupOf(ctx.store, item.board_id, args.group_id);
@@ -322,6 +340,7 @@ export const definition = {
       parent_item_id:ID parent_item:Item subitems(limit:Int=100):[Item!]!
       subitems_count:Int! position:Float!`,
     ColumnValue: "id:String! type:ColumnType! text:String value:String",
+    MoveResult: "item:Item! dropped_columns:[String!]!",
     Mutation: `create_item(board_id:ID!,group_id:String,item_name:String!,column_values:String):Item!
       create_subitem(parent_item_id:ID!,item_name:String!,column_values:String):Item!
       change_column_value(board_id:ID!,item_id:ID!,column_id:String!,value:String!):Item!
@@ -329,6 +348,7 @@ export const definition = {
       change_multiple_column_values(board_id:ID!,item_id:ID!,column_values:String!):Item!
       move_item(item_id:ID!,before_item_id:ID,after_item_id:ID,parent_item_id:ID,detach_parent:Boolean=false,group_id:String,column_values:String):Item!
       move_item_to_group(item_id:ID!,group_id:String!):Item!
+      move_item_to_board(item_id:ID!,board_id:ID!,group_id:String):MoveResult!
       delete_item(item_id:ID!):Item!`,
   },
   resolvers: { Query, Mutation, Item },
@@ -346,6 +366,10 @@ export const definition = {
     "Mutation.move_item": {
       description:
         "Moves an item in one change. It lands immediately after after_item_id and/or immediately before before_item_id (items of the same board, not the item or its subitems; with both, after_item_id must come before before_item_id); the server picks the position, and without neighbors the item keeps it. parent_item_id makes it a subitem of that item, detach_parent a top-level item; group_id changes its group; column_values sets values as change_multiple_column_values does.",
+    },
+    "Mutation.move_item_to_board": {
+      description:
+        "Moves an item with its subitems, updates, replies and likes to another board (editor on both), at the end of group_id or of the first group. Values follow columns of the same role, else of the same title and type; status labels match by name; people keep only those who can open the board. dropped_columns names the columns whose values were left behind.",
     },
     "Mutation.move_item_to_group": {
       description:

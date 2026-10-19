@@ -240,8 +240,8 @@ async function teamsCreate(run) {
 
 async function workspaceClosed(run) {
   const { context, page } = await signedIn(run, run.users.alex);
-  await page.locator(".workspace-switcher").click();
-  await page.locator(".menu-item", { hasText: "New workspace" }).click();
+  // "+ New Space" ends the sidebar's Spaces (SPEC-6 §3.3).
+  await page.locator("#sidebar .sidebar-new-space").click();
   const dialog = page.locator("dialog.modal[open]");
   await dialog.locator("input[name=name]").fill("Skunkworks");
   await dialog.locator("label.choice", { hasText: "Closed" }).click();
@@ -272,5 +272,5 @@ export const CONTENT_STEPS = [
   ["form builder edits and a public submission", formBuilderPublic],
   ["admin invites, changes a role, deactivates a user", adminUsers],
   ["teams: create a team and add a member", teamsCreate],
-  ["workspaces: create a closed one and edit its settings", workspaceClosed],
+  ["Spaces: create a closed one and edit its settings", workspaceClosed],
 ];

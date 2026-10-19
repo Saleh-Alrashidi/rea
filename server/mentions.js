@@ -1,9 +1,10 @@
 /**
  * Mentions in update bodies (SPEC-6 §2.2). This is the only module that
  * reads or writes the token syntax: the store validates bodies with
- * `checkMentions`, notifications use `mentionsOf`, and the API renders
- * `bodyParts` (and `redactItems`) for each reader. Clients never parse
- * bodies; they send tokens and render `Update.body_parts`.
+ * `checkMentions` and measures them with `readLength`, notifications use
+ * `mentionsOf`, and the API renders `bodyParts` (and `redactBody`) for
+ * each reader. Clients never parse bodies for display; they send tokens
+ * and render `Update.body_parts`.
  *
  * Grammar. A body is text with mention tokens:
  *
@@ -27,6 +28,14 @@
  * current name of what they may see, and the snapshot otherwise. Parsing
  * is linear: a token attempt starts only at "@[" and stops at the next
  * unescaped bracket, line break or the display limit.
+ *
+ * A body reads as its text (escapes not counted) with each mention as
+ * "@<display>", which is what a composer shows; the length limit counts
+ * that (`readLength`). Links are http(s) URLs in text, at most MAX_LINKS
+ * per body (later URLs stay text, so a body's parts stay bounded); a
+ * link ends at whitespace, `<`, `>`, `"` and at control, format (bidi
+ * controls, zero-width characters, soft hyphens) and filler characters,
+ * so its text never holds anything invisible or reordering.
  */
 import { LIMITS } from "./input.js";
 
@@ -37,13 +46,20 @@ export const MAX_MENTIONS = 50;
 export const PRIVATE_TASK = "Private task";
 /** URLs longer than this stay text (the data file's link limit). */
 const MAX_LINK = 2048;
+/** Links one body shows; later URLs stay text. */
+export const MAX_LINKS = 50;
 
 const ESCAPABLE = new Set(["\\", "[", "]"]);
 const TAIL = /\]\((user|team|item):([1-9]\d{0,15})\)/y;
-const LINK = /\bhttps?:\/\/[^\s<>"]+/giu;
+// Cc: controls; Cf: bidi controls (U+200E, U+200F, U+202A-U+202E,
+// U+2066-U+2069), zero-width characters, soft hyphens and other format
+// characters; then the invisible Hangul fillers.
+const LINK = /\bhttps?:\/\/[^\s<>"\p{Cc}\p{Cf}\u115F\u1160\u3164\uFFA0]+/giu;
 const LINK_TRAILERS = new Set([".", ",", ";", ":", "!", "?", "'", '"']);
 
 const isMention = (segment) => segment.kind !== undefined;
+/** A mention as the plain text it reads as, "@<display>". */
+const asText = (mention) => ({ text: `@${mention.display}` });
 
 /** The well-formed token at `at` (an "@[") of `text`, else null. */
 function readToken(text, at) {
@@ -170,7 +186,7 @@ export function checkMentions(body, known) {
   const checked = segments.map((segment) =>
     !isMention(segment) || known(segment.kind, segment.id)
       ? segment
-      : { text: `@${segment.display}` },
+      : asText(segment),
   );
   const mentions = checked
     .filter(isMention)
@@ -179,16 +195,32 @@ export function checkMentions(body, known) {
 }
 
 /**
- * `body` with the display of each item mention whose ID `canOpen(id)`
- * refuses replaced by PRIVATE_TASK (so a task name never reaches readers
- * who cannot open its board); unchanged otherwise.
+ * How many characters `body` reads as: its text unescaped, each mention
+ * as "@<display>" (so turning a mention into text keeps the length, and
+ * escapes never count).
  */
-export function redactItems(body, canOpen) {
-  if (!body.includes("](item:")) return body;
+export const readLength = (body) =>
+  parseBody(body).reduce(
+    (sum, segment) =>
+      sum +
+      (isMention(segment) ? segment.display.length + 1 : segment.text.length),
+    0,
+  );
+
+/**
+ * `body` for a reader who `sees(kind, id)` some of its mentions: a user
+ * or team mention they cannot see reads as the plain text "@<display>"
+ * (as an unknown one reads once posted), and an item mention on a board
+ * they cannot open shows PRIVATE_TASK, so neither a task name nor the ID
+ * of a hidden user or team reaches them; unchanged when all are visible.
+ */
+export function redactBody(body, sees) {
+  if (!body.includes("@[")) return body;
   let changed = false;
   const segments = parseBody(body).map((segment) => {
-    if (segment.kind !== "item" || canOpen(segment.id)) return segment;
+    if (!isMention(segment) || sees(segment.kind, segment.id)) return segment;
     changed = true;
+    if (segment.kind !== "item") return asText(segment);
     return { ...segment, display: PRIVATE_TASK };
   });
   return changed ? serializeBody(segments) : body;
@@ -215,13 +247,18 @@ function trimLink(url) {
 const isLink = (url) =>
   url.length <= MAX_LINK && URL.canParse(url) && new URL(url).hostname !== "";
 
-/** Text parts of `text`: `{ type: "text", text }` and `{ type: "link", url }`. */
-function textParts(text) {
+/**
+ * Text parts of `text`: `{ type: "text", text }` and `{ type: "link",
+ * url }`, while `links.left` (the body's link allowance) lasts.
+ */
+function textParts(text, links) {
   const parts = [];
   let from = 0;
   for (const match of text.matchAll(LINK)) {
+    if (links.left === 0) break;
     const url = trimLink(match[0]);
     if (!isLink(url)) continue;
+    links.left -= 1;
     if (match.index > from)
       parts.push({ type: "text", text: text.slice(from, match.index) });
     parts.push({ type: "link", url, text: url });
@@ -233,13 +270,15 @@ function textParts(text) {
 
 /**
  * `body` as parts for one reader: text as `{ type: "text", text }` and
- * `{ type: "link", url, text }` (http(s) URLs in text), each mention as
- * `render({ kind, id, display })`.
+ * `{ type: "link", url, text }` (the first MAX_LINKS http(s) URLs in
+ * text), each mention as `render({ kind, id, display })`.
  */
-export const bodyParts = (body, render) =>
-  parseBody(body).flatMap((segment) =>
-    isMention(segment) ? [render(segment)] : textParts(segment.text),
+export function bodyParts(body, render) {
+  const links = { left: MAX_LINKS };
+  return parseBody(body).flatMap((segment) =>
+    isMention(segment) ? [render(segment)] : textParts(segment.text, links),
   );
+}
 
 /**
  * Plain `text` cut so that its body form (`escapeText`) has at most `max`

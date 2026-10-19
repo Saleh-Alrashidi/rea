@@ -18,6 +18,7 @@ import { buildSchema } from "./graphql/schema.js";
 import { definition as boards } from "./schema/boards.js";
 import { definition as common } from "./schema/common.js";
 import { definition as docs } from "./schema/docs.js";
+import { definition as folders } from "./schema/folders.js";
 import { definition as forms } from "./schema/forms.js";
 import { definition as imports } from "./schema/imports.js";
 import { definition as inbox } from "./schema/inbox.js";
@@ -42,6 +43,7 @@ const MODULES = [
   docs,
   notes,
   forms,
+  folders,
   inbox,
   search,
   imports,
@@ -106,7 +108,8 @@ function mergeModules(modules) {
  * Builds the API schema: part-1 boards API (snake_case as in monday.com's
  * API, cursor pagination, the version-gated `Board.items` and `Item.url`)
  * plus the SPEC-2 workspace product (people, workspaces, sharing, docs,
- * notes, forms, inbox, search) and SPEC-4 `Board.import`.
+ * notes, forms, inbox, search), SPEC-4 `Board.import` and the SPEC-6
+ * Spaces, folders and moves.
  */
 export function createSchema() {
   const { enums, types } = mergeModules(MODULES);

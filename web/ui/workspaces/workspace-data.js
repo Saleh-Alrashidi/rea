@@ -88,7 +88,7 @@ export async function loadWorkspace(api, workspaceId) {
  * visible ones only word the reason.
  */
 export function deleteReason(workspace) {
-  if (!workspace.canManage) return "Only workspace owners can delete it";
+  if (!workspace.canManage) return "Only Space owners can delete it";
   if (workspace.canDelete) return null;
   const parts = [];
   if (workspace.boards.length > 0) {

@@ -1,9 +1,12 @@
 /**
  * Notifications: the top-bar bell with the unread count and a dropdown
- * list (newest first). Clicking an entry marks it read and opens its link;
- * "Mark all read" clears the count. New notifications arrive over the
- * user's event stream (`onNotification`), which refreshes the count and an
- * open list.
+ * list (newest first) with two filters, All and Mentions
+ * (`notifications(kinds: [mention])`, SPEC-6 §2.2). Each entry shows the
+ * actor's avatar with its kind's icon (a mention "@", a reply, a like…).
+ * Clicking an entry marks it read and opens its link (an update's link
+ * opens the task view at that update); "Mark all read" clears the count.
+ * New notifications arrive over the user's event stream
+ * (`onNotification`), which refreshes the count and an open list.
  */
 
 import { request } from "../../api.js";
@@ -17,14 +20,20 @@ import { icon } from "../components/icon.js";
 import { notificationKind } from "../components/labels.js";
 import { openPopover } from "../components/popover.js";
 import { skeletonList } from "../components/skeleton.js";
+import { tabs } from "../components/tabs.js";
 
-export const NOTIFICATIONS_QUERY = `query ShellNotifications {
-  notifications(limit: 20) {
+export const NOTIFICATIONS_QUERY = `query ShellNotifications($kinds: [NotificationKind!]) {
+  notifications(limit: 20, kinds: $kinds) {
     id kind text url read created_at
     actor { id name initials color }
   }
   unread_notifications_count
 }`;
+/** The list's filters: which kinds each one asks for (null: all). */
+const FILTERS = Object.freeze({
+  all: { label: "All", kinds: null },
+  mentions: { label: "Mentions", kinds: ["mention"] },
+});
 export const UNREAD_COUNT_QUERY = `query ShellUnreadCount { unread_notifications_count }`;
 export const MARK_READ_MUTATION = `mutation MarkNotificationsRead($ids: [ID!], $all: Boolean) {
   mark_notifications_read(ids: $ids, all: $all)
@@ -33,6 +42,22 @@ export const MARK_READ_MUTATION = `mutation MarkNotificationsRead($ids: [ID!], $
 function unreadLabel(count) {
   if (count === 0) return "Notifications";
   return `Notifications, ${count} unread`;
+}
+
+/** The actor's avatar with the kind's icon on it, or the icon alone. */
+function entryIcon(notification, kind) {
+  const glyph = h(
+    "span",
+    { class: ["notification-icon", `notification-${notification.kind}`] },
+    icon(kind.icon, { size: notification.actor ? 10 : 14 }),
+  );
+  if (!notification.actor) return glyph;
+  return h(
+    "span",
+    { class: "notification-avatar" },
+    avatar(notification.actor, { size: "sm" }),
+    glyph,
+  );
 }
 
 function entry(notification, onOpen) {
@@ -47,13 +72,7 @@ function entry(notification, onOpen) {
         class: ["notification", !notification.read && "unread"],
         on: { click: () => onOpen(notification) },
       },
-      notification.actor
-        ? avatar(notification.actor, { size: "sm" })
-        : h(
-            "span",
-            { class: "notification-icon" },
-            icon(kind.icon, { size: 14 }),
-          ),
+      entryIcon(notification, kind),
       h(
         "span",
         { class: "notification-body" },
@@ -84,15 +103,29 @@ function setCount(n, count) {
 }
 
 async function load(n) {
+  n.seq += 1;
+  const seq = n.seq;
   try {
-    const data = await request(NOTIFICATIONS_QUERY);
+    const { kinds } = FILTERS[n.filter];
+    const data = await request(NOTIFICATIONS_QUERY, { kinds });
+    if (seq !== n.seq) return;
     n.items = data.notifications;
     n.error = false;
     setCount(n, data.unread_notifications_count);
   } catch {
+    if (seq !== n.seq) return;
     n.error = true;
   }
   n.popover?.update();
+}
+
+/** Shows the list of `filter` ("all" or "mentions"). */
+function setFilter(n, filter) {
+  if (!Object.hasOwn(FILTERS, filter) || n.filter === filter) return;
+  n.filter = filter;
+  n.items = null;
+  n.popover?.update();
+  load(n);
 }
 
 async function markRead(n, variables) {
@@ -139,12 +172,19 @@ function listContent(n) {
   if (!n.items)
     return skeletonList({ rows: 3, label: "Loading notifications" });
   if (n.items.length === 0) {
-    return emptyState({
-      icon: "inbox",
-      title: "You’re all caught up",
-      text: "New shares, assignments and updates appear here.",
-      compact: true,
-    });
+    return n.filter === "mentions"
+      ? emptyState({
+          icon: "at",
+          title: "No mentions yet",
+          text: "When someone @mentions you in an update, it shows up here.",
+          compact: true,
+        })
+      : emptyState({
+          icon: "inbox",
+          title: "You’re all caught up",
+          text: "New shares, assignments, mentions and replies appear here.",
+          compact: true,
+        });
   }
   return h(
     "ul",
@@ -173,6 +213,18 @@ function panel(n) {
         h("span", null, "Mark all read"),
       ),
     ),
+    tabs({
+      label: "Show",
+      className: "notifications-filter",
+      items: Object.entries(FILTERS).map(([id, filter]) => ({
+        id,
+        label: filter.label,
+        icon: id === "mentions" ? "at" : null,
+        focusKey: `notifications-filter:${id}`,
+      })),
+      active: n.filter,
+      onSelect: (id) => setFilter(n, id),
+    }),
     listContent(n),
   );
 }
@@ -217,6 +269,8 @@ export function createNotifications({ router, toast }) {
     items: null,
     error: false,
     popover: null,
+    filter: "all",
+    seq: 0,
   };
   n.badge = countBadge(0);
   n.button = h(

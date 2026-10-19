@@ -2,7 +2,8 @@
  * Mentions over GraphQL (SPEC-6 §2.2): `Update.body_parts` and `body` as
  * each reader may see them (current names of what they may see, the
  * snapshot otherwise, "Private task" for tasks on boards they cannot
- * open), and mention, reply and like notifications in the inbox with its
+ * open, plain "@<snapshot>" in `body` for people and teams they cannot
+ * see), and mention, reply and like notifications in the inbox with its
  * `kinds` filter (the Inbox's Mentions filter), never reaching users
  * without access.
  */
@@ -122,6 +123,14 @@ test("a guest reads snapshots for people and teams outside their directory", asy
     ["team", "Product team", null],
     ["user", "Priya Nair", "Priya Nair"],
   ]);
+  // The raw body names no hidden user or team either: plain text.
+  assert.equal(
+    update.body,
+    `@Noa C. @Product team ${token("user", users.priya, "P.")}`,
+  );
+  const [own] = (await client("priya").data(READ, { i: [launch.id] })).items[0]
+    .updates;
+  assert.equal(own.body, body, "the author sees her tokens");
 });
 
 test("mention, reply and like notifications reach the inbox and its kinds filter", async (t) => {

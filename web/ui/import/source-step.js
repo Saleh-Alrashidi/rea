@@ -278,7 +278,7 @@ export function sourceStep(props) {
     h(
       "p",
       { class: "import-step-text" },
-      "Bring workspaces, boards, items, people, updates and docs into Worklane. Nothing changes in the source.",
+      "Bring Spaces, boards, items, people, updates and docs into Worklane. Nothing changes in the source.",
     ),
     cards,
     s.formSlot,

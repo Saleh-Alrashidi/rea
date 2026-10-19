@@ -228,7 +228,7 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
   const made = touchEverything(first);
   await first.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(saved.format, "mini-monday-store/6", "SPEC-6 data format");
+  assert.equal(saved.format, "mini-monday-store/7", "SPEC-6 data format");
   assert.equal(
     "settings_str" in saved.columns[0],
     false,
@@ -367,11 +367,14 @@ test("an invalid data file is rejected and left untouched", async (t) => {
     broken((doc) => (doc.notifications[0].kind = "mentioned")),
     broken((doc) => (doc.activity[0].board_id = "999")),
     broken((doc) => (doc.workspaces[0].color = "indigo")),
-    // Rich text: a string or non-empty parts { text } / { user_id }.
+    // Rich text: a string or non-empty parts { text } / { user_id } /
+    // { board_id }.
     broken((doc) => (doc.notifications[0].text = [])),
     broken((doc) => (doc.notifications[0].text = [{ user_id: "x" }])),
     broken((doc) => (doc.notifications[0].text = [{ text: 1 }])),
     broken((doc) => (doc.activity[0].to_text = [{ text: "a", user_id: "1" }])),
+    broken((doc) => (doc.activity[0].to_text = [{ board_id: 1 }])),
+    broken((doc) => (doc.activity[0].to_text = [{ board_id: "1", text: "" }])),
   );
   for (const text of cases) {
     await writeFile(file, text);
@@ -392,14 +395,21 @@ test("rich texts persist, and plain texts of earlier files still load", async (t
   assert.deepEqual(rich.text[0], { user_id: rich.actor_id }, "names by ID");
   // Files written before rich text keep names in strings and labels.
   rich.text = "Sam Lee posted an update";
-  const [entry] = saved.activity;
+  const [entry, other] = saved.activity;
   Object.assign(entry, {
     actor_label: "Old name",
     from_text: "A",
     to_text: "B",
   });
+  // A board is named by ID (`move_item_to_board`), rendered per reader.
+  other.to_text = [{ text: "to " }, { board_id: other.board_id }];
   await writeFile(file, JSON.stringify(saved));
   const reloaded = await createStore({ file });
+  const kept = reloaded
+    .listActivity(other.board_id, { limit: 1000 })
+    .find((each) => each.id === other.id);
+  assert.deepEqual(kept.to_text, other.to_text);
+  assert.equal(plainText(reloaded, kept.to_text), "to another board");
   const note = reloaded.getNotification(rich.id);
   assert.equal(plainText(reloaded, note.text), "Sam Lee posted an update");
   const [shown] = reloaded

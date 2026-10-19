@@ -1,8 +1,9 @@
 /**
  * The mini-monday (Worklane) store: `createStore` wires the shared state,
  * change listeners and persistence to the domain modules in
- * `server/store/` (people, workspaces, boards, items, updates, grants,
- * docs, notes, forms, activity, app storage and imports).
+ * `server/store/` (people, workspaces, folders and the sidebar order,
+ * boards, items, updates, moves, grants, docs, notes, forms, activity,
+ * app storage and imports).
  *
  * Records returned by the store are frozen. Every mutator emits one change
  * event `{ type, board_id?, item_id?, group_id?, column_id?, user_ids?,
@@ -11,7 +12,9 @@
  * event per resource that lost the team's grant; for `deleteItem`, one
  * `item_deleted` event per subitem deleted with it, and for `deleteGroup`
  * one per subitem it took from another group; `moveItem` follows its
- * `item_moved` with one event per changed value), and returns the new or
+ * `item_moved` with one event per changed value; `moveItemToBoard` sends
+ * one `item_moved_to_board` per moved item to each board; `deleteFolder`
+ * one `board_moved` / `doc_moved` per record it moved), and returns the new or
  * updated record (`importBoard` writes a whole board as one change with
  * one `board_imported` event, SPEC-4 §4). Unknown IDs return null and
  * emit nothing. Expected failures return
@@ -27,6 +30,7 @@ import { createReader, guardApi } from "./store-state.js";
 import { activityApi } from "./store/activity.js";
 import { boardApi } from "./store/boards.js";
 import { docApi } from "./store/docs.js";
+import { folderApi } from "./store/folders.js";
 import { formApi } from "./store/forms.js";
 import { grantApi } from "./store/grants.js";
 import { importApi } from "./store/imports.js";
@@ -43,17 +47,22 @@ import {
   removeStaleTemps,
 } from "./store/persistence.js";
 import { seedState } from "./store/seed.js";
+import { sidebarApi } from "./store/sidebar.js";
 import { storageApi } from "./store/storage.js";
+import { transferApi } from "./store/transfers.js";
 import { updateApi } from "./store/updates.js";
 import { workspaceApi } from "./store/workspaces.js";
 
 const DOMAINS = [
   peopleApi,
   workspaceApi,
+  folderApi,
+  sidebarApi,
   boardApi,
   itemApi,
   updateApi,
   moveApi,
+  transferApi,
   grantApi,
   docApi,
   noteApi,

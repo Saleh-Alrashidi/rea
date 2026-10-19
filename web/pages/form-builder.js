@@ -19,6 +19,7 @@ import { viewHash } from "../router.js";
 import { formAccess } from "../ui/components/labels.js";
 import { badge } from "../ui/components/badge.js";
 import { button } from "../ui/components/button.js";
+import { formDeletion } from "../ui/components/delete-confirms.js";
 import { emptyState } from "../ui/components/empty-state.js";
 import { icon } from "../ui/components/icon.js";
 import { guardUnsaved } from "../ui/components/leave-guard.js";
@@ -218,12 +219,9 @@ async function regenerate(b) {
 
 async function removeForm(b) {
   const { ctx } = b;
-  const confirmed = await ctx.dialog.confirm({
-    title: `Delete “${b.form.title}”?`,
-    message: `The form and its link go away. The ${b.form.response_count} items it created stay on the board.`,
-    confirmButton: "Delete form",
-    danger: true,
-  });
+  const confirmed = await ctx.dialog.confirm(
+    formDeletion(b.form, b.form.response_count),
+  );
   if (!confirmed || !b.active) return;
   b.deleting = true;
   await b.autosave.flush();

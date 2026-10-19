@@ -16,6 +16,7 @@ import { mutate } from "./board-data.js";
 import { ITEM_VIEWS } from "./board-views.js";
 import { descendantIds, groupDeletion } from "./list-model.js";
 import { moveActions } from "./move-actions.js";
+import { updateActions } from "./updates-actions.js";
 import {
   ADDABLE_COLUMN_TYPES,
   GROUP_COLORS,
@@ -56,14 +57,18 @@ function createKit(app) {
    * optimistic change and render, stopping at the first refusal (an
    * error toast; `rollback(count)` may put back the `count` calls that
    * went through), then re-fetches once. Resolves with the selected
-   * records of the calls that went through.
+   * records of the calls that went through. `regions` names the page
+   * regions the optimistic change redraws (all by default); `refresh`
+   * the re-fetch's options (`{ ifChanged: true }`: redraw only what
+   * changed, for changes that touch the open task alone).
    */
-  async function runAll(calls, { optimistic, rollback, shell = false } = {}) {
+  async function runAll(calls, options = {}) {
+    const { optimistic, rollback, shell = false, regions } = options;
     state.pendingMutations += 1;
     state.mutationSeq += 1;
     if (optimistic) {
       optimistic();
-      app.render();
+      app.render(regions);
     }
     const results = [];
     try {
@@ -75,7 +80,7 @@ function createKit(app) {
       await rollback?.(results.length);
     } finally {
       state.pendingMutations -= 1;
-      app.refresh();
+      app.refresh(options.refresh);
       if (shell) app.refreshShell();
     }
     return results;
@@ -83,6 +88,10 @@ function createKit(app) {
   return {
     state,
     boardId: () => state.board.id,
+    /** Redraws the page regions `parts` (all by default). */
+    render: (parts) => app.render(parts),
+    /** Re-fetches the board and the open task (`options`: `refresh`'s). */
+    refresh: (options) => app.refresh(options),
     runAll: async (calls, options) => (await runAll(calls, options)).length,
     /** One mutation; resolves with its record, or null when refused. */
     async run(name, variables, options) {
@@ -334,7 +343,10 @@ function creationActions(kit) {
   };
 }
 
-/** Item rename, values, delete and updates (moves: `move-actions.js`). */
+/**
+ * Item rename, values and delete (moves: `move-actions.js`, updates:
+ * `updates-actions.js`).
+ */
 function itemActions(app, kit) {
   const { state, run } = kit;
   return {
@@ -395,23 +407,6 @@ function itemActions(app, kit) {
             state.board.items = state.board.items.filter(
               (entry) => !gone.has(entry.id),
             );
-          },
-        },
-      );
-    },
-    addUpdate(item, body) {
-      run(
-        "createUpdate",
-        { itemId: item.id, body },
-        {
-          optimistic() {
-            state.card?.detail?.updates.unshift({
-              id: `pending-${Date.now()}`,
-              body,
-              created_at: new Date().toISOString(),
-              creator: state.me,
-              pending: true,
-            });
           },
         },
       );
@@ -524,7 +519,8 @@ function formActions(app, kit) {
 
 /**
  * Creates the action set.
- * @param {{ state: object, render(): void, refresh(): void,
+ * @param {{ state: object, render(parts?: string[]): void,
+ *   refresh(options?: { ifChanged?: boolean }): void,
  *   refreshShell(): void, navigate(hash: string): void,
  *   focusAfterRender(focusKey: string): void,
  *   onItemDeleted(itemId: string): void,
@@ -541,6 +537,7 @@ export function createActions(app) {
     ...itemActions(app, kit),
     ...bulkActions(app, kit),
     ...moveActions(kit),
+    ...updateActions(kit),
     ...formActions(app, kit),
   };
 }

@@ -1,12 +1,15 @@
 /**
  * The mention token syntax (SPEC-6 §2.2, `server/mentions.js`): tokens and
  * what is no token, escapes in text and displays, the canonical form,
- * validation (unknown IDs become text, at most 50 tokens), redaction of
- * private tasks, link parts, cutting imported text, and linear parsing.
+ * validation (unknown IDs become text, at most 50 tokens), the length a
+ * body reads as, redaction for one reader (private tasks, hidden people
+ * and teams), link parts (bounded, ending at invisible characters),
+ * cutting imported text, and linear parsing.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_LINKS,
   MAX_MENTIONS,
   PRIVATE_TASK,
   bodyParts,
@@ -16,7 +19,8 @@ import {
   mentionToken,
   mentionsOf,
   parseBody,
-  redactItems,
+  readLength,
+  redactBody,
   serializeBody,
 } from "../server/mentions.js";
 
@@ -128,26 +132,52 @@ test("checkMentions turns unknown mentions into text and caps tokens", () => {
   assert.deepEqual(checkMentions(escaped, known).mentions, []);
 });
 
-test("redactItems hides the names of tasks the reader cannot open", () => {
-  const body = "See @[Secret plan](item:5) and @[Open task](item:6)";
-  const redacted = redactItems(body, (id) => id === "6");
+test("redactBody: hidden people and teams read as text, private tasks as Private task", () => {
+  const body =
+    "See @[Secret plan](item:5), @[Open task](item:6), @[Noa](user:7), " +
+    "@[Sam](user:8) and @[Product](team:3)";
+  const sees = (kind, id) => (kind === "item" ? id === "6" : id === "8");
+  const redacted = redactBody(body, sees);
   assert.deepEqual(parseBody(redacted), [
     { text: "See " },
     { kind: "item", id: "5", display: PRIVATE_TASK },
-    { text: " and " },
+    { text: ", " },
     { kind: "item", id: "6", display: "Open task" },
+    { text: ", @Noa, " },
+    { kind: "user", id: "8", display: "Sam" },
+    { text: " and @Product" },
   ]);
+  assert.ok(!/user:7|team:3/.test(redacted), "no hidden ID");
   assert.equal(
-    redactItems(body, () => true),
+    redactBody(body, () => true),
     body,
-    "unchanged when open",
+    "unchanged when visible",
   );
-  const literal = "\\@[Secret](item:5)";
+  const literal = "\\@[Secret](item:5) \\@[Noa](user:7)";
   assert.equal(
-    redactItems(literal, () => false),
+    redactBody(literal, () => false),
     literal,
     "text stays",
   );
+  // A display that reads as a token stays text once redacted.
+  const sneaky = mentionToken(user("7", "@[x](user:8)"));
+  assert.deepEqual(parseBody(redactBody(sneaky, () => false)), [
+    { text: "@@[x](user:8)" },
+  ]);
+});
+
+test("readLength counts text as it reads and mentions as @<display>", () => {
+  assert.equal(readLength("plain"), 5);
+  assert.equal(readLength("@[Sam Lee](user:2)!"), "@Sam Lee!".length);
+  // Escapes never count: an escaped token reads as written.
+  assert.equal(readLength("\\@[x](user:1)"), "@[x](user:1)".length);
+  assert.equal(readLength("\\\\@[x](user:1)"), "\\@x".length);
+  const plain = "a\\@[b\\]](team:2) \\\\@[c](item:4)";
+  assert.equal(readLength(escapeText(plain)), plain.length);
+  // An unknown mention turned into text keeps the length.
+  const body = "Hi @[Ghost](user:999) there";
+  const checked = checkMentions(body, () => false).body;
+  assert.equal(readLength(checked), readLength(body));
 });
 
 test("bodyParts splits text into text and http(s) link parts", () => {
@@ -170,6 +200,44 @@ test("bodyParts splits text into text and http(s) link parts", () => {
   ]);
   const long = `https://x.test/${"a".repeat(2100)}`;
   assert.deepEqual(bodyParts(long, render), [{ type: "text", text: long }]);
+});
+
+test("links end at bidi controls and other invisible characters", () => {
+  const render = () => ({ type: "mention" });
+  const stops = [
+    ..."\u200E\u200F\u202A\u202B\u202C\u202D\u202E",
+    ..."\u2066\u2067\u2068\u2069\u200B\u200C\u200D\u2060\uFEFF",
+    ..."\u00AD\u061C\u0000\u001B\u007F\u0085\u3164\u115F",
+  ];
+  for (const stop of stops) {
+    const text = `https://example.test/a${stop}gro.live/b`;
+    const code = stop.codePointAt(0).toString(16);
+    assert.deepEqual(
+      bodyParts(text, render),
+      [
+        link("https://example.test/a"),
+        { type: "text", text: `${stop}gro.live/b` },
+      ],
+      `U+${code}`,
+    );
+  }
+  // Visible non-ASCII stays part of the link.
+  const word = "https://example.test/caf\u00e9-\u65e5\u672c";
+  assert.deepEqual(bodyParts(word, render), [link(word)]);
+});
+
+test("a body shows at most MAX_LINKS links; later URLs stay text", () => {
+  const urls = Array.from(
+    { length: MAX_LINKS + 5 },
+    (_, n) => `https://x.test/${n}`,
+  );
+  const parts = bodyParts(`@[S](user:2) ${urls.join(" ")}`, () => ({
+    type: "user",
+  }));
+  const links = parts.filter((part) => part.type === "link");
+  assert.equal(links.length, MAX_LINKS);
+  assert.equal(links.at(-1).url, urls[MAX_LINKS - 1]);
+  assert.equal(parts.at(-1).text, ` ${urls.slice(MAX_LINKS).join(" ")}`);
 });
 
 function link(url) {

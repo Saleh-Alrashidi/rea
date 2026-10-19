@@ -3,7 +3,9 @@
  * workspaces give every non-guest active user implicit access, `closed`
  * ones only their members (see `server/access.js`). The creator becomes
  * the first owner; members are managed through `store.share`/`unshare`.
- * A workspace can be deleted only when it holds no boards or docs.
+ * A workspace can be deleted only when it holds no boards or docs; its
+ * folders (then empty, `folders.js`) go with it. New workspaces go last
+ * in the sidebar order (`position`, SPEC-6 §3.1).
  */
 import {
   WORKSPACE_KINDS,
@@ -22,6 +24,7 @@ import {
   withChanges,
 } from "../store-state.js";
 import { PALETTE } from "./people.js";
+import { positionAfter } from "./positions.js";
 
 /**
  * The workspace new boards and docs go to: `workspaceId`, or the first
@@ -46,6 +49,7 @@ export function insertWorkspace(ctx, fields) {
     members,
     created_by: createdBy ?? null,
     created_at: ctx.now(),
+    position: positionAfter(state.workspaces),
   });
 }
 
@@ -107,7 +111,10 @@ export function workspaceApi(ctx) {
      * caller cannot see (they block deletion too).
      */
     isWorkspaceEmpty: (id) => isEmpty(id),
-    /** Deletes an empty workspace; with boards or docs → `not_empty`. */
+    /**
+     * Deletes an empty workspace with its folders; with boards or docs →
+     * `not_empty`.
+     */
     deleteWorkspace(id) {
       const workspace = byId(state.workspaces, id);
       if (!workspace) return null;
@@ -118,6 +125,7 @@ export function workspaceApi(ctx) {
         });
       }
       removeWhere(state.workspaces, (record) => record === workspace);
+      removeWhere(state.folders, holds(id));
       return commit(ctx, event("workspace_deleted", workspace), workspace);
     },
   };

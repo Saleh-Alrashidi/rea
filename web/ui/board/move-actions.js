@@ -7,27 +7,18 @@
  *   (best effort), the refresh after the run restores the board and the
  *   error toast says why.
  * - A move that went through announces `message` in the polite live
- *   region and shows "Moved “Name”" with Undo for 8 s. Undo, or Ctrl/⌘+Z
- *   while that toast shows (and focus is not in a text field), runs the
- *   way back recorded before the move (`undoMoves`).
+ *   region and shows "Moved “Name”" with Undo for 8 s (`undo-toast.js`,
+ *   shared with the sidebar's moves); Undo runs the way back recorded
+ *   before the move (`undoMoves`).
  *
- * Only the last move can be undone; a newer move replaces its toast.
+ * Moving tasks to another board (SPEC-6 §3.2) is `board-transfer.js`.
  */
 
 import { announce } from "../components/announcer.js";
-import { showToast } from "../components/toast.js";
+import { offerUndo } from "../components/undo-toast.js";
 import { mutate } from "./board-data.js";
+import { transferActions } from "./board-transfer.js";
 import { applyMove, undoMoves } from "./move-model.js";
-
-/** How long a move can be undone (its toast shows). */
-export const UNDO_MS = 8000;
-/** Inputs whose own Ctrl/⌘+Z undoes typing. */
-const TEXT_INPUTS =
-  "textarea, select, input:not([type=checkbox]):not([type=radio])";
-
-/** `{ undo(), dismiss() }` of the last move while its toast shows. */
-let undoable = null;
-let listening = false;
 
 /** `move_item` variables of a move request. */
 export function moveVariables(request, encodeValues) {
@@ -40,23 +31,6 @@ export function moveVariables(request, encodeValues) {
     groupId: request.groupId ?? null,
     values: request.values ? encodeValues(request.values) : null,
   };
-}
-
-function onUndoKey(event) {
-  if (!undoable || event.altKey || event.shiftKey) return;
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") {
-    return;
-  }
-  const target = event.target;
-  if (target?.isContentEditable || target?.matches?.(TEXT_INPUTS)) return;
-  event.preventDefault();
-  undoable.undo();
-}
-
-function listenForUndoKey() {
-  if (listening) return;
-  listening = true;
-  globalThis.document.addEventListener("keydown", onUndoKey);
 }
 
 /**
@@ -87,27 +61,13 @@ async function runMoves(kit, requests) {
 }
 
 /** Shows the undo toast of a move whose way back is `back`. */
-function offerUndo(kit, { back, label }) {
-  undoable?.dismiss();
-  const entry = {
-    toast: null,
-    dismiss: () => entry.toast?.dismiss(),
+function undoToast(kit, { back, label }) {
+  offerUndo({
+    message: label,
     async undo() {
-      entry.dismiss();
       if (await runMoves(kit, back)) announce("Move undone");
     },
-  };
-  undoable = entry;
-  entry.toast = showToast({
-    message: label,
-    type: "info",
-    timeout: UNDO_MS,
-    action: { label: "Undo", onClick: () => entry.undo() },
-    onDismiss() {
-      if (undoable === entry) undoable = null;
-    },
   });
-  listenForUndoKey();
 }
 
 /** The toast text of moving `requests`: "Moved “Name”" or "Moved 3 tasks". */
@@ -120,6 +80,7 @@ function movedLabel(board, requests) {
 /** The move actions (`createActions` adds them). */
 export function moveActions(kit) {
   return {
+    ...transferActions(kit),
     /**
      * Moves tasks (see the module comment); resolves with whether every
      * move went through.
@@ -132,7 +93,7 @@ export function moveActions(kit) {
       const back = await runMoves(kit, requests);
       if (!back) return false;
       if (message) announce(message);
-      offerUndo(kit, { back, label });
+      undoToast(kit, { back, label });
       return true;
     },
   };

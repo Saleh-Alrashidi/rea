@@ -1,0 +1,469 @@
+/* The task view's Updates pane (SPEC-6 §2.3), monday-style inside the
+   ClickUp-style task view: a tab strip, then one scrolling feed with the
+   composer on top and white update cards (Like | Reply footer, replies
+   indented on a sunken strip). Under 900px the pane follows the task's
+   fields and grows with the page. The composers, mentions and the
+   picker: mentions.css. Logical properties only. */
+
+.task-updates {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-inline-start: 1px solid var(--cu-border);
+  background: var(--color-sunken);
+}
+
+/* ---------------------------------------------------------------- tabs */
+
+.updates-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  min-height: 48px;
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--cu-border);
+  background: var(--color-panel);
+}
+
+.updates-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 47px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+.updates-tab.active {
+  border-bottom-color: var(--cu-accent);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+.updates-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--cu-accent-soft);
+  color: var(--cu-accent-text);
+  font-size: var(--text-xs);
+  line-height: 20px;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- feed */
+
+.updates-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5) var(--space-6);
+}
+
+.updates-scroll:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.update-list {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.updates-older {
+  align-self: center;
+}
+
+.updates-created {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.updates-created strong {
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-semibold);
+}
+
+.task-updates .empty-state {
+  padding-block: var(--space-6);
+}
+
+.task-readonly-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--cu-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ---------------------------------------------------------------- card */
+
+/* No overflow clipping: a reply box's picker may reach past the card. */
+.update-card {
+  border: 1px solid var(--cu-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  /* The highlight's fill and ring, transparent until a link lights it
+     (shadows, not the background: a theme switch must not fade). */
+  box-shadow:
+    inset 0 0 0 100vmax transparent,
+    0 0 0 3px transparent,
+    var(--shadow-xs);
+  transition:
+    box-shadow 600ms var(--ease-standard),
+    border-color 600ms var(--ease-standard);
+}
+
+.update-card > :first-child {
+  border-start-start-radius: inherit;
+  border-start-end-radius: inherit;
+}
+
+.update-card > :last-child,
+.update-card > :last-child > :first-child {
+  border-end-start-radius: inherit;
+}
+
+.update-card > :last-child,
+.update-card > :last-child > :last-child {
+  border-end-end-radius: inherit;
+}
+
+.update-card.pinned {
+  border-color: color-mix(in srgb, var(--cu-accent) 45%, var(--cu-border));
+}
+
+.update-card.pending,
+.update-reply.pending {
+  opacity: 0.6;
+}
+
+.update-card:focus-visible,
+.update-reply:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.update-card.highlight,
+.update-reply.highlight {
+  border-color: var(--cu-accent);
+  box-shadow:
+    inset 0 0 0 100vmax var(--cu-accent-soft),
+    0 0 0 3px var(--cu-accent-soft),
+    var(--shadow-xs);
+}
+
+.update-pinned {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--cu-border);
+  background: var(--cu-accent-soft);
+  color: var(--cu-accent-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.update-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 12px 0 16px;
+}
+
+.update-who {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.update-author {
+  overflow: hidden;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  white-space: nowrap;
+}
+
+.update-source {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--color-sunken);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.update-when {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.update-edited {
+  font-style: italic;
+}
+
+.update-menu {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.update-card > .update-body,
+.update-card > .update-edit {
+  margin: 10px 16px 14px;
+}
+
+.update-body {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--text-md);
+  line-height: 1.55;
+  text-align: start;
+  unicode-bidi: plaintext;
+}
+
+.update-body a:not(.mention-chip) {
+  color: var(--cu-accent-text);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------------- likes, footer */
+
+.update-likes-row {
+  padding: 0 16px 10px;
+}
+
+.update-likes {
+  position: relative;
+  display: inline-flex;
+}
+
+.update-like-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px 1px 2px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  cursor: default;
+}
+
+.update-like-count .icon {
+  box-sizing: content-box;
+  padding: 3px;
+  border-radius: 50%;
+  background: var(--cu-accent-strong);
+  color: var(--color-text-on-primary);
+}
+
+.update-like-count:focus-visible {
+  outline: 2px solid var(--color-focus);
+}
+
+.update-likers {
+  position: absolute;
+  z-index: 3;
+  inset-block-end: calc(100% + 6px);
+  inset-inline-start: 0;
+  width: max-content;
+  max-width: 240px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-toast);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.update-likes:hover .update-likers,
+.update-like-count:focus-visible + .update-likers {
+  visibility: visible;
+  opacity: 1;
+}
+
+.update-footer {
+  display: flex;
+  border-top: 1px solid var(--cu-border);
+}
+
+.update-action {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.update-footer .update-action + .update-action {
+  border-inline-start: 1px solid var(--cu-border);
+}
+
+.update-action:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.update-action:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.update-action.liked {
+  color: var(--cu-accent-text);
+}
+
+/* ------------------------------------------------------------- replies */
+
+.update-replies {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--cu-border);
+  background: var(--color-sunken);
+}
+
+.update-more-replies {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cu-accent-text);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.update-more-replies:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* "Loading replies…" while the thread loads. */
+.update-more-replies:disabled {
+  color: var(--color-text-secondary);
+  cursor: progress;
+}
+
+.update-reply-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.update-reply {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border-radius: var(--radius-md);
+}
+
+.update-reply-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.update-reply-bubble {
+  min-width: 0;
+  padding: 6px 10px 8px 12px;
+  border: 1px solid var(--cu-border);
+  border-radius: 4px 12px 12px;
+  background: var(--color-panel);
+}
+
+.update-reply .update-header {
+  padding: 0;
+}
+
+.update-reply .update-author {
+  font-size: var(--text-sm);
+}
+
+.update-reply .update-body {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.update-reply-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-start: 6px;
+}
+
+.update-reply-actions .update-action {
+  flex: none;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+.update-replies .update-reply-composer {
+  box-shadow: none;
+}
+
+/* One full-screen column (task-view.css): the feed grows with the page. */
+@media (max-width: 899px) {
+  .task-updates {
+    border-inline-start: 0;
+    border-top: 1px solid var(--cu-border);
+  }
+
+  .updates-scroll {
+    overflow: visible;
+    padding-inline: 12px;
+  }
+
+  .updates-tabs {
+    padding-inline: 16px;
+  }
+}

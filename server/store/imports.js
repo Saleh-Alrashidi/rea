@@ -14,8 +14,18 @@
  * as on every write path); the ones left out are reported. Activity
  * entries name the importer as actor with the import's label ("Import
  * from monday.com"). The board's `import` record keeps the source record
- * and, when the spec's `meta` has them, the source `folder` and the
- * board's own `source_name` (for placing it in folders later). A board
+ * and, when the spec's `meta` has them, the source `folder` (with its
+ * `private` flag when the source gave one) and the board's own
+ * `source_name`. A board with a source folder goes into a folder of its
+ * workspace (SPEC-6 §3.1) only when that shows the Space nothing new
+ * (`folders.showsSourceFolder`: the source folder is not recorded as
+ * private, and the board or an earlier board of the same source folder
+ * in the workspace is a Main board): the folder that already holds such
+ * an earlier board (re-imports and later runs reuse it), else a new
+ * folder named like the source folder, created in the same commit (with
+ * a `folder_created` event after `board_imported`). Otherwise it stays
+ * at the workspace's root, named as given. The board goes last in its
+ * folder or at the workspace's root. A board
  * that would grow the data past what one save can write
  * (`ctx.maxDataBytes`, at most `persistence.js` MAX_DATA_BYTES, from an
  * estimate of its records) is refused as invalid.
@@ -43,6 +53,11 @@ import {
 import { insertNotification, mention, recordActivity } from "./activity.js";
 import { insertView, makeColumn } from "./boards.js";
 import {
+  insertFolder,
+  showsSourceFolder,
+  sourceFolderBoards,
+} from "./folders.js";
+import {
   readColumns,
   readGroups,
   readItems,
@@ -50,6 +65,7 @@ import {
   readViews,
 } from "./import-spec.js";
 import { POSITION_SPACING, nextItemPosition } from "./positions.js";
+import { positionIn } from "./sidebar.js";
 import { insertUpdate } from "./updates.js";
 
 const MAX_SOURCE_ID = 255;
@@ -73,17 +89,21 @@ function readSourceId(value, label) {
 }
 
 /**
- * The optional `folder` (`{ sourceId, name }`) and `sourceName` of `meta`
- * as `import` keys; absent (never null) when not given.
+ * The optional `folder` (`{ sourceId, name, private? }`) and `sourceName`
+ * of `meta` as `import` keys; absent (never null) when not given.
  */
 function readPlacement({ folder = null, sourceName = null }) {
   const placement = {};
   if (folder !== null) {
     if (!isPlainObject(folder))
       throw new TypeError("meta.folder must be an object");
+    const flag = folder.private;
+    if (flag !== undefined && typeof flag !== "boolean")
+      throw new TypeError("meta.folder.private must be a boolean");
     placement.folder = {
       source_id: readSourceId(folder.sourceId, "folder source_id"),
       name: readName(folder.name, "Folder name"),
+      ...(flag === undefined ? {} : { private: flag }),
     };
   }
   if (sourceName !== null)
@@ -187,6 +207,23 @@ function checkCapacity(ctx, bytes) {
   );
 }
 
+/**
+ * Where board `draft` (with import `meta`) goes: `{ folder }` (the folder
+ * of the workspace that holds an earlier board of its source folder),
+ * `{ create }` (the name of a new one) or `{}` (the workspace's root);
+ * see the module comment.
+ */
+function readFolder(state, { draft, meta }) {
+  if (meta.folder === undefined) return {};
+  const workspaceId = draft.workspace_id;
+  const earlier = sourceFolderBoards(state, { ...meta, workspaceId });
+  const boards = [draft, ...earlier];
+  if (!showsSourceFolder({ folders: [meta.folder], boards })) return {};
+  const held = earlier.find((board) => board.folder_id !== undefined);
+  if (held) return { folder: byId(state.folders, held.folder_id) };
+  return { create: meta.folder.name };
+}
+
 /** Checks a whole `importBoard` spec; nothing is written yet. */
 function prepareBoard(ctx, spec) {
   const { state } = ctx;
@@ -200,6 +237,7 @@ function prepareBoard(ctx, spec) {
     workspace_id: workspace.id,
   };
   const meta = readMeta(spec.meta);
+  const place = readFolder(state, { draft, meta });
   const label = readName(spec.label, "Import label");
   const access = readMembers(ctx, { ...spec, draft });
   const memo = new Map();
@@ -220,7 +258,7 @@ function prepareBoard(ctx, spec) {
   });
   const views = readViews(spec.views);
   const summary = readText(spec.summary ?? null, "Summary", LIMITS.name);
-  const parts = { meta, label, groups, columns, items, views, summary };
+  const parts = { meta, place, label, groups, columns, items, views, summary };
   const prepared = { ...access, ...parts };
   prepared.bytes = estimateBytes(prepared);
   checkCapacity(ctx, prepared.bytes);
@@ -311,16 +349,45 @@ function logImport(ctx, { board, prepared, importerId }) {
 }
 
 /**
+ * The folder ID a checked board goes to (null: the root); a new folder
+ * is created and its event queued.
+ */
+function folderOf(ctx, { prepared, importerId }) {
+  const { state } = ctx;
+  const { folder, create } = prepared.place;
+  if (folder) return folder.id;
+  if (create === undefined) return null;
+  const workspace = byId(state.workspaces, prepared.board.workspace_id);
+  const created = insertFolder(state, {
+    workspace,
+    name: create,
+    createdBy: importerId,
+    createdAt: ctx.now(),
+  });
+  ctx.pending.push({
+    type: "folder_created",
+    resource_kind: "folder",
+    resource_id: created.id,
+    workspace_id: workspace.id,
+  });
+  return created.id;
+}
+
+/**
  * Writes a checked board. Returns the result `importBoard` documents;
  * nothing here can fail, so the batch is all or nothing.
  */
 function writeBoard(ctx, prepared, importerId) {
   const { state } = ctx;
+  const folderId = folderOf(ctx, { prepared, importerId });
+  const workspaceId = prepared.board.workspace_id;
   const board = push(state.boards, {
     id: nextId(state),
     ...prepared.board,
     state: "active",
     creator_id: importerId,
+    ...(folderId === null ? {} : { folder_id: folderId }),
+    position: positionIn(state.boards, { workspaceId, folderId }),
     import: {
       ...prepared.meta,
       imported_at: ctx.now(),
@@ -355,7 +422,8 @@ export function importApi(ctx) {
     /**
      * Imports one board in one batch. `spec` = `{ workspaceId, importerId,
      * name, description, boardKind, meta: { source, sourceId, sourceUrl,
-     * folder?: { sourceId, name }, sourceName? }, label, summary, members:
+     * folder?: { sourceId, name, private? }, sourceName? }, label,
+     * summary, members:
      * [{ userId, role }], groups: [{ key, title, color }], columns: [{
      * key, title, type, labels?: [{ label, color, type? }], role? }],
      * items: [{ key?, parentKey?, groupKey, name, values: { [columnKey]:
@@ -367,7 +435,9 @@ export function importApi(ctx) {
      * groups, columns, items, updates }, refused: [{ index, userId,
      * reason, message }], unassigned: [{ index, columnKey, userIds }] }`;
      * null for an unknown workspace or an inactive importer; a failure
-     * (nothing written) for invalid input.
+     * (nothing written) for invalid input. A board with a source folder
+     * may go into a folder (see the module comment); `board.folder_id`
+     * says where it went.
      */
     importBoard(spec = {}) {
       if (!isPlainObject(spec)) throw new TypeError("spec must be an object");

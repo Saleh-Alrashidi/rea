@@ -182,6 +182,14 @@ test("a board's source folder and own name are optional for any source; bad ones
     source_id: "f-1",
     name: "Untitled folder",
   });
+  // The source's private flag is kept when it gave one.
+  const flagged = sampleSnapshot();
+  roadmapOf(flagged).folder = { source_id: "f-1", name: "HR", private: true };
+  assert.deepEqual(roadmapOf(checked(flagged)).folder, {
+    source_id: "f-1",
+    name: "HR",
+    private: true,
+  });
   const bad = [
     "Engineering",
     [],
@@ -189,6 +197,7 @@ test("a board's source folder and own name are optional for any source; bad ones
     { source_id: " ", name: "Engineering" },
     { source_id: "x".repeat(256), name: "Engineering" },
     { source_id: "f-1", name: 7 },
+    { source_id: "f-1", name: "HR", private: "yes" },
   ];
   for (const [index, folder] of bad.entries()) {
     const input = sampleSnapshot();

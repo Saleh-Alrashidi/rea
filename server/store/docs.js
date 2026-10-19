@@ -25,6 +25,7 @@ import {
   requireCount,
   withChanges,
 } from "../store-state.js";
+import { positionIn } from "./sidebar.js";
 import { targetWorkspace } from "./workspaces.js";
 
 const BLOCK_ID = /^[\w-]{1,64}$/;
@@ -84,13 +85,15 @@ export function readBlocks(blocks) {
   });
 }
 
+/** A doc last at the root of its workspace (SPEC-6 §3.1 sidebar order). */
 export function insertDoc(ctx, fields) {
   const { state } = ctx;
   const at = ctx.now();
   const createdBy = fields.createdBy ?? null;
+  const { workspaceId } = fields;
   return push(state.docs, {
     id: nextId(state),
-    workspace_id: fields.workspaceId,
+    workspace_id: workspaceId,
     title: fields.title,
     visibility: fields.visibility,
     members: fields.members,
@@ -100,6 +103,7 @@ export function insertDoc(ctx, fields) {
     updated_by: createdBy,
     created_at: at,
     updated_at: at,
+    position: positionIn(state.docs, { workspaceId }),
   });
 }
 

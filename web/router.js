@@ -125,6 +125,14 @@ export function itemHash(boardId, itemId) {
   return `${boardHash(boardId)}/items/${itemId}`;
 }
 
+/**
+ * `#/boards/<id>/items/<itemId>/updates/<updateId>`: the task view
+ * scrolled to an update (or reply), highlighted (SPEC-6 §2.3).
+ */
+export function updateHash(boardId, itemId, updateId) {
+  return `${itemHash(boardId, itemId)}/updates/${updateId}`;
+}
+
 // ------------------------------------------------------------ the router
 
 /**
@@ -343,8 +351,8 @@ const NOTES = page("notes");
 const ADMIN = page("admin");
 
 /**
- * `[pattern, loader, options]` for every route of SPEC-2 §5.1, SPEC-4 §6
- * and SPEC-5 §3.1.
+ * `[pattern, loader, options]` for every route of SPEC-2 §5.1, SPEC-4 §6,
+ * SPEC-5 §3.1 and SPEC-6 §2.3 (an update in the task view).
  */
 export const APP_ROUTES = Object.freeze([
   ["/home", page("home"), { name: "home" }],
@@ -366,6 +374,7 @@ export const APP_ROUTES = Object.freeze([
   boardRoute("/views/forms", "forms"),
   boardRoute("/views/app-:installId", "app"),
   boardRoute("/items/:itemId", null),
+  boardRoute("/items/:itemId/updates/:updateId", null),
   ["/docs", page("docs"), { name: "docs" }],
   ["/docs/:docId", page("doc-editor"), { name: "doc-editor" }],
   ["/notes", NOTES, { name: "notes", key: () => "notes" }],

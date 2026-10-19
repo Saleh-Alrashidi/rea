@@ -1,9 +1,9 @@
 /**
  * The store side of imports (SPEC-4 §4, `server/store/imports.js`): one
  * all-or-nothing batch per board, grants and people values checked by the
- * access rules, the `import_finished` notification, and `Board.import`
- * (with its optional source folder and name) surviving a save and a
- * reload.
+ * access rules, the `import_finished` notification, `Board.import` (with
+ * its optional source folder and name) surviving a save and a reload,
+ * and which boards go into a folder (SPEC-6 §3.1).
  */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -219,14 +219,14 @@ test("Board.import keeps an optional source folder and name; bad ones fail to lo
     return store.importBoard(input).board;
   };
   const placed = withMeta({
-    folder: { sourceId: "90011001", name: " Engineering " },
+    folder: { sourceId: "90011001", name: " Engineering ", private: false },
     sourceName: "Sprint 12",
   });
   assert.deepEqual(placed.import, {
     source: "clickup",
     source_id: "list-9",
     source_url: null,
-    folder: { source_id: "90011001", name: "Engineering" },
+    folder: { source_id: "90011001", name: "Engineering", private: false },
     source_name: "Sprint 12",
     imported_at: placed.import.imported_at,
     imported_by: base.importerId,
@@ -249,6 +249,7 @@ test("Board.import keeps an optional source folder and name; bad ones fail to lo
     { folder: { source_id: "90011001" } },
     { folder: { source_id: 90011001, name: "Engineering" } },
     { folder: { source_id: "90011001", name: "Engineering", path: "/" } },
+    { folder: { source_id: "90011001", name: "Engineering", private: 1 } },
     { source_name: null },
     { source_name: 12 },
   ];
@@ -261,4 +262,71 @@ test("Board.import keeps an optional source folder and name; bad ones fail to lo
       JSON.stringify(change),
     );
   }
+});
+
+test("importBoard files a board into a folder only where the Space already sees its source folder", async () => {
+  const { store, ids, events } = await seededStore();
+  const { main, leadership } = ids.workspaces;
+  const ENGINEERING = { sourceId: "90011001", name: "Engineering" };
+  let lists = 0;
+  const imported = (extra = {}) => {
+    const { workspaceId = main, folder = ENGINEERING, boardKind } = extra;
+    const input = spec({ workspaceId, importerId: ids.users.alex });
+    lists += 1;
+    input.boardKind = boardKind ?? "public";
+    input.meta = { ...input.meta, sourceId: `list-${lists}`, folder };
+    input.meta.sourceName = `List ${lists}`;
+    input.name = `List ${lists}`;
+    return store.importBoard(input).board;
+  };
+  const placed = (board) => [
+    store.getFolder(board.folder_id ?? null)?.name ?? null,
+    board.name,
+    board.position,
+  ];
+  // A private list alone in its folder stays at the root, named as given:
+  // the Space must not learn the folder's name.
+  const alone = imported({ boardKind: "private" });
+  assert.deepEqual(placed(alone), [null, "List 1", 3 * 1024]);
+  assert.equal(store.listFolders().length, 0);
+  // A Main list shows the folder anyway: it creates it.
+  const first = imported();
+  const folder = store.getFolder(first.folder_id);
+  assert.deepEqual(
+    [folder.workspace_id, folder.name, folder.created_by, first.position],
+    [main, "Engineering", ids.users.alex, 1024],
+  );
+  assert.deepEqual(
+    events.slice(-2).map((e) => e.type),
+    ["board_imported", "folder_created"],
+  );
+  // Later boards of that source folder (later runs and re-imports) join
+  // it, private ones too; the earlier private one stays where it is.
+  assert.deepEqual(placed(imported({ boardKind: "private" })), [
+    "Engineering",
+    "List 3",
+    2048,
+  ]);
+  assert.deepEqual(placed(imported()), ["Engineering", "List 4", 3072]);
+  assert.equal(store.getBoard(alone.id).folder_id, undefined);
+  // It joins the folder of its earliest board in one, wherever moved.
+  const moved = store.createFolder({ workspaceId: main, name: "Moved" });
+  store.moveBoard(first.id, { folderId: moved.id });
+  assert.equal(placed(imported())[0], "Moved");
+  // Another Space has its own folder; a private one there stays out.
+  const other = imported({ workspaceId: leadership, boardKind: "private" });
+  assert.equal(other.folder_id, undefined);
+  const ops = imported({ workspaceId: leadership });
+  assert.equal(store.getFolder(ops.folder_id).workspace_id, leadership);
+  // A folder the source says is private never becomes visible.
+  const secret = { ...ENGINEERING, sourceId: "f-secret", private: true };
+  assert.equal(imported({ folder: secret }).folder_id, undefined);
+  assert.equal(store.listFolders().length, 3);
+  // Without a source folder, a board goes to the Space's root.
+  const base = { workspaceId: main, importerId: ids.users.alex };
+  assert.equal(store.importBoard(spec(base)).board.folder_id, undefined);
+  assert.throws(
+    () => imported({ folder: { ...ENGINEERING, private: "yes" } }),
+    TypeError,
+  );
 });

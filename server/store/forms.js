@@ -29,12 +29,12 @@ import {
   readText,
   removeWhere,
   replace,
+  sortedGroups,
   withChanges,
 } from "../store-state.js";
 import { notify, quoted, resourceUrl } from "./activity.js";
 import { findSecret } from "./people.js";
 import { addItem } from "./items.js";
-import { sortedGroups } from "./boards.js";
 
 export const FORM_COLOR = "#5b5bd6";
 export const SUBMIT_MESSAGE = "Thanks! Your response was recorded.";

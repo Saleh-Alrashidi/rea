@@ -39,10 +39,12 @@ import {
   replace,
   requireText,
   slugify,
+  sortedGroups,
   uniqueId,
   withChanges,
 } from "../store-state.js";
 import { recordActivity } from "./activity.js";
+import { positionIn } from "./sidebar.js";
 import { withDescendants } from "./subitems.js";
 import { removeUpdates } from "./updates.js";
 import { targetWorkspace } from "./workspaces.js";
@@ -112,12 +114,16 @@ export function columnRoleProblem(columns) {
   return null;
 }
 
-/** A board whose creator (when known) is its first owner. */
+/**
+ * A board whose creator (when known) is its first owner, last at the
+ * root of its workspace (SPEC-6 §3.1 sidebar order).
+ */
 export function insertBoard(ctx, fields) {
   const { name, description, creatorId, workspaceId } = fields;
   const members = creatorId
     ? [{ kind: "user", id: creatorId, role: "owner" }]
     : [];
+  const position = positionIn(ctx.state.boards, { workspaceId });
   return push(ctx.state.boards, {
     id: nextId(ctx.state),
     name,
@@ -127,6 +133,7 @@ export function insertBoard(ctx, fields) {
     workspace_id: workspaceId,
     board_kind: fields.boardKind ?? "public",
     members,
+    position,
   });
 }
 
@@ -180,11 +187,6 @@ export function insertContent(
     insertColumn(ctx, boardId, { id, title, type });
   }
   for (const view of views) insertView(ctx, boardId, view);
-}
-
-export function sortedGroups(state, boardId) {
-  const groups = forBoard(state.groups, boardId);
-  return groups.sort((a, b) => a.position - b.position);
 }
 
 /**

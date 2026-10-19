@@ -1,8 +1,10 @@
 /**
  * Updates over GraphQL, monday-style (SPEC-6 §2.1): replies, pins, likes,
  * edits and deletes with their fields and refusals, the board stream's
- * update events, and the permissions of every update mutation per seeded
- * role. Mentions as each reader sees them are in api-mentions.test.js.
+ * update events, the permissions of every update mutation per seeded
+ * role, and paging (`Item.updates_page` by cursor, `Update.replies` by
+ * limit and `before_id`, `Query.updates` by ID). Mentions as each reader
+ * sees them are in api-mentions.test.js.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -226,4 +228,85 @@ test("posting, replying, liking and pinning need editor; edits the author; delet
   assert.equal(await client("alex").code(EDIT, { u: top.id, b: "x" }), F);
   await client("alex").data(DELETE, { u: top.id });
   assert.equal(store.getUpdate(top.id), null, "a board owner deletes");
+});
+
+const PAGE = `query P($i: [ID!]!, $c: String) { items(ids: $i) {
+  updates_page(limit: 3, cursor: $c) { cursor updates { id pinned replies_count } } } }`;
+const BY_ID = `query U($u: [ID!]!, $l: Int, $b: ID) { updates(ids: $u) {
+  id parent_update_id replies_count replies(limit: $l, before_id: $b) { id } } }`;
+
+test("updates page by position, replies by limit and before_id, updates by ID", async (t) => {
+  const { client, users, item, other, store, ids } = await setup(t);
+  const sam = client("sam");
+  const post = (body, parentId = null) =>
+    store.createUpdate({
+      itemId: item.id,
+      body,
+      creatorId: users.sam,
+      parentId,
+    }).id;
+  const tops = ["A", "B", "C", "D", "E", "F"].map((body) => post(body));
+  store.pinUpdate(tops[1]);
+  const replies = [1, 2, 3, 4, 5].map((n) => post(`Re ${n}`, tops[1]));
+  const order = store.listUpdates(item.id, { limit: 500 }).map((u) => u.id);
+  const page = async (c, i = item.id) =>
+    (await sam.data(PAGE, { i: [i], c })).items[0].updates_page;
+  const first = await page(null);
+  assert.deepEqual(
+    first.updates.map((u) => [u.id, u.pinned, u.replies_count]),
+    [
+      [tops[1], true, 5],
+      [tops[5], false, 0],
+      [tops[4], false, 0],
+    ],
+  );
+  // A new post, or the deletion of a page's last update, shifts nothing.
+  post("Newest");
+  store.deleteUpdate(tops[4]);
+  const rest = [];
+  for (let cursor = first.cursor; cursor !== null;) {
+    const next = await page(cursor);
+    rest.push(...next.updates.map((u) => u.id));
+    cursor = next.cursor;
+  }
+  assert.deepEqual(rest, order.slice(3));
+  const misuse = [{ c: first.cursor, i: other.id }, { c: "bogus" }];
+  for (const vars of misuse) {
+    const query = { i: [vars.i ?? item.id], c: vars.c };
+    assert.equal(await sam.code(PAGE, query), "BAD_USER_INPUT");
+  }
+  // Replies: the newest `limit`, oldest first; before_id pages back.
+  const thread = async (vars) =>
+    (await sam.data(BY_ID, { u: [tops[1]], ...vars })).updates[0].replies.map(
+      (reply) => reply.id,
+    );
+  assert.deepEqual(await thread({ l: 2 }), replies.slice(3));
+  assert.deepEqual(await thread({ l: 2, b: replies[3] }), replies.slice(1, 3));
+  assert.deepEqual(await thread({ l: 9, b: replies[0] }), []);
+  assert.deepEqual(await thread({}), replies, "all without a limit");
+  assert.equal(
+    await sam.code(BY_ID, { u: [tops[1]], b: "x" }),
+    "BAD_USER_INPUT",
+  );
+  assert.equal(await sam.code(BY_ID, { u: [tops[1]], l: 0 }), "BAD_USER_INPUT");
+  // By ID: replies too, in the order asked, never hidden or unknown ones.
+  const [hiring] = store.listItems({ boardId: ids.boards.hiring }).items;
+  const hidden = store.createUpdate({
+    itemId: hiring.id,
+    body: "Offer",
+    creatorId: users.alex,
+  }).id;
+  const found = await sam.data(BY_ID, {
+    u: [replies[0], hidden, "999999", tops[1]],
+    l: 1,
+  });
+  assert.deepEqual(
+    found.updates.map((u) => [u.id, u.parent_update_id, u.replies_count]),
+    [
+      [replies[0], tops[1], 0],
+      [tops[1], null, 5],
+    ],
+  );
+  const asAlex = await client("alex").data(BY_ID, { u: [hidden] });
+  assert.equal(asAlex.updates.length, 1, "the owner finds it");
 });

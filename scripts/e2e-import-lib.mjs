@@ -177,7 +177,8 @@ export async function toMainTable(page) {
  * Checks row `name` of the open board's Main table: its first status pill
  * reads `status`, its first people cell names `person`, and (when
  * `update` is given) the task view opened from the row lists an update
- * containing it, then `onTask()` runs and the task view is closed again.
+ * (or reply) containing it, then `onTask()` runs and the task view is
+ * closed again.
  */
 export async function checkItem(page, options) {
   const { name, status, person, update, onTask } = options;
@@ -195,11 +196,17 @@ export async function checkItem(page, options) {
   await row.locator("button.open-item").click();
   const task = "dialog.task-view[open]";
   await page.locator(`${task} .task-title`).waitFor();
+  // The Updates pane shows the newest updates first; older ones follow
+  // "Show older updates".
+  const older = page.locator(`${task} .updates-older`);
   await waitUntil(async () => {
-    const bodies = await page
-      .locator(`${task} .task-comment-body`)
-      .allTextContents();
-    return bodies.some((body) => body.includes(update));
+    const bodies = await page.locator(`${task} .update-body`).allTextContents();
+    if (bodies.some((body) => body.includes(update))) return true;
+    // The button goes once the older updates are in.
+    if (await older.isVisible()) {
+      await older.click({ timeout: 1000 }).catch(() => {});
+    }
+    return false;
   }, `the update "${update}" on ${name}`);
   // The task view opens over the table, which is not rebuilt: on a wide
   // board that would freeze the page for seconds.
@@ -213,12 +220,12 @@ export async function checkItem(page, options) {
 }
 
 /**
- * A workspace with more boards than fit scrolls inside the sidebar: the
- * list ends above Teams and Admin instead of running under them.
+ * A Space with more boards than fit scrolls inside the sidebar: the tree
+ * ends above Teams and Admin instead of running under them.
  */
 export async function checkSidebarFits(page) {
   const fit = await page.evaluate(() => {
-    const nav = document.querySelector(".sidebar-workspace-nav");
+    const nav = document.querySelector(".sidebar-scroll");
     const bottom = document.querySelector(".sidebar-bottom");
     const navBox = nav.getBoundingClientRect();
     return {
@@ -226,6 +233,6 @@ export async function checkSidebarFits(page) {
       gap: bottom.getBoundingClientRect().top - navBox.bottom,
     };
   });
-  check(fit.scrolls, "the long workspace scrolls in the sidebar");
+  check(fit.scrolls, "the long Space scrolls in the sidebar");
   check(fit.gap >= 0, `the board list runs ${-fit.gap}px under Admin`);
 }

@@ -86,7 +86,7 @@ function workspaceSelect(state, render) {
   return h(
     "label",
     { class: "docs-workspace" },
-    h("span", { class: "visually-hidden" }, "Workspace"),
+    h("span", { class: "visually-hidden" }, "Space"),
     h(
       "select",
       {
@@ -99,7 +99,7 @@ function workspaceSelect(state, render) {
           },
         },
       },
-      h("option", { value: "" }, "All workspaces"),
+      h("option", { value: "" }, "All Spaces"),
       workspaces.map((workspace) =>
         h("option", { value: workspace.id }, workspace.name),
       ),
@@ -252,11 +252,7 @@ export async function mount(container, ctx) {
       active: true,
     },
     dom: {
-      subtitle: h(
-        "span",
-        null,
-        "Specs, briefs and notes across your workspaces",
-      ),
+      subtitle: h("span", null, "Specs, briefs and notes across your Spaces"),
       toolbar: h("div", { class: "page-toolbar docs-toolbar" }),
       filters: h("div", { class: "docs-filters" }),
       body: h(

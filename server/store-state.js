@@ -110,6 +110,9 @@ export const byId = (list, id) => list.find((r) => r.id === id) ?? null;
 export const forBoard = (list, boardId) =>
   list.filter((r) => r.board_id === boardId);
 export const onBoard = (list, boardId, id) => byId(forBoard(list, boardId), id);
+/** The groups of board `boardId`, by position. */
+export const sortedGroups = (state, boardId) =>
+  forBoard(state.groups, boardId).sort((a, b) => a.position - b.position);
 export const nextPosition = (list) =>
   list.reduce((max, record) => Math.max(max, record.position), -1) + 1;
 export const randomToken = (bytes = 32) =>

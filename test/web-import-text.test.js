@@ -283,7 +283,7 @@ test("the done step's tiles, safe links and skipped entries", () => {
   const labels = R.createdTiles({ workspaces: 1, users: 1, boards: 2 });
   assert.deepEqual(
     labels.slice(0, 2).map((tile) => tile.label),
-    ["Workspace", "Boards"],
+    ["Space", "Boards"],
     "one is singular",
   );
   assert.equal(

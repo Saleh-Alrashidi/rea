@@ -439,14 +439,14 @@ test("the summary sentence counts what the plan imports and where", () => {
   const summary = M.summarize(selection, PREVIEW);
   assert.equal(
     M.summaryText(summary),
-    "Import 2 boards (3 items, 1 subitem and 2 updates) and 1 doc into 1 new workspace and “Marketing”. People: 1 person matched and 2 skipped.",
+    "Import 2 boards (3 items, 1 subitem and 2 updates) and 1 doc into 1 new Space and “Marketing”. People: 1 person matched and 2 skipped.",
   );
   M.setWorkspace(selection, ARCHIVE, false);
   M.setEntry(selection, { kind: "docs", id: "d1", on: false });
   selection.users.set("u2", "invite:guest");
   assert.equal(
     M.summaryText(M.summarize(selection, PREVIEW)),
-    "Import 1 board (3 items, 1 subitem and 2 updates) into 1 new workspace. People: 1 person matched, 1 invited and 1 skipped.",
+    "Import 1 board (3 items, 1 subitem and 2 updates) into 1 new Space. People: 1 person matched, 1 invited and 1 skipped.",
   );
   M.setAll(selection, PREVIEW, false);
   const empty = M.summarize(selection, PREVIEW);

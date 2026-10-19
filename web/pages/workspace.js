@@ -62,7 +62,7 @@ function header(w) {
     title: workspace.name,
     icon: "workspace",
     iconColor: workspace.color,
-    eyebrow: "Workspace",
+    eyebrow: "Space",
     subtitle: workspace.description || null,
     badges: [
       workspaceKindBadge(workspace.kind),
@@ -108,7 +108,7 @@ function renderTab(w) {
   const hadFocus = w.tabsSlot.contains(globalThis.document.activeElement);
   w.tabsSlot.replaceChildren(
     tabs({
-      label: "Workspace content",
+      label: "Space content",
       active: w.tab,
       items: TAB_IDS.map((id) => ({
         id,
@@ -159,7 +159,7 @@ async function refresh(w) {
     if (!w.active) return;
     if (!workspace) {
       setDocumentTitle("Not found");
-      w.container.replaceChildren(notFoundView({ what: "workspace" }));
+      w.container.replaceChildren(notFoundView({ what: "Space" }));
       return;
     }
     w.workspace = workspace;
@@ -172,7 +172,7 @@ async function refresh(w) {
         { class: "page-container" },
         emptyState({
           icon: "alert",
-          title: "Couldn’t load this workspace",
+          title: "Couldn’t load this Space",
           text: error?.message || "Something went wrong.",
           action: {
             label: "Try again",
@@ -187,7 +187,7 @@ async function refresh(w) {
 
 /** Page contract. */
 export async function mount(container, ctx, params) {
-  setDocumentTitle("Workspace");
+  setDocumentTitle("Space");
   const w = {
     ctx,
     container,
@@ -200,7 +200,7 @@ export async function mount(container, ctx, params) {
     h(
       "div",
       { class: "page-container" },
-      skeletonCards({ count: 6, label: "Loading workspace" }),
+      skeletonCards({ count: 6, label: "Loading Space" }),
     ),
   );
   ctx.bus.emit(BUS_EVENTS.workspace, params.workspaceId);

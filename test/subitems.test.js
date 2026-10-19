@@ -170,7 +170,7 @@ test("subitems, update authors and roles persist in the data file", async (t) =>
   });
   await store.flush();
   const doc = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(doc.format, "mini-monday-store/6");
+  assert.equal(doc.format, "mini-monday-store/7");
   const saved = (id) => doc.items.find((item) => item.id === id);
   assert.equal(saved(child.id).parent_id, parent.id);
   assert.equal("parent_id" in saved(parent.id), false);

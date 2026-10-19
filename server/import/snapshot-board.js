@@ -11,7 +11,8 @@
  * (`slices.js`).
  *
  * Beyond SPEC-4 §2, a Board may say where it sits in its source: `folder`
- * (`{ source_id, name }`, or null when it is in none) and `source_name`
+ * (`{ source_id, name, private? }`, or null when it is in none; `private`
+ * only when the source said whether the folder is private) and `source_name`
  * (its own name, where `name` may also name the folder). Both are
  * optional for every source; an invalid one is left out with a warning
  * (unknown, not "in no folder").
@@ -384,12 +385,18 @@ function* readItems(c, raw, ctx) {
 
 // --------------------------------------------------------------- placement
 
-/** The board's `folder`: null when in none, undefined when absent or bad. */
+/**
+ * The board's `folder`: null when in none, undefined when absent or bad
+ * (a `private` that is not a boolean makes it bad: its privacy unknown,
+ * it is not used at all).
+ */
 function readFolder(c, raw, path) {
   if (raw === undefined || raw === null) return raw;
   const id = isPlainObject(raw) ? sourceIdText(raw.source_id) : null;
-  if (id === null || typeof raw.name !== "string") {
-    const message = `Folder ${shown(raw)} is not { source_id, name }; it was left out`;
+  const flag = raw?.private;
+  const flagOk = flag === undefined || typeof flag === "boolean";
+  if (id === null || typeof raw.name !== "string" || !flagOk) {
+    const message = `Folder ${shown(raw)} is not { source_id, name, private? }; it was left out`;
     c.warn(path, "invalid_folder", message);
     return undefined;
   }
@@ -397,7 +404,8 @@ function readFolder(c, raw, path) {
     path: `${path}.name`,
     fallback: "Untitled folder",
   });
-  return { source_id: id, name };
+  const folder = { source_id: id, name };
+  return flag === undefined ? folder : { ...folder, private: flag };
 }
 
 /** The board's `source_name` (trimmed, cut); undefined when absent or bad. */

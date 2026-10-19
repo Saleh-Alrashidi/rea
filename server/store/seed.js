@@ -7,7 +7,9 @@
  * 4 and 17, app 23, install 24); everything SPEC-2 adds follows, and the
  * part-1 boards then get their workspace, kind and members. Seeded boards
  * have the DEFAULT_VIEWS of every new board; their List views are added
- * last (`addListViews`), so the part-1 records keep their IDs. Seeding
+ * last (`addListViews`), so the part-1 records keep their IDs. Spaces,
+ * boards and docs get their sidebar positions in seed order at the end
+ * (`assignSidebarPositions`); the seed has no folders. Seeding
  * writes records directly: it emits no events and sends no notifications
  * beyond the seeded inbox.
  */
@@ -32,6 +34,7 @@ import { insertForm } from "./forms.js";
 import { insertItem } from "./items.js";
 import { insertNote } from "./notes.js";
 import { insertTeam, insertUser } from "./people.js";
+import { assignSidebarPositions } from "./sidebar.js";
 import { insertUpdate } from "./updates.js";
 import {
   ACTIVITY,
@@ -311,4 +314,5 @@ export function seedState(ctx) {
   seedActivity(ctx, seed);
   seedInbox(ctx, seed);
   addListViews(ctx.state);
+  assignSidebarPositions(ctx.state);
 }

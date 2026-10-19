@@ -15,7 +15,12 @@
  * order (SPEC-6 §1.2, `positions.upgradeItemPositions`); `/5` has no
  * replies, edits, pins, likes or mention tokens, which `/6` adds (SPEC-6
  * §2.1: `likes` starts empty and plain bodies that would read as tokens
- * are escaped, `updates.upgradeUpdateBodies`). The store keeps
+ * are escaped, `updates.upgradeUpdateBodies`); `/6` has no folders or
+ * sidebar positions, which `/7` adds (SPEC-6 §3.1: imported boards move
+ * into folders made from their recorded source folders where that names
+ * no folder the Space could not see before, and every Space, folder,
+ * board and doc gets a position in its current order,
+ * `folders.upgradeFolders`). The store keeps
  * a copy of the old file (`keepLegacyCopy`, `<file>.v<version>.bak`) and
  * saves the result in the current format, which older versions refuse as
  * unsupported. Every load then adds a List view to boards without one
@@ -64,12 +69,13 @@ import {
   onBoard,
 } from "../store-state.js";
 import { addListViews, columnRoleProblem, makeColumn } from "./boards.js";
+import { folderProblem, upgradeFolders } from "./folders.js";
 import { upgradeLegacyTexts } from "./legacy-texts.js";
 import { upgradeItemPositions } from "./positions.js";
 import { parentProblem } from "./subitems.js";
 import { updateProblem, upgradeUpdateBodies } from "./updates.js";
 
-const VERSION = 6;
+const VERSION = 7;
 const formatOf = (version) => `mini-monday-store/${version}`;
 export const FORMAT = formatOf(VERSION);
 /** Older versions this one loads: version → upgrade to the next version. */
@@ -79,9 +85,13 @@ const UPGRADES = new Map([
   [3, () => {}],
   [4, upgradeItemPositions],
   [5, upgradeUpdateBodies],
+  [6, upgradeFolders],
 ]);
 /** Collections newer versions added: name → the version that added it. */
-const ADDED_IN = new Map([["likes", 6]]);
+const ADDED_IN = new Map([
+  ["likes", 6],
+  ["folders", 7],
+]);
 export const MAX_DATA_BYTES = 256 * 1024 * 1024;
 const SAVE_DELAY_MS = 50;
 
@@ -98,8 +108,11 @@ const isKey = (v) => typeof v === "string" && /^[\w-]{1,64}$/.test(v);
 const isWebUrl = (v) =>
   typeof v === "string" && v.length <= 2048 && /^https?:\/\/[^\s]+$/i.test(v);
 const importFolder = exact(
-  ["source_id", "name"],
-  (f) => isStr(f.source_id) && isStr(f.name),
+  ["source_id", "name", "private"],
+  (f) =>
+    isStr(f.source_id) &&
+    isStr(f.name) &&
+    (f.private === undefined || typeof f.private === "boolean"),
 );
 const grant = (roles) =>
   exact(
@@ -126,8 +139,9 @@ const CHECKS = {
   scope: (v) => typeof v === "string" && SCOPE_KEY.test(v),
   token: (v) => typeof v === "string" && /^[\w-]{1,512}$/.test(v),
   color: isColor,
-  // Rich text (`store/activity.js`): a string or parts { text } / { user_id };
-  // version 2 kept names in strings (`legacy-texts.js` converts them).
+  // Rich text (`store/activity.js`): a string or parts { text } / { user_id }
+  // / { board_id }; version 2 kept names in strings (`legacy-texts.js`
+  // converts them).
   rich: (v) =>
     isStr(v) ||
     (Array.isArray(v) &&
@@ -135,7 +149,8 @@ const CHECKS = {
       v.every(
         (part) =>
           exact(["text"], (p) => isStr(p.text))(part) ||
-          exact(["user_id"], (p) => isId(p.user_id))(part),
+          exact(["user_id"], (p) => isId(p.user_id))(part) ||
+          exact(["board_id"], (p) => isId(p.board_id))(part),
       )),
   accountRole: oneOf(ACCOUNT_ROLES),
   userStatus: oneOf(USER_STATUSES),
@@ -166,7 +181,8 @@ const CHECKS = {
     ),
   ),
   // `Board.import` (SPEC-4 §4): where an imported board came from, with
-  // the optional source `folder` and the board's own `source_name`.
+  // the optional source `folder` (its `private` flag when the source gave
+  // one) and the board's own `source_name`.
   importMeta: exact(
     [
       "source",
@@ -207,9 +223,13 @@ const SHAPES = {
     "id:id name:str email:str role:accountRole title:str? status:userStatus color:color created_at:str",
   teams: "id:id name:str description:str? members:teamMembers created_at:str",
   workspaces:
-    "id:id name:str description:str? kind:workspaceKind color:color members:grants created_by:id? created_at:str",
+    "id:id name:str description:str? kind:workspaceKind color:color members:grants created_by:id? created_at:str " +
+    "position:num~",
+  folders:
+    "id:id workspace_id:id name:str color:color position:num created_by:id? created_at:str",
   boards:
-    "id:id name:str description:str? state:active creator_id:id? workspace_id:id board_kind:boardKind members:grants import:importMeta~",
+    "id:id name:str description:str? state:active creator_id:id? workspace_id:id folder_id:id~ " +
+    "board_kind:boardKind members:grants import:importMeta~ position:num~",
   groups: "id:slug board_id:id title:str color:str position:int",
   columns:
     "id:slug board_id:id title:str type:type settings:obj role:columnRole~",
@@ -224,8 +244,8 @@ const SHAPES = {
     "created_at:str edited_at:str~ pinned_at:str~",
   likes: "update_id:id user_id:id created_at:str",
   docs:
-    "id:id workspace_id:id title:str visibility:docVisibility members:grants blocks:blocks version:int " +
-    "created_by:id? updated_by:id? created_at:str updated_at:str",
+    "id:id workspace_id:id folder_id:id~ title:str visibility:docVisibility members:grants blocks:blocks " +
+    "version:int created_by:id? updated_by:id? created_at:str updated_at:str position:num~",
   notes:
     "id:id owner_id:id title:str body:str color:color pinned:bool shares:noteShares version:int " +
     "created_at:str updated_at:str",
@@ -314,6 +334,7 @@ function checkColumnRoles(state, fail) {
 /** References consumers rely on; others (creators, grants) may dangle. */
 function checkReferences(state, fail) {
   const refs = [
+    ["folders", "workspace_id", "workspaces"],
     ["boards", "workspace_id", "workspaces"],
     ["docs", "workspace_id", "workspaces"],
     ["forms", "board_id", "boards"],
@@ -325,6 +346,8 @@ function checkReferences(state, fail) {
     const missing = state[name].find((r) => !byId(state[target], r[field]));
     if (missing) fail(`${name} ${missing.id} points at a missing ${field}`);
   }
+  const folders = folderProblem(state);
+  if (folders) fail(folders);
   for (const form of state.forms) {
     const columns = form.questions.map((q) =>
       onBoard(state.columns, form.board_id, q.column_id),

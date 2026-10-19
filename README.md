@@ -94,17 +94,26 @@ Tests point the importer at fake upstream servers with
 [Import from monday.com or ClickUp](#import-from-mondaycom-or-clickup));
 leave them unset otherwise.
 
-The data file format is `mini-monday-store/6` (one manual item order per
-board; update replies, edits, pins and likes). A part-1 file is refused
+The data file format is `mini-monday-store/7` (one manual item order per
+board; update replies, edits, pins and likes; Space folders and sidebar
+positions). A part-1 file is refused
 with a message; move it away and the server reseeds. Older files are
 upgraded once at start-up, the old file is kept as
 `<file>.v<version>.bak` (private, like the data file) and the result is
-saved as `/6`, which older versions refuse as unsupported. A `/5` file
-gains an empty `likes` list, and a plain body that would read as a
-mention token is escaped so it still reads as written. A `/4` file has
-its item positions renumbered per board in display order (1024, 2048, …)
-on its way to `/6`, so every board shows its items as before. A `/3` file
-(no subitems, column roles or update authors) goes through the `/4`
+saved as `/7`, which older versions refuse as unsupported. A `/6` file
+gets one folder per Space and ClickUp folder its imported boards
+recorded, where one of those boards is a Main board (a folder's name is
+visible to the whole Space, so a folder of only private lists is not
+made and its boards stay at the root), moves those boards into it and
+gives a board back its list's own name only while its name is still
+one the importer composed as `<Folder> / <List>` (from the untrimmed
+ClickUp names, cut to 255 characters); every Space, folder, board and
+doc then gets a sidebar position in its current order (1024, 2048, …).
+A `/5` file gains an empty `likes` list, and a plain body that would
+read as a mention token is escaped so it still reads as written. A `/4`
+file has its item positions renumbered per board in display order (1024,
+2048, …) on its way to `/7`, so every board shows its items as before. A
+`/3` file (no subitems, column roles or update authors) goes through the `/4`
 upgrade. A `mini-monday-store/2` file (which wrote people's names into
 notification and activity texts) goes through the `/3` upgrade first:
 names become mentions rendered per viewer, and a name that matches no
@@ -282,9 +291,12 @@ team logs the removal on every board it was a member of.
 ### Workspaces, boards and the inbox
 
 - **Shell**: a top bar (search, notifications bell with live unread count,
-  theme toggle, account menu) and a sidebar (Home, My work, Shared with me,
-  Notes, the current workspace's boards (with the icon of their default
-  view), docs and forms, Teams, Admin).
+  theme toggle, account menu) and a ClickUp-style sidebar (SPEC-6 §3.3):
+  Home, Inbox, My Work, Shared with me, Docs, Notes, Favorites, a tree of
+  every Space (workspace) you can open with its folders, Lists (the icon
+  of their default view), docs and forms, "+" and "…" menus, keyboard
+  navigation and drag and drop (also of task rows onto a List), then
+  Teams and Admin.
   Ctrl/⌘+K opens the command palette over `search` plus quick actions.
 - **Home**: greeting, quick-create tiles, next due items, unread
   notifications, recent boards and docs, and what was shared with you.
@@ -301,6 +313,16 @@ team logs the removal on every board it was a member of.
   At phone width the List toolbar folds into one "View options" menu.
   Viewers get read-only cells and a "View only" badge; controls you
   cannot use are disabled with a reason.
+- **Updates** (monday-style, in the task view's right pane): a composer
+  on top ("@" mentions people and teams, "@@" links a task), then the
+  update cards, pinned first and newest first, with mention chips, Like,
+  Reply (threads of replies), Edit, Pin to top, Copy link and Delete.
+  The pane loads 25 updates with their newest 3 replies; "Show older
+  updates" appends the next 25 and "Show N more replies" loads a thread
+  whole, in pages that fit the API's field budget (`Item.updates_page`,
+  `Update.replies(limit, before_id)`, `Query.updates(ids)`).
+  `#/boards/<id>/items/<itemId>/updates/<updateId>` opens the task view
+  at an update, however old, highlighted.
 - **People columns** accept only people who can open the board
   (`Board.assignable_users` lists them); someone who later loses access
   stays assigned until removed. A toggle the server refuses is undone in
@@ -308,8 +330,10 @@ team logs the removal on every board it was a member of.
 - **Live updates paused**: when a live-update stream is refused (too many
   open streams) or ends for good, a banner under the top bar (in the page
   flow and the Tab order, so it covers nothing) offers "Reload".
-- **Notifications** for shares, assignments, updates on your items, form
-  responses on your boards and role changes arrive live over SSE.
+- **Notifications** for shares, assignments, updates on your items,
+  mentions, replies, likes, form responses on your boards and role
+  changes arrive live over SSE; the bell's Mentions filter lists only
+  mentions.
 
 ### Docs and notes
 
@@ -412,7 +436,8 @@ after the scan ends, visible only to the admin who started it.
 | monday.com workspace   | A workspace (open/closed kept). Boards and docs outside any workspace go to "Main workspace".                                                                                                          |
 | ClickUp Space          | A workspace `<Team> / <Space>` (private spaces closed); workspace-level docs go to `<Team> / Workspace docs`.                                                                                          |
 | monday.com board       | A board (Main/Private/Shareable from `board_kind`) with its groups, columns, items and members (owners → owner, subscribers → editor).                                                                 |
-| ClickUp List           | A board `<Folder> / <List>` (Private when the list, folder or space is), groups "Open" and "Closed" by status type, opening in a List view (then Main table and Kanban).                               |
+| ClickUp Folder         | A folder of the Space holding the boards of its lists, when one of them is a Main board and the folder is not private (its name is visible to the whole Space); else its lists stay at the root.       |
+| ClickUp List           | A board named like the list (Private when the list, folder or space is), groups "Open" and "Closed" by status type, opening in a List view (then Main table and Kanban).                               |
 | CSV file, Excel export | One closed workspace `Imported from <file>` with one Private board named after the file.                                                                                                               |
 | Subitems / subtasks    | Real subitems of their parent (`parent_id`), in their own group (a ClickUp subtask keeps its own status), up to 5 levels deep; deeper ones join their deepest allowed ancestor (`subitems_flattened`). |
 | Updates / comments     | Updates with their original dates and authors (one without a Worklane user is kept by name, the body as written); replies become real replies of their update; text only (HTML is never kept).         |
@@ -459,10 +484,13 @@ source and counts, and the board header shows an "Imported from
 monday.com" (or ClickUp, CSV, Excel) badge linking to the original board
 or list (`http`/`https` only, `rel="noopener noreferrer"`). The GraphQL
 API has the same as `Board.import { source source_id source_url
-source_name folder { source_id name } imported_at imported_by }`, where
-`source_name` is the list's own name and `folder` its ClickUp folder
-(null when folderless or unknown), so boards can be placed in folders
-later without importing them again.
+source_name folder { source_id name private } imported_at imported_by }`,
+where `source_name` is the list's own name and `folder` its ClickUp
+folder (null when folderless or unknown; `private` null when ClickUp did
+not say), so boards can be placed in folders later without importing
+them again. Moving a task to another board logs the move on both boards;
+the other board is named only to people who can open it ("another
+board" for everyone else).
 
 ### What is not exact (always reported)
 
@@ -610,7 +638,8 @@ apps/status-summary/  example iframe app
 sdk/               the iframe-app SDK (served from the apps origin)
 cli/               the mm CLI
 scripts/           browser tests (e2e-smoke, e2e-roles, e2e-hosted,
-                   e2e-import, e2e-clickup, e2e-dnd) and their harness
+                   e2e-import, e2e-clickup, e2e-dnd, e2e-updates) and
+                   their harness
 test/              node:test suites; fixtures/import/ has the fake
                    monday.com and ClickUp servers and an .xlsx writer
 ```
@@ -748,6 +777,7 @@ node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
 node scripts/e2e-import.mjs    # the importer against fake upstreams
 node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
 node scripts/e2e-dnd.mjs       # drag and drop and keyboard moves (SPEC-6)
+node scripts/e2e-updates.mjs   # updates, replies, likes and mentions (SPEC-6)
 ```
 
 - The unit and integration suites cover the GraphQL engine, the store and
@@ -775,8 +805,14 @@ node scripts/e2e-dnd.mjs       # drag and drop and keyboard moves (SPEC-6)
   and covers the List view (status groups and pills, subtasks, the compact
   status menu by mouse and keyboard, search, Show closed) and the task
   view (fields, subtasks,
-  activity with ClickUp authors, a new comment, focus on close), with
-  contrast checks in light and dark. `e2e-dnd.mjs` drags List rows and
+  updates with ClickUp authors, a new update, focus on close), with
+  contrast checks in light and dark. `e2e-updates.mjs` covers the task
+  view's Updates pane: mentions picked by keyboard and mouse ("@" people,
+  "@@" tasks), the mentioned user's notification under Mentions opening
+  the highlighted update in a second browser, a private task, replies
+  arriving live, likes, pins, edits, deletion, a viewer's read-only
+  pane, and paging (older updates appended, a thread loaded whole, a
+  link to the oldest update). `e2e-dnd.mjs` drags List rows and
   kanban cards with the real mouse (reorder, another status group,
   nesting and un-nesting, refused drops, a multi-selection with the bulk
   bar, hover-expand, auto-scroll), moves rows with Alt+arrows and the

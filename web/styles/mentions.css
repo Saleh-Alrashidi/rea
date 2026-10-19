@@ -1,0 +1,301 @@
+/* Mentions (SPEC-6 §2.2): the update composers (a textarea that grows,
+   the primary "Update" button), chips in update bodies (people, teams,
+   tasks, private tasks), the composer's picker listbox under its
+   textarea, the profile popover a person chip opens and the inbox's
+   mention, reply and like icons. Data colors (a task's status dot) come
+   from JS. Logical properties only. */
+
+/* ------------------------------------------------------------ composer */
+
+.update-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cu-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.update-composer:focus-within {
+  border-color: var(--cu-accent);
+  box-shadow: 0 0 0 3px var(--cu-accent-soft);
+}
+
+.update-composer-field {
+  position: relative;
+}
+
+textarea.update-composer-input {
+  width: 100%;
+  height: auto;
+  min-height: 44px;
+  max-height: 40vh;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--text-md);
+  line-height: 1.5;
+  resize: none;
+  field-sizing: content;
+  unicode-bidi: plaintext;
+}
+
+.update-composer-input:focus,
+.update-composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.update-main-composer textarea.update-composer-input {
+  min-height: 64px;
+}
+
+.update-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.update-composer-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-composer .btn-primary {
+  border-color: var(--cu-accent-strong);
+  background: var(--cu-accent-strong);
+}
+
+.update-composer .btn-primary:hover {
+  background: var(--cu-accent-hover);
+}
+
+@media (max-width: 899px) {
+  .update-composer-hint {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------- chips */
+
+.mention-chip {
+  display: inline;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--cu-accent-soft);
+  color: var(--cu-accent-text);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  white-space: normal;
+  cursor: pointer;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+span.mention-chip {
+  cursor: default;
+}
+
+.mention-chip .icon {
+  margin-inline-end: 3px;
+  vertical-align: -1px;
+}
+
+.mention-chip:hover {
+  text-decoration: underline;
+}
+
+span.mention-chip:hover {
+  text-decoration: none;
+}
+
+.mention-chip:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.mention-task {
+  border: 1px solid color-mix(in srgb, var(--cu-accent) 30%, transparent);
+  background: var(--color-panel);
+}
+
+.mention-private {
+  background: var(--color-sunken);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* -------------------------------------------------------------- picker */
+
+.mention-picker {
+  position: absolute;
+  z-index: 4;
+  inset-block-start: calc(100% + 6px);
+  inset-inline: -8px;
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-raised);
+  box-shadow: var(--shadow-md);
+  list-style: none;
+}
+
+.mention-picker[hidden] {
+  display: none;
+}
+
+.mention-heading {
+  padding: 6px 8px 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mention-empty {
+  padding: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.mention-option.active {
+  background: var(--cu-accent-soft);
+}
+
+.mention-option-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.mention-option-name,
+.mention-option-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-option-name {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.mention-option-detail {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.mention-option.muted .mention-option-name,
+.mention-option.muted .avatar {
+  opacity: 0.7;
+}
+
+.mention-no-access {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-warning-soft);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.mention-status-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-inline: 7px;
+  border-radius: 50%;
+}
+
+.mention-status-dot.empty {
+  border: 1.5px dashed var(--color-border-strong);
+}
+
+/* ------------------------------------------------------------- profile */
+
+.mention-profile-popover {
+  min-width: 240px;
+  padding: 14px;
+}
+
+.mention-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mention-profile-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.mention-profile-name {
+  color: var(--color-text);
+  font-size: var(--text-md);
+}
+
+.mention-profile-email {
+  overflow: hidden;
+  color: var(--cu-accent-text);
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------- inbox (mentions, replies) */
+
+.notifications-filter {
+  padding-inline: var(--space-3);
+}
+
+.notification-avatar {
+  position: relative;
+  flex: none;
+}
+
+.notification-avatar .notification-icon {
+  position: absolute;
+  inset-block-end: -4px;
+  inset-inline-end: -6px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-raised);
+  box-sizing: content-box;
+}
+
+.notification-mention,
+.notification-reply,
+.notification-like {
+  background: var(--cu-accent-strong);
+  color: var(--color-text-on-primary);
+}

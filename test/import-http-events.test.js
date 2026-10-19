@@ -19,10 +19,10 @@ const stub = (source, change = () => {}) => ({
     return snapshot;
   },
 });
-/** Roadmap sits in a ClickUp folder (Hiring in none). */
+/** Roadmap sits in a public ClickUp folder (Hiring in none). */
 const inFolder = (snapshot) => {
   const [roadmap, hiring] = snapshot.workspaces[0].boards;
-  roadmap.folder = { source_id: "f-7", name: "Product" };
+  roadmap.folder = { source_id: "f-7", name: "Product", private: false };
   roadmap.source_name = "Roadmap";
   hiring.folder = null;
 };
@@ -137,8 +137,8 @@ test("GraphQL shows Board.import, the import's activity label and import_data", 
     `query ($ids: [ID!], $hiring: [ID!]) {
       me { capabilities }
       imported: boards(ids: $ids) {
-        import { source source_id source_url source_name folder { source_id name }
-          imported_at imported_by { id name } }
+        import { source source_id source_url source_name
+          folder { source_id name private } imported_at imported_by { id name } }
         activity_logs(limit: 10) { kind actor { id } actor_label }
       }
       hiring: boards(ids: $hiring) { import { source_name folder { name } } }
@@ -153,7 +153,7 @@ test("GraphQL shows Board.import, the import's activity label and import_data", 
     source_id: "b-roadmap",
     source_url: "https://acme.monday.com/boards/101",
     source_name: "Roadmap",
-    folder: { source_id: "f-7", name: "Product" },
+    folder: { source_id: "f-7", name: "Product", private: false },
     imported_at: board.import.imported_at,
     imported_by: { id: s.ids.users.alex, name: "Alex Rivera" },
   });

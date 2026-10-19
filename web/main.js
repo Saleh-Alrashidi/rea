@@ -154,6 +154,13 @@ function paletteActions(ctx, flows) {
       keywords: ["create", "document"],
       run: () => flows.doc(),
     },
+    can(ctx.me, "create_workspace") && {
+      id: "new-space",
+      label: "New Space",
+      icon: "workspace",
+      keywords: ["create", "workspace"],
+      run: () => flows.workspace(),
+    },
     can(ctx.me, "create_note") && {
       id: "new-note",
       label: "New note",
