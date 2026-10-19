@@ -9,11 +9,13 @@
  * The same task can show in several groups (grouped by assignee), so
  * focus keys carry the group key as well as the item ID.
  *
- * What moving rows (SPEC-6 §1.4) builds on: a row carries `data-item-id`,
- * `data-parent-id` (none at the top level) and `data-group-key`, and its
- * `aria-level` is its depth + 1; each item has its `position` in the
- * board's manual order (`decodeItem`); a drag handle belongs at the start
- * of the name cell (`nameCell`), before the expand toggle.
+ * Moving rows (SPEC-6 §1.4): for editors the name cell starts with a
+ * gutter holding the 6-dot drag handle and the row's selection checkbox
+ * (both shown on hover and focus, `list-dnd.js` and `list-moves.js`), and
+ * ends with the row's "…" menu of moves; Ctrl/⌘- or Shift-clicking the
+ * name selects instead of opening. A row carries `data-row-key`
+ * (`<group key>:<item ID>`), `data-item-id`, `data-parent-id` (none at
+ * the top level) and `data-group-key`; its `aria-level` is its depth + 1.
  */
 
 import { h } from "../../dom.js";
@@ -21,6 +23,7 @@ import { iconButton } from "../components/button.js";
 import { isRebuilding } from "../components/focus.js";
 import { plural } from "../components/format.js";
 import { icon } from "../components/icon.js";
+import { menuButton } from "../components/menu.js";
 import { listCell } from "./list-cells.js";
 import { highlightParts } from "./list-model.js";
 import { openStatusMenu } from "./status-menu.js";
@@ -102,6 +105,17 @@ export function statusCircle(ctx, { item, key }) {
   return circle;
 }
 
+/** A click on the name opens the task; with Ctrl/⌘ or Shift it selects. */
+function onNameClick(ctx, { item, key }, event) {
+  const select = event.ctrlKey || event.metaKey || event.shiftKey;
+  if (!select || !ctx.caps.edit) {
+    ctx.openItem(item.id);
+    return;
+  }
+  event.preventDefault();
+  ctx.select(key, { range: Boolean(event.shiftKey) });
+}
+
 function nameButton(ctx, { item, key }) {
   const parts = highlightParts(item.name, ctx.search);
   return h(
@@ -112,7 +126,7 @@ function nameButton(ctx, { item, key }) {
       dir: "auto",
       title: item.name,
       dataset: { focusKey: `list-open:${key}` },
-      on: { click: () => ctx.openItem(item.id) },
+      on: { click: (event) => onNameClick(ctx, { item, key }, event) },
     },
     parts.map((part) => (part.match ? h("mark", null, part.text) : part.text)),
   );
@@ -205,16 +219,44 @@ function chips(ctx, { row, key }) {
   ];
 }
 
+/** The drag handle and selection checkbox at the start of a row. */
+function gutter(ctx, { item, key }) {
+  if (!ctx.caps.edit) return null;
+  return [
+    h(
+      "span",
+      {
+        class: "list-drag-handle",
+        title: "Drag to move",
+        "aria-hidden": "true",
+      },
+      icon("drag", { size: 14 }),
+    ),
+    h("input", {
+      type: "checkbox",
+      class: "list-select",
+      checked: ctx.prefs.selected.has(item.id),
+      "aria-label": `Select ${item.name}`,
+      dataset: { focusKey: `list-select:${key}` },
+      on: {
+        click: (event) => ctx.select(key, { range: Boolean(event.shiftKey) }),
+      },
+    }),
+  ];
+}
+
 function nameCell(ctx, { row, key }) {
   const { item } = row;
   const renaming = ctx.prefs.renaming === key;
+  const editable = ctx.caps.edit && !renaming;
   return h(
     "div",
     { role: "gridcell", class: "list-cell list-name-cell" },
+    gutter(ctx, { item, key }),
     expandToggle(ctx, { row, key }),
     statusCircle(ctx, { item, key }),
     renaming ? renameInput(ctx, { item, key }) : nameButton(ctx, { item, key }),
-    ctx.caps.edit && !renaming
+    editable
       ? iconButton({
           icon: "edit",
           label: `Rename ${item.name}`,
@@ -225,6 +267,16 @@ function nameCell(ctx, { row, key }) {
         })
       : null,
     chips(ctx, { row, key }),
+    editable
+      ? menuButton({
+          label: `Move ${item.name}`,
+          size: "sm",
+          placement: "bottom-start",
+          className: "list-row-menu",
+          dataset: { focusKey: `list-menu:${key}` },
+          items: () => ctx.rowMenu(key),
+        })
+      : null,
   );
 }
 
@@ -242,14 +294,17 @@ export function listRow(ctx, { row, group, cells }) {
     Boolean(status) &&
     isDoneOption(statusOption(status, item.values[status.id] ?? null));
   const rowCtx = { ...ctx, keyPrefix: `list-cell:${key}` };
+  const selected = ctx.caps.edit && ctx.prefs.selected.has(item.id);
   const element = h(
     "div",
     {
       role: "row",
-      class: ["list-row", done && "done"],
+      class: ["list-row", done && "done", selected && "selected"],
       "aria-level": String(row.depth + 1),
       "aria-expanded": row.childCount > 0 ? String(row.expanded) : null,
+      "aria-selected": ctx.caps.edit ? String(selected) : null,
       dataset: {
+        rowKey: key,
         itemId: item.id,
         parentId: item.parentId ?? null,
         groupKey: group.key,

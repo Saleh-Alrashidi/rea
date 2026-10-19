@@ -78,20 +78,17 @@ export function expectedGroups(data) {
   ];
 }
 
-const isClosed = (task) => ["closed", "done"].includes(task.status.type);
-
 /**
- * The subtask names of top-level task `name` in `data`, in board order:
- * ClickUp's closed tasks go to the board's Closed group, which follows
- * the Open one, so closed subtasks come after the others.
+ * The subtask names of top-level task `name` in `data`, in ClickUp's own
+ * order: the import keeps it as the board's manual order, which the List
+ * and task views follow under a parent whatever the subtasks' statuses
+ * (SPEC-6 §1.2).
  */
 export function subtaskNames(data, name) {
   const parent = data.tasks.find((task) => task.name === name);
-  const subtasks = data.tasks.filter((task) => task.parent === parent.id);
-  return [
-    ...subtasks.filter((task) => !isClosed(task)),
-    ...subtasks.filter(isClosed),
-  ].map((task) => task.name);
+  return data.tasks
+    .filter((task) => task.parent === parent.id)
+    .map((task) => task.name);
 }
 
 /** The List view group whose pill reads `label`. */

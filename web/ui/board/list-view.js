@@ -9,10 +9,11 @@
  * board's session memory (`ctx.prefs`), changed through `ctx.change`.
  * View-only users get static cells and no add or rename controls.
  *
- * What dropping rows into a group (SPEC-6 §1.4) builds on: each group's
- * section carries `data-group-key`, and its `create` (`listGroups`: the
- * board group and the column values of the grouping) is what a task
- * moved into that group takes; rows are built by `listRow`.
+ * Moving tasks (SPEC-6 §1.4): editors drag rows (`list-dnd.js`), select
+ * them for the bulk bar (`list-bulk.js`) and move the focused row with
+ * Alt+arrows or its "…" menu (`list-moves.js`); every move resolves
+ * against the rendered rows (`listLayout`, `list-dnd-model.js`). Each
+ * group's section carries `data-group-key`, each row `data-row-key`.
  */
 
 import { clear, h } from "../../dom.js";
@@ -20,7 +21,11 @@ import { avatar } from "../components/avatar.js";
 import { button } from "../components/button.js";
 import { emptyState } from "../components/empty-state.js";
 import { icon } from "../components/icon.js";
+import { bulkBar } from "./list-bulk.js";
+import { attachListDrag } from "./list-dnd.js";
+import { listLayout } from "./list-dnd-model.js";
 import { listColumns, listGroups } from "./list-model.js";
+import { moveTools } from "./list-moves.js";
 import { listRow } from "./list-row.js";
 import { personOf, textColorOn } from "./values.js";
 
@@ -113,12 +118,23 @@ function addRow(ctx, group) {
   );
 }
 
-/** Up/Down move between rows, Right/Left expand and collapse subtasks. */
-function onGridKeydown(event) {
+/**
+ * Up/Down move between rows, Right/Left expand and collapse subtasks;
+ * with Alt (editors), arrows move the focused row (`view.keyMove`).
+ */
+function onGridKeydown(view, event) {
   const { key, target } = event;
-  if (!ARROWS.has(key) || target.matches("input, textarea, select")) return;
+  const typing = target.matches("textarea, select, input:not([type=checkbox])");
+  if (!ARROWS.has(key) || typing) return;
   const row = target.closest(".list-row");
-  if (!row || !target.closest(".list-name-cell")) return;
+  if (!row) return;
+  if (event.altKey) {
+    if (!view.caps.edit || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    view.keyMove(row.dataset.rowKey, key);
+    return;
+  }
+  if (!target.closest(".list-name-cell")) return;
   event.preventDefault();
   if (key === "ArrowDown" || key === "ArrowUp") {
     const rows = [...event.currentTarget.querySelectorAll(".list-row")];
@@ -214,7 +230,7 @@ function groupBlock(ctx, { group, cells }) {
         id: gridId,
         "aria-label": `${group.label} tasks`,
         hidden: group.collapsed,
-        on: { keydown: onGridKeydown },
+        on: { keydown: (event) => onGridKeydown(ctx, event) },
       },
       headerRow(ctx, cells),
       rows,
@@ -353,16 +369,30 @@ export function renderList(container, ctx) {
   const { roles, cells } = listColumns(ctx.board, ctx.prefs);
   const shown = cells.filter((cell) => cell.shown);
   const searching = ctx.search.trim() !== "";
-  const { groups } = listGroups(ctx.board, {
+  const { groups, keysOf } = listGroups(ctx.board, {
     prefs: ctx.prefs,
     roles,
     users: ctx.users,
     search: ctx.search,
   });
-  const view = viewContext(ctx, roles);
+  const layout = listLayout(ctx.board, { groups, keysOf });
+  // Deleted tasks leave the selection.
+  for (const id of ctx.prefs.selected) {
+    if (!layout.byId.has(id)) ctx.prefs.selected.delete(id);
+  }
+  const view = { ...viewContext(ctx, roles), layout };
+  Object.assign(view, moveTools(view));
+  const selecting = ctx.caps.edit && ctx.prefs.selected.size > 0;
   const root = h(
     "div",
-    { class: ["list-view", !ctx.caps.edit && "readonly"] },
+    {
+      class: [
+        "list-view",
+        !ctx.caps.edit && "readonly",
+        ctx.caps.edit && "can-move",
+        selecting && "selecting",
+      ],
+    },
     ctx.board.truncated
       ? h(
           "p",
@@ -374,7 +404,9 @@ export function renderList(container, ctx) {
     ctx.board.groups.length === 0
       ? null
       : groups.map((group) => groupBlock(view, { group, cells: shown })),
+    bulkBar(view),
   );
   setGridColumns(root, shown);
   clear(container).append(root);
+  attachListDrag(root, view);
 }

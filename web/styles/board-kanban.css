@@ -133,3 +133,42 @@
 .lane-add {
   padding: 0 8px 10px;
 }
+
+/* Drop line (SPEC-6 §1.5): the List view's 2px accent line before a
+   card, after the last one or at the top of an empty lane; red when the
+   drop would change nothing. The cards' gap is 8px. */
+.kanban-card,
+.lane-cards {
+  position: relative;
+}
+
+.kanban-card.drop-before::before,
+.kanban-card.drop-after::after,
+.lane-cards.drop-end::before {
+  position: absolute;
+  inset-inline: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--cu-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.kanban-card.drop-before::before {
+  inset-block-start: -6px;
+}
+
+.kanban-card.drop-after::after {
+  inset-block-end: -6px;
+}
+
+.lane-cards.drop-end::before {
+  inset-inline: 8px;
+  inset-block-start: 0;
+}
+
+.kanban-card.drop-invalid::before,
+.kanban-card.drop-invalid::after,
+.lane-cards.drop-invalid::before {
+  background: var(--color-danger);
+}

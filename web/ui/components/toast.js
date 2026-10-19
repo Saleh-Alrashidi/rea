@@ -24,6 +24,8 @@ const MAX_TOASTS = 4;
 const MAX_MESSAGE = 300;
 
 let region = null;
+/** Each shown toast's dismissal, so one pushed out still reports it. */
+const dismissals = new WeakMap();
 
 /** Sets the element that holds toasts (an `aria-live` region). */
 export function mountToasts(element) {
@@ -45,17 +47,26 @@ function clip(text) {
 /**
  * Shows a toast. `source` names an embedded app so its notices are labelled;
  * `action` adds one button (it dismisses the toast, then runs `onClick`).
+ * `onDismiss` runs once when the toast goes, however it goes. Returns
+ * `{ dismiss() }`, or null when no toast region is mounted.
  * @param {{ message: string, type?: "success" | "error" | "info",
  *   timeout?: number, source?: string,
- *   action?: { label: string, onClick(): void } }} options
+ *   action?: { label: string, onClick(): void },
+ *   onDismiss?: () => void }} options
+ * @returns {{ dismiss(): void } | null}
  */
-export function showToast({ message, type = "info", timeout, source, action }) {
-  if (!region) return;
+export function showToast(options) {
+  const { message, type = "info", timeout, source, action } = options;
+  if (!region) return null;
   const kind = TYPES.has(type) ? type : "info";
   let timer = null;
+  let gone = false;
   const dismiss = () => {
     globalThis.clearTimeout(timer);
     toast.remove();
+    if (gone) return;
+    gone = true;
+    options.onDismiss?.();
   };
   const toast = h(
     "div",
@@ -98,10 +109,14 @@ export function showToast({ message, type = "info", timeout, source, action }) {
     ),
   );
   while (region.childElementCount >= MAX_TOASTS) {
-    region.firstElementChild.remove();
+    const oldest = region.firstElementChild;
+    dismissals.get(oldest)?.();
+    oldest.remove();
   }
+  dismissals.set(toast, dismiss);
   region.append(toast);
   timer = globalThis.setTimeout(dismiss, clampTimeout(timeout));
+  return { dismiss };
 }
 
 /** Shows an error toast for a failed request. */
