@@ -2,6 +2,11 @@
  * Inline-editable text: an input styled as plain text that commits on Enter
  * or blur and reverts on Escape.
  *
+ * It commits only after a real edit: what the input shows is not always
+ * its value (an `<input>` drops line breaks, SPEC-5 §6), so focusing and
+ * leaving it compares the text with what it first showed, not with the
+ * value. Multi-line values belong in a textarea.
+ *
  * A number input whose text is not a number (`validity.badInput`, e.g. "3e")
  * reports its value as "", which must not be taken for a deliberate clear:
  * such text is never committed. Enter keeps it and shows the browser's
@@ -14,8 +19,9 @@ import { isRebuilding } from "./focus.js";
 import { showToast } from "./toast.js";
 
 /**
- * Builds an inline editor. `onCommit(next)` runs once per changed value;
- * `required` reverts empty input instead of committing it.
+ * Builds an inline editor. `onCommit(next)` runs once per edit that
+ * changes the value; `required` reverts empty input instead of committing
+ * it.
  *
  * @param {{ value: string, label: string, onCommit(next: string): void,
  *   className?: string, maxLength?: number, required?: boolean,
@@ -47,6 +53,7 @@ export function inlineInput(options) {
     placeholder: placeholder || null,
     autocomplete: "off",
     spellcheck: type === "text" ? "true" : null,
+    dir: type === "text" ? "auto" : null,
     dataset: { focusKey },
     value: committed,
     on: {
@@ -73,11 +80,13 @@ export function inlineInput(options) {
     },
   });
 
+  // The text as the input shows `committed` (without its line breaks).
+  let shown = input.value;
   const badInput = () => input.validity?.badInput === true;
-  const changed = () => input.value !== committed;
+  const changed = () => input.value !== shown;
 
   function restore() {
-    input.value = committed;
+    input.value = shown;
     input.removeAttribute("aria-invalid");
   }
 
@@ -98,17 +107,14 @@ export function inlineInput(options) {
       return;
     }
     const next = trim ? input.value.trim() : input.value;
-    if (required && next === "") {
-      input.value = committed;
-      return;
-    }
-    if (next === committed) {
-      input.value = committed;
+    if (!changed() || next === committed || (required && next === "")) {
+      restore();
       return;
     }
     committed = next;
     input.value = next;
     input.defaultValue = next;
+    shown = input.value;
     onCommit(next);
   }
 

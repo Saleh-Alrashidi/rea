@@ -1,0 +1,63 @@
+/* ClickUp look tokens (SPEC-5 §5) for the List view, its header and the
+   task view. `--cu-accent` is for fills, borders and focus only (white
+   text on it is under 4.5:1); buttons use `--cu-accent-strong` and accent
+   text `--cu-accent-text`. Every color is defined for light and both dark
+   blocks, and text colors meet 4.5:1 on the panel. */
+
+:root {
+  --cu-accent: #7b68ee;
+  --cu-accent-strong: #6a57e3;
+  --cu-accent-hover: #5a47d4;
+  --cu-accent-soft: #efedfd;
+  --cu-accent-text: #5f4bd8;
+  --cu-border: #e9ebf0;
+  --cu-header-text: #646d7a;
+  --cu-row-hover: #f7f8fa;
+  --cu-mark: #fff1a8;
+  --cu-indent: 24px;
+  --cu-row-height: 36px;
+  --cu-priority-urgent: #f50000;
+  --cu-priority-high: #f8ae00;
+  --cu-priority-normal: #6fddff;
+  --cu-priority-low: #b0b6bf;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cu-accent: #7b68ee;
+    --cu-accent-strong: #6a57e3;
+    --cu-accent-hover: #5a47d4;
+    --cu-accent-soft: #2a2652;
+    --cu-accent-text: #ada2ff;
+    --cu-border: #262838;
+    --cu-header-text: #9aa1ad;
+    --cu-row-hover: #1d1e2b;
+    --cu-mark: #5c4d12;
+    --cu-priority-urgent: #ff5c5c;
+    --cu-priority-high: #ffc53d;
+    --cu-priority-normal: #6fddff;
+    --cu-priority-low: #8b929c;
+  }
+}
+
+:root[data-theme="dark"] {
+  --cu-accent: #7b68ee;
+  --cu-accent-strong: #6a57e3;
+  --cu-accent-hover: #5a47d4;
+  --cu-accent-soft: #2a2652;
+  --cu-accent-text: #ada2ff;
+  --cu-border: #262838;
+  --cu-header-text: #9aa1ad;
+  --cu-row-hover: #1d1e2b;
+  --cu-mark: #5c4d12;
+  --cu-priority-urgent: #ff5c5c;
+  --cu-priority-high: #ffc53d;
+  --cu-priority-normal: #6fddff;
+  --cu-priority-low: #8b929c;
+}
+
+@media (hover: none) {
+  :root {
+    --cu-row-height: 40px;
+  }
+}

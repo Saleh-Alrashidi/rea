@@ -11,6 +11,10 @@
  * form submissions) and value changes. People already in a value stay
  * when they lose access; nothing rewrites existing values.
  *
+ * Items may be subitems of another item on their board (`parent_id`,
+ * SPEC-5 §1.1, invariants in `subitems.js`); deleting an item deletes its
+ * subitems too.
+ *
  * Mutators without a creator take a trailing `{ actorId }` option.
  */
 import { canBeAssigned } from "../access.js";
@@ -42,20 +46,27 @@ import {
   resourceUrl,
 } from "./activity.js";
 import { removeItems, sortedGroups } from "./boards.js";
+import { newItemParent } from "./subitems.js";
 
 const knownUser = (state, id) => id === null || byId(state.users, id) !== null;
 /** Every board's name column: its value is the item name. */
 const NAME_COLUMN = Object.freeze({ id: "name", type: "name" });
 
-/** Appends a new item at the end of its group. */
-export function insertItem(ctx, { boardId, groupId, name, values, creatorId }) {
+/**
+ * Appends a new item at the end of its group; `parentId` (a checked
+ * parent, see `newItemParent`) makes it a subitem.
+ */
+export function insertItem(ctx, fields) {
+  const { boardId, groupId, name, values, creatorId } = fields;
   const { state } = ctx;
   const inGroup = (r) => r.board_id === boardId && r.group_id === groupId;
+  const parentId = fields.parentId ?? null;
   const at = ctx.now();
   return push(state.items, {
     id: nextId(state),
     board_id: boardId,
     group_id: groupId,
+    ...(parentId === null ? {} : { parent_id: parentId }),
     name,
     position: nextPosition(state.items.filter(inGroup)),
     state: "active",
@@ -66,10 +77,16 @@ export function insertItem(ctx, { boardId, groupId, name, values, creatorId }) {
   });
 }
 
-export function insertUpdate(ctx, { itemId, body, creatorId }) {
+/**
+ * Appends an update; `authorName` (SPEC-5 §1.4, imports) names a source
+ * author without a Worklane user and is absent otherwise.
+ */
+export function insertUpdate(ctx, fields) {
+  const { itemId, body, creatorId, authorName = null } = fields;
   const update = { id: nextId(ctx.state), item_id: itemId, body };
-  const fields = { creator_id: creatorId, created_at: ctx.now() };
-  return push(ctx.state.updates, { ...update, ...fields });
+  const meta = { creator_id: creatorId, created_at: ctx.now() };
+  const author = authorName === null ? {} : { author_name: authorName };
+  return push(ctx.state.updates, { ...update, ...meta, ...author });
 }
 
 function itemEvent(type, item, extra = {}) {
@@ -164,15 +181,9 @@ export function notifyAssigned(ctx, { item, before, after, actorId }) {
 /** Creates an item; shared by `createItem` and form submissions. */
 export function addItem(ctx, fields, activity) {
   const { state } = ctx;
-  const { boardId, groupId, name, values, creatorId } = fields;
+  const { boardId, groupId, name, values } = fields;
   const stored = storedValues(ctx, boardId, values);
-  const item = insertItem(ctx, {
-    boardId,
-    groupId,
-    name,
-    values: stored,
-    creatorId,
-  });
+  const item = insertItem(ctx, { ...fields, values: stored });
   recordActivity(ctx, {
     boardId,
     itemId: item.id,
@@ -196,6 +207,14 @@ function itemReads(state) {
     },
     countItems: (boardId) => forBoard(state.items, boardId).length,
     getItem: (id) => byId(state.items, id),
+    /** How many updates each item has: `Map(itemId → count)`, no zeros. */
+    countUpdatesByItem() {
+      const counts = new Map();
+      for (const { item_id } of state.updates) {
+        counts.set(item_id, (counts.get(item_id) ?? 0) + 1);
+      }
+      return counts;
+    },
     /** Updates of an item, newest first. */
     listUpdates(itemId, { limit = 25 } = {}) {
       requireCount(limit, "limit", 0);
@@ -353,19 +372,30 @@ export function itemApi(ctx) {
   };
   return {
     ...itemReads(state),
-    /** Creates an item at the end of `groupId` (default: the first group). */
+    /**
+     * Creates an item at the end of `groupId` (default: the first group),
+     * or a subitem of `parentId` (default group: the parent's). A bad
+     * parent fails with `not_found` or `invalid_parent`.
+     */
     createItem({
       boardId,
       groupId = null,
       name,
       values = {},
       creatorId = null,
+      parentId = null,
     }) {
+      if (!byId(state.boards, boardId)) return null;
+      const parent =
+        parentId === null ? null : newItemParent(state, { boardId, parentId });
+      if (parent?.ok === false) return parent;
       const groups = sortedGroups(state, boardId);
-      const group = groupId === null ? groups[0] : byId(groups, groupId);
+      const target = groupId ?? parent?.group_id ?? null;
+      const group = target === null ? groups[0] : byId(groups, target);
       if (!group || !knownUser(state, creatorId)) return null;
       requireText(name, "name");
       const fields = { boardId, groupId: group.id, name, values, creatorId };
+      if (parent) fields.parentId = parent.id;
       const activity = { kind: "item_created", actorId: creatorId };
       const item = addItem(ctx, fields, activity);
       return commit(ctx, itemEvent("item_created", item), item);
@@ -393,11 +423,18 @@ export function itemApi(ctx) {
       const group = item && onBoard(state.groups, item.board_id, groupId);
       return group ? move(item, group, actorId) : null;
     },
+    /**
+     * Deletes the item with its subitems: one activity entry (counting
+     * the subitems) and one `item_deleted` event per removed item.
+     */
     deleteItem(id, { actorId = null } = {}) {
       const item = byId(state.items, id);
       if (!item) return null;
-      removeItems(state, (record) => record === item);
-      log(item, "item_deleted", { actorId });
+      const removed = removeItems(state, (record) => record === item);
+      const subitems = removed.filter((record) => record !== item);
+      const subitemsDeleted = subitems.length;
+      log(item, "item_deleted", { actorId, subitemsDeleted });
+      ctx.pending.unshift(...subitems.map((r) => itemEvent("item_deleted", r)));
       const deleted = Object.freeze({ ...item, state: "deleted" });
       return commit(ctx, itemEvent("item_deleted", item), deleted);
     },

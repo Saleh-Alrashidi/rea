@@ -2,8 +2,9 @@
  * Boards, groups, columns and views: the part-1 board API plus SPEC-2
  * board kinds, workspaces and members. `boards` lists only accessible
  * boards; every board mutation checks the role SPEC-2 §1.2 requires
- * (groups → editor; name, description, kind, columns, delete → owner)
- * through `server/access.js`.
+ * (groups and views → editor; name, description, kind, columns, delete →
+ * owner) through `server/access.js`. Column roles and the `list` view
+ * type are SPEC-5 §1.2 and §1.5.
  */
 import {
   boardAccess,
@@ -12,7 +13,7 @@ import {
   requireCapability,
 } from "../access.js";
 import { isColor, isPlainObject } from "../input.js";
-import { GROUP_COLOR } from "../store-state.js";
+import { COLUMN_ROLES, GROUP_COLOR, VIEW_TYPES } from "../store-state.js";
 import {
   accessibleBoards,
   badInput,
@@ -159,6 +160,13 @@ const Mutation = wrapAll(write, {
     if (type === "name") badInput("A board has exactly one name column");
     return ctx.store.createColumn(board.id, { title, type }, actor(ctx));
   },
+  create_board_view(_p, args, ctx) {
+    const board = requireBoard(ctx, args.board_id, "editor");
+    const given = args.name ?? null;
+    const name = given === null ? undefined : readName(given, "View name");
+    const result = ctx.store.createView(board.id, { type: args.type, name });
+    return storeResult(result, () => notFound("Board", board.id));
+  },
 });
 
 /** Apps run only with an apps origin (SPEC-3 §3: off without one). */
@@ -204,6 +212,10 @@ const Group = {
 };
 
 export const definition = {
+  enums: {
+    ColumnRole: Object.keys(COLUMN_ROLES),
+    BoardViewType: [...VIEW_TYPES],
+  },
   types: {
     Query: "boards(ids:[ID!],limit:Int=25,page:Int=1):[Board!]!",
     Board: `id:ID! name:String! description:String state:State! url:String!
@@ -216,9 +228,10 @@ export const definition = {
     Group: `id:String! title:String! color:String! position:Int!
       items_page(limit:Int=25,cursor:String):ItemsPage!`,
     ItemsPage: "cursor:String items:[Item!]!",
-    Column: "id:String! title:String! type:ColumnType! settings_str:String!",
+    Column:
+      "id:String! title:String! type:ColumnType! settings_str:String! role:ColumnRole",
     BoardView:
-      "id:ID! name:String! type:String! app_install_id:ID app_url:String",
+      "id:ID! name:String! type:BoardViewType! app_install_id:ID app_url:String",
     Mutation: `create_board(board_name:String!,description:String,board_kind:BoardKind="public",workspace_id:ID):Board!
       update_board(board_id:ID!,board_attribute:BoardAttribute!,new_value:String!):Board!
       delete_board(board_id:ID!):Board!
@@ -226,7 +239,8 @@ export const definition = {
       create_group(board_id:ID!,group_name:String!,group_color:String):Group!
       update_group(board_id:ID!,group_id:String!,group_attribute:GroupAttribute!,new_value:String!):Group!
       delete_group(board_id:ID!,group_id:String!):Group!
-      create_column(board_id:ID!,title:String!,column_type:ColumnType!):Column!`,
+      create_column(board_id:ID!,title:String!,column_type:ColumnType!):Column!
+      create_board_view(board_id:ID!,type:BoardViewType!,name:String):BoardView!`,
   },
   resolvers: { Query, Mutation, Board, Group, BoardView: { app_url: appUrl } },
   extras: {
@@ -240,5 +254,12 @@ export const definition = {
         "Active users who can open the board and whom the caller may see: the people a people column accepts.",
     },
     "Query.boards": { description: "Boards the caller can access." },
+    "Column.role": {
+      description: "What the column means in its source (set by imports).",
+    },
+    "Mutation.create_board_view": {
+      description:
+        "Adds a list, table or kanban view (each once per board, at most 20 views).",
+    },
   },
 };

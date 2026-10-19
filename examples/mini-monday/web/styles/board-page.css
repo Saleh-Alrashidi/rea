@@ -1,5 +1,7 @@
 /* Board page: layout inside the page outlet, the board header (name,
-   description, badges, view tabs, toolbar) and app views. */
+   description, badges, view tabs, toolbar) and app views. In the List
+   view (`.board-page[data-view="list"]`, SPEC-5 §5) the header gets the
+   ClickUp look: a breadcrumb title row, accent tabs and toolbar. */
 
 .board-page {
   display: flex;
@@ -113,6 +115,28 @@
   color: var(--color-primary-text);
 }
 
+.view-add {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: var(--space-1);
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.view-add:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -157,6 +181,108 @@
 
 .search-input:focus-visible {
   outline: none;
+}
+
+/* ----------------------------------------------- List view header */
+
+.board-page[data-view="list"] .board-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-1);
+  padding-top: var(--space-3);
+}
+
+.board-page[data-view="list"] .board-eyebrow {
+  margin: 0;
+}
+
+.board-page[data-view="list"] .board-eyebrow::after {
+  margin-inline-start: var(--space-1);
+  color: var(--color-text-muted);
+  content: "/";
+}
+
+.board-page[data-view="list"] .board-title-row {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.board-page[data-view="list"] .board-name-heading,
+.board-page[data-view="list"] .board-name {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
+}
+
+.board-page[data-view="list"] .board-description,
+.board-page[data-view="list"] .view-tabs,
+.board-page[data-view="list"] .toolbar {
+  flex-basis: 100%;
+}
+
+.board-page[data-view="list"] .view-tabs {
+  margin-top: var(--space-2);
+  border-bottom-color: var(--cu-border);
+}
+
+.board-page[data-view="list"] .view-tab {
+  padding: 8px 10px;
+  font-size: var(--text-sm);
+}
+
+.board-page[data-view="list"] .view-tab.active {
+  border-bottom-color: var(--cu-accent);
+}
+
+.board-page[data-view="list"] .view-tab.active .icon {
+  color: var(--cu-accent-text);
+}
+
+.board-page[data-view="list"] .toolbar {
+  gap: 6px;
+  padding: var(--space-2) 0;
+}
+
+.board-page[data-view="list"] .new-item {
+  border-color: var(--cu-accent-strong);
+  background: var(--cu-accent-strong);
+  color: #fff;
+}
+
+.board-page[data-view="list"] .new-item:hover {
+  border-color: var(--cu-accent-hover);
+  background: var(--cu-accent-hover);
+}
+
+.board-page[data-view="list"] .new-item:focus-visible,
+.board-page[data-view="list"] .list-tool:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--color-panel),
+    0 0 0 4px var(--cu-accent);
+}
+
+.board-page[data-view="list"] .search-input {
+  width: 130px;
+}
+
+.board-page[data-view="list"] .search:focus-within {
+  border-color: var(--cu-accent);
+  box-shadow: 0 0 0 3px var(--cu-accent-soft);
+}
+
+.list-tool {
+  color: var(--color-text-secondary);
+}
+
+.list-tool-value {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+.list-tool[aria-pressed="true"] {
+  background: var(--cu-accent-soft);
+  color: var(--cu-accent-text);
 }
 
 /* --------------------------------------------------------- app view */

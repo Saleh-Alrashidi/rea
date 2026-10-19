@@ -6,6 +6,10 @@
  * may see, and show the others as "Someone" (left out of `value`); a write
  * keeps the people the caller cannot see, and the store refuses to add
  * anyone who cannot open the board (SPEC-2 §6).
+ *
+ * Subitems (SPEC-5 §1.6): `create_subitem` goes through the store path of
+ * `create_item`; `Item.subitems`, `subitems_count` and `updates_count` read
+ * indexes built once per request (`perRequest`).
  */
 import {
   HIDDEN_USER_NAME,
@@ -127,20 +131,39 @@ const changeValue = (parse) => (_parent, args, ctx) => {
   return storeResult(result, () => notFound("Item", item.id));
 };
 
-function createItem(_p, args, ctx) {
-  const board = requireBoard(ctx, args.board_id, "editor");
+/**
+ * Creates an item from `item_name` and `column_values` (create_item and
+ * create_subitem): `fields` = `{ boardId, groupId, parentId }`.
+ */
+function newItem(ctx, fields, args) {
   const name = readName(args.item_name, "Item name");
-  const groupId = args.group_id ?? null;
-  if (groupId !== null) groupOf(ctx.store, board.id, groupId);
   const text = args.column_values ?? null;
-  const request = { boardId: board.id, text, allowName: false };
+  const request = { boardId: fields.boardId, text, allowName: false };
   const pairs = text === null ? [] : parseValueMap(ctx, request);
   const values = Object.fromEntries(pairs);
-  const fields = { boardId: board.id, groupId, name, values };
-  const item = ctx.store.createItem({ ...fields, creatorId: viewerOf(ctx).id });
+  const creatorId = viewerOf(ctx).id;
+  const item = ctx.store.createItem({ ...fields, name, values, creatorId });
   return storeResult(item, () =>
     badInput("The board has no group for new items"),
   );
+}
+
+function createItem(_p, args, ctx) {
+  const board = requireBoard(ctx, args.board_id, "editor");
+  const groupId = args.group_id ?? null;
+  if (groupId !== null) groupOf(ctx.store, board.id, groupId);
+  return newItem(ctx, { boardId: board.id, groupId, parentId: null }, args);
+}
+
+/** A subitem in its parent's group; editor access on the parent's board. */
+function createSubitem(_p, args, ctx) {
+  const parent = requireItem(ctx, args.parent_item_id, "editor");
+  const fields = {
+    boardId: parent.board_id,
+    groupId: null,
+    parentId: parent.id,
+  };
+  return newItem(ctx, fields, args);
 }
 
 /** Sets every value in one store change (all validated first). */
@@ -207,6 +230,7 @@ const Query = wrapAll(read, {
 
 const Mutation = wrapAll(write, {
   create_item: createItem,
+  create_subitem: createSubitem,
   change_column_value: changeValue(parseColumnValue),
   change_simple_column_value: changeValue(parseSimpleColumnValue),
   change_multiple_column_values: changeMultipleValues,
@@ -230,6 +254,28 @@ const Mutation = wrapAll(write, {
 
 const creator = (record, _a, ctx) => lookupUser(ctx, record.creator_id);
 
+/** The direct subitems of `item`, in board order (one index per board). */
+function subitemsOf(ctx, item) {
+  const index = perRequest(ctx, `subitems\u0000${item.board_id}`, () => {
+    const { items } = ctx.store.listItems({
+      boardId: item.board_id,
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    const children = items.filter((each) => each.parent_id !== undefined);
+    return Map.groupBy(children, (child) => child.parent_id);
+  });
+  return index.get(item.id) ?? [];
+}
+
+/** How many updates `item` has (all items counted once per request). */
+function updatesCount(item, _a, ctx) {
+  const { store } = ctx;
+  const counts = perRequest(ctx, "update_counts", () =>
+    store.countUpdatesByItem(),
+  );
+  return counts.get(item.id) ?? 0;
+}
+
 const Item = {
   board: (item, _a, { store }) => store.getBoard(item.board_id),
   group: (item, _a, { store }) => store.getGroup(item.board_id, item.group_id),
@@ -237,6 +283,12 @@ const Item = {
   column_values: columnValues,
   updates: (item, { limit }, { store }) =>
     store.listUpdates(item.id, { limit: readLimit(limit) }),
+  parent_item_id: (item) => item.parent_id ?? null,
+  parent_item: (item, _a, { store }) => store.getItem(item.parent_id ?? null),
+  subitems: (item, { limit }, ctx) =>
+    subitemsOf(ctx, item).slice(0, readLimit(limit)),
+  subitems_count: (item, _a, ctx) => subitemsOf(ctx, item).length,
+  updates_count: updatesCount,
   url: (item, _a, { hostOrigin }) =>
     `${hostOrigin}/#/boards/${item.board_id}/items/${item.id}`,
 };
@@ -247,10 +299,14 @@ export const definition = {
     Item: `id:ID! name:String! state:State! created_at:String!
       updated_at:String! board:Board! group:Group! creator:User
       column_values(ids:[String!]):[ColumnValue!]!
-      updates(limit:Int=25):[Update!]! url:String!`,
+      updates(limit:Int=25):[Update!]! url:String! parent_item_id:ID
+      parent_item:Item subitems(limit:Int=100):[Item!]! subitems_count:Int!
+      updates_count:Int!`,
     ColumnValue: "id:String! type:ColumnType! text:String value:String",
-    Update: "id:ID! body:String! created_at:String! creator:User",
+    Update:
+      "id:ID! body:String! author_name:String created_at:String! creator:User",
     Mutation: `create_item(board_id:ID!,group_id:String,item_name:String!,column_values:String):Item!
+      create_subitem(parent_item_id:ID!,item_name:String!,column_values:String):Item!
       change_column_value(board_id:ID!,item_id:ID!,column_id:String!,value:String!):Item!
       change_simple_column_value(board_id:ID!,item_id:ID!,column_id:String!,value:String):Item!
       change_multiple_column_values(board_id:ID!,item_id:ID!,column_values:String!):Item!
@@ -262,5 +318,13 @@ export const definition = {
   extras: {
     "Item.url": { versions: { addedIn: "2026-04" } },
     "Query.my_work": { description: "Items assigned to the caller." },
+    "Item.parent_item_id": {
+      description: "The item this one is a subitem of; null at the top level.",
+    },
+    "Item.subitems": { description: "Direct subitems, in board order." },
+    "Update.author_name": {
+      description:
+        "The source author of an imported update who has no user here.",
+    },
   },
 };

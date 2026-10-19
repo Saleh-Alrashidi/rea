@@ -34,7 +34,7 @@ test("a run creates workspaces, boards, groups, columns, items, updates, docs an
     workspaces: 2,
     boards: 3,
     groups: 4,
-    columns: 8,
+    columns: 7,
     items: 4,
     updates: 2,
     docs: 1,
@@ -114,9 +114,10 @@ test("columns, statuses, items, subitems and updates keep their content", async 
       ["date", "Due", "date"],
       ["numbers", "Estimate", "numbers"],
       ["text", "Notes", "text"],
-      ["text_2", "Parent item", "text"],
     ],
+    "subitems need no column of their own",
   );
+  assert.ok(columns.every((column) => column.role === undefined));
   assert.deepEqual(columns[1].settings, {
     labels: { 0: "Working on it", 1: "Done" },
     labels_colors: { 0: "#fdab3d", 1: "#00c875" },
@@ -135,25 +136,36 @@ test("columns, statuses, items, subitems and updates keep their content", async 
           text: "Ship it",
         },
       ],
-      ["Write copy", { status: { index: 0 }, text_2: "Launch site" }],
+      ["Write copy", { status: { index: 0 } }],
       ["Later thing", { people: [ids.users.chris] }],
     ],
-    "the subitem follows its parent and names it",
+    "the subitem follows its parent",
+  );
+  assert.deepEqual(
+    items.map((i) => i.parent_id),
+    [undefined, items[0].id, undefined],
+    "a real subitem; top-level items have no parent_id",
+  );
+  assert.deepEqual(
+    store.listViews(roadmap.id).map((v) => [v.type, v.name]),
+    [
+      ["table", "Main table"],
+      ["kanban", "Kanban"],
+    ],
+    "monday boards keep the table as their default view",
   );
   assert.equal(items[0].created_at, "2025-03-04T05:06:07.000Z");
   assert.equal(items[0].creator_id, ids.users.sam);
   const updates = store.listUpdates(items[0].id).toReversed();
   assert.deepEqual(
-    updates.map((u) => [u.body, u.creator_id, u.created_at.slice(0, 10)]),
+    updates.map((u) => [u.body, u.creator_id, u.author_name]),
     [
-      ["Kickoff done", ids.users.sam, "2025-03-05"],
-      [
-        "Old Admin wrote on monday.com:\nPing",
-        null,
-        updates[1].created_at.slice(0, 10),
-      ],
+      ["Kickoff done", ids.users.sam, undefined],
+      ["Ping", null, "Old Admin"],
     ],
+    "an author without a Worklane user is named; the body stays as written",
   );
+  assert.equal(updates[0].created_at, "2025-03-05T00:00:00.000Z");
 });
 
 test("grants follow the access rules; refusals and left-out people are warnings", async () => {
@@ -273,16 +285,16 @@ test("activity names the importer with the import's label", async () => {
   );
 });
 
-test("subitems follow their parents, depth first, within their group", () => {
+test("item order puts every parent before its subitems, whatever their groups", () => {
   const item = (source_id, group_source_id, parent_source_id = null) => ({
     source_id,
     group_source_id,
     parent_source_id,
   });
   const items = [
+    item("C", "g", "A"),
     item("A", "g"),
     item("B", "g"),
-    item("C", "g", "A"),
     item("D", "g", "C"),
     item("E", "h", "B"),
     item("F", "g", "A"),
@@ -290,6 +302,6 @@ test("subitems follow their parents, depth first, within their group", () => {
   assert.deepEqual(
     itemOrder(items).map((index) => items[index].source_id),
     ["A", "C", "D", "F", "B", "E"],
-    "E's parent is in another group, so E keeps its own place",
+    "C comes after A although the snapshot lists it first; E follows B",
   );
 });

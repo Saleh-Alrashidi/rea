@@ -6,12 +6,14 @@
  * grants, team members, doc blocks and form questions, the shared ID
  * counter and cross-record references. Invalid files throw and are never
  * overwritten, so data is never silently lost. Part-1 files
- * (`mini-monday-store/1`) are rejected as an unsupported format.
- * `mini-monday-store/2` files, which wrote people's names into texts, are
- * upgraded once (`legacy-texts.js`): the store keeps a copy of the old file
- * (`keepLegacyCopy`) and saves the result in the current format, which
- * older versions refuse as unsupported. Temp files of interrupted saves
- * are removed before loading.
+ * (`mini-monday-store/1`) are rejected as an unsupported format. Older
+ * formats are upgraded once, each through the next version (UPGRADES):
+ * `mini-monday-store/2` wrote people's names into texts
+ * (`legacy-texts.js`), and `/3` has no subitems, column roles or update
+ * authors, which `/4` adds (SPEC-5 §1.1). The store keeps a copy of the
+ * old file (`keepLegacyCopy`, `<file>.v<version>.bak`) and saves the
+ * result in the current format, which older versions refuse as
+ * unsupported. Temp files of interrupted saves are removed before loading.
  *
  * The file is one compact JSON text, so the state can only grow as far as
  * one string can be built and read back: MAX_DATA_BYTES (half of V8's
@@ -38,6 +40,7 @@ import { ID_PATTERN, isColor, isPlainObject } from "../input.js";
 import {
   BLOCK_TYPES,
   BOARD_KINDS,
+  COLUMN_ROLES,
   COLUMN_TYPES,
   DOC_VISIBILITIES,
   FORM_ACCESS,
@@ -46,15 +49,25 @@ import {
   SCOPE_KEY,
   TEAM_ROLES,
   USER_STATUSES,
+  VIEW_TYPES,
   WORKSPACE_KINDS,
   byId,
   deepFreeze,
   onBoard,
 } from "../store-state.js";
-import { makeColumn } from "./boards.js";
-import { LEGACY_FORMAT, upgradeLegacyTexts } from "./legacy-texts.js";
+import { columnRoleProblem, makeColumn } from "./boards.js";
+import { upgradeLegacyTexts } from "./legacy-texts.js";
+import { parentProblem } from "./subitems.js";
 
-export const FORMAT = "mini-monday-store/3";
+const VERSION = 4;
+const formatOf = (version) => `mini-monday-store/${version}`;
+export const FORMAT = formatOf(VERSION);
+/** Older versions this one loads: version → upgrade to the next version. */
+const UPGRADES = new Map([
+  [2, upgradeLegacyTexts],
+  // Every /4 addition is optional, so a /3 state is a /4 state as it is.
+  [3, () => {}],
+]);
 export const MAX_DATA_BYTES = 256 * 1024 * 1024;
 const SAVE_DELAY_MS = 50;
 
@@ -89,6 +102,8 @@ const CHECKS = {
   obj: isPlainObject,
   active: (v) => v === "active",
   type: (v) => v === "name" || COLUMN_TYPES.includes(v),
+  columnRole: (v) => typeof v === "string" && Object.hasOwn(COLUMN_ROLES, v),
+  viewType: oneOf(VIEW_TYPES),
   scopes: (v) => Array.isArray(v) && v.every((s) => ALL_SCOPES.includes(s)),
   scope: (v) => typeof v === "string" && SCOPE_KEY.test(v),
   token: (v) => typeof v === "string" && /^[\w-]{1,512}$/.test(v),
@@ -167,14 +182,16 @@ const SHAPES = {
   boards:
     "id:id name:str description:str? state:active creator_id:id? workspace_id:id board_kind:boardKind members:grants import:importMeta~",
   groups: "id:slug board_id:id title:str color:str position:int",
-  columns: "id:slug board_id:id title:str type:type settings:obj",
+  columns:
+    "id:slug board_id:id title:str type:type settings:obj role:columnRole~",
   apps: "id:id name:str client_id:str client_secret:str path:str scopes:scopes",
   installs: "id:id app_id:id board_id:id",
-  views: "id:id board_id:id name:str type:str app_install_id:id?",
+  views: "id:id board_id:id name:str type:viewType app_install_id:id?",
   items:
-    "id:id board_id:id group_id:slug name:str position:num state:active " +
-    "creator_id:id? created_at:str updated_at:str values:obj",
-  updates: "id:id item_id:id body:str creator_id:id? created_at:str",
+    "id:id board_id:id group_id:slug parent_id:id~ name:str position:num " +
+    "state:active creator_id:id? created_at:str updated_at:str values:obj",
+  updates:
+    "id:id item_id:id body:str author_name:str~ creator_id:id? created_at:str",
   docs:
     "id:id workspace_id:id title:str visibility:docVisibility members:grants blocks:blocks version:int " +
     "created_by:id? updated_by:id? created_at:str updated_at:str",
@@ -190,7 +207,7 @@ const SHAPES = {
     "resource_kind:resourceKind? resource_id:id? created_at:str",
   activity:
     "id:id board_id:id actor_id:id? actor_label:str? kind:str item_id:id? item_name:str? " +
-    "column_id:slug? from_text:rich? to_text:rich? created_at:str",
+    "column_id:slug? from_text:rich? to_text:rich? subitems_deleted:int~ created_at:str",
   tokens: "token:token user_id:id scopes:scopes label:str",
   storage: "scope:scope key:str value:str? version:int",
 };
@@ -249,6 +266,16 @@ function checkItems(state, fail) {
       Object.entries(item.values).every((entry) => validValue(item, entry));
     if (!valid) fail(`item ${item.id} has an unknown group or invalid value`);
   }
+  const parents = parentProblem(state.items);
+  if (parents) fail(parents);
+}
+
+function checkColumnRoles(state, fail) {
+  const boards = Map.groupBy(state.columns, (column) => column.board_id);
+  for (const columns of boards.values()) {
+    const problem = columnRoleProblem(columns);
+    if (problem) fail(problem);
+  }
 }
 
 /** References consumers rely on; others (creators, grants) may dangle. */
@@ -295,11 +322,18 @@ function readCollections(doc, fail) {
   return state;
 }
 
+/** The version of a supported `format` (current or upgradable), else null. */
+function versionOf(format) {
+  const versions = [VERSION, ...UPGRADES.keys()];
+  return versions.find((version) => formatOf(version) === format) ?? null;
+}
+
 /**
  * Loads and validates the data file: null when it does not exist, else
- * `{ state, upgraded, bytes }` where `upgraded` is true for a converted
- * /2 file (not yet saved) and `bytes` the file's length in characters.
- * Invalid files throw instead of being replaced.
+ * `{ state, upgradedFrom, bytes }` where `upgradedFrom` is the version of
+ * an upgraded older file (not yet saved; null for current files) and
+ * `bytes` the file's length in characters. Invalid files throw instead of
+ * being replaced.
  */
 export async function loadState(file) {
   const fail = (detail) => {
@@ -316,8 +350,8 @@ export async function loadState(file) {
     if (error instanceof SyntaxError) fail(error.message);
     throw error;
   }
-  const upgraded = isPlainObject(doc) && doc.format === LEGACY_FORMAT;
-  if (!isPlainObject(doc) || (doc.format !== FORMAT && !upgraded)) {
+  const version = isPlainObject(doc) ? versionOf(doc.format) : null;
+  if (version === null) {
     fail(
       `unsupported format (expected ${FORMAT}; move the old file away to reseed)`,
     );
@@ -329,18 +363,20 @@ export async function loadState(file) {
   state.groups.sort((a, b) => a.position - b.position);
   checkCounters(state, fail);
   checkItems(state, fail);
+  checkColumnRoles(state, fail);
   checkReferences(state, fail);
-  if (upgraded) upgradeLegacyTexts(state);
-  return { state, upgraded, bytes };
+  for (let from = version; from < VERSION; from += 1) UPGRADES.get(from)(state);
+  return { state, upgradedFrom: version < VERSION ? version : null, bytes };
 }
 
 /**
- * Copies a /2 `file` to `<file>.v2.bak` (private, like the data file)
- * before its first save in the current format, so a rollback can still
- * use it. An existing copy is kept. Returns the copy's path.
+ * Copies `file` of an older `version` to `<file>.v<version>.bak` (private,
+ * like the data file) before its first save in the current format, so a
+ * rollback can still use it. An existing copy is kept. Returns the copy's
+ * path.
  */
-export async function keepLegacyCopy(file) {
-  const copy = `${file}.v2.bak`;
+export async function keepLegacyCopy(file, version) {
+  const copy = `${file}.v${version}.bak`;
   try {
     await copyFile(file, copy, constants.COPYFILE_EXCL);
   } catch (error) {

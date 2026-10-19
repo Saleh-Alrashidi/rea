@@ -58,6 +58,16 @@ const PATHS = Object.freeze({
   grid: [SQUARE, "M4 10h16", "M4 15h16", "M10 4v16"],
   table: ["M4 5h16v14H4z", "M4 10h16", "M10 10v9"],
   kanban: ["M4 4h4v16H4z", "M10 4h4v10h-4z", "M16 4h4v13h-4z"],
+  list: [
+    "M9 6h11",
+    "M9 12h11",
+    "M9 18h11",
+    circle(4.5, 6, 0.6),
+    circle(4.5, 12, 0.6),
+    circle(4.5, 18, 0.6),
+  ],
+  columns: ["M4 5h16v14H4z", "M10 5v14", "M15 5v14"],
+  layers: ["M12 3l9 5-9 5-9-5z", "M3 13l9 5 9-5"],
   app: ["M4 4h7v7H4z", "M13 4h7v7h-7z", "M4 13h7v7H4z", "M13 13h7v7h-7z"],
   item: [SQUARE, "M8 12l3 3 5-6"],
   activity: ["M3 12h4l3-8 4 16 3-8h4"],
@@ -126,6 +136,15 @@ const PATHS = Object.freeze({
     "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   ],
   filter: ["M4 5h16l-6 8v5l-4 2v-7z"],
+  // work items
+  subtask: [
+    "M6 3v11a3 3 0 0 0 3 3h6",
+    "M6 8h9",
+    circle(18, 8, 2.5),
+    circle(18, 17, 2.5),
+  ],
+  flag: ["M5 21V4", "M5 4h12l-2.5 4.5L17 13H5"],
+  text: ["M4 6h16", "M4 11h16", "M4 16h10"],
   calendar: [
     "M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
     "M4 10h16",

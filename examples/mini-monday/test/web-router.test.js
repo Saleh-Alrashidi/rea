@@ -17,6 +17,12 @@ import {
   workspaceHash,
   workspaceSettingsHash,
 } from "../web/router.js";
+import {
+  defaultView,
+  itemViewKind,
+  missingViews,
+  viewTabsOf,
+} from "../web/ui/board/board-views.js";
 
 const ORIGIN = "http://localhost:4100";
 
@@ -121,7 +127,10 @@ test("every SPEC-2 route resolves to its page and params", () => {
     ["#/shared", "shared", {}],
     ["#/workspaces/3", "workspace", { workspaceId: "3" }],
     ["#/workspaces/3/settings", "workspace-settings", { workspaceId: "3" }],
-    ["#/boards/12", "board", { boardId: "12", view: "table" }],
+    // SPEC-5 §3.1: the board's own link opens its default view.
+    ["#/boards/12", "board", { boardId: "12", view: null }],
+    ["#/boards/12/views/table", "board", { boardId: "12", view: "table" }],
+    ["#/boards/12/views/list", "board", { boardId: "12", view: "list" }],
     ["#/boards/12/views/kanban", "board", { boardId: "12", view: "kanban" }],
     [
       "#/boards/12/views/activity",
@@ -161,6 +170,7 @@ test("every SPEC-2 route resolves to its page and params", () => {
     "#/boards/x",
     "#/boards/1/views/app-",
     "#/boards/1/items/1/x",
+    "#/boards/1/views/grid",
     "#/nope",
     "#/docs/../admin",
   ]) {
@@ -174,6 +184,8 @@ test("board views and item cards share one mount; other pages do not", () => {
   const router = appRouter();
   const key = (hash) => router.resolve(hash).key;
   assert.equal(key("#/boards/12"), key("#/boards/12/views/kanban"));
+  assert.equal(key("#/boards/12"), key("#/boards/12/views/list"));
+  assert.equal(key("#/boards/12"), key("#/boards/12/views/table"));
   assert.equal(key("#/boards/12"), key("#/boards/12/items/40"));
   assert.notEqual(key("#/boards/12"), key("#/boards/13"));
   assert.equal(key("#/notes"), key("#/notes/6"));
@@ -186,7 +198,11 @@ test("hash builders produce routes that resolve back", () => {
   const built = [
     [viewHash("3", { view: "kanban" }), "#/boards/3/views/kanban"],
     [viewHash("3", { view: "app", installId: "9" }), "#/boards/3/views/app-9"],
-    [viewHash("3", { view: "table" }), "#/boards/3"],
+    // Table and list have explicit routes; no view is the default view.
+    [viewHash("3", { view: "table" }), "#/boards/3/views/table"],
+    [viewHash("3", { view: "list" }), "#/boards/3/views/list"],
+    [viewHash("3", { view: null }), "#/boards/3"],
+    [viewHash("3", { view: "app" }), "#/boards/3"],
     [viewHash("3", { view: "bogus" }), "#/boards/3"],
     [itemHash("3", "4"), "#/boards/3/items/4"],
     [boardHash("3"), "#/boards/3"],
@@ -201,6 +217,88 @@ test("hash builders produce routes that resolve back", () => {
     assert.equal(hash, expected);
     assert.notEqual(router.resolve(hash).name, "not-found", hash);
   }
+});
+
+const view = (id, type, name, extra = {}) => ({
+  id,
+  type,
+  name,
+  app_install_id: null,
+  ...extra,
+});
+const CLICKUP_VIEWS = [
+  view("1", "list", "List"),
+  view("2", "table", "Main table"),
+  view("3", "kanban", "Kanban"),
+];
+const MONDAY_VIEWS = [
+  view("4", "table", "Main table"),
+  view("5", "kanban", "Kanban"),
+  view("6", "app", "Status summary", { app_install_id: 9 }),
+];
+
+test("a board's default view is its first non-app view", () => {
+  assert.equal(defaultView({ views: CLICKUP_VIEWS }), "list");
+  assert.equal(defaultView({ views: MONDAY_VIEWS }), "table");
+  assert.equal(
+    defaultView({ views: [MONDAY_VIEWS[2], ...CLICKUP_VIEWS] }),
+    "list",
+  );
+  // Not loaded yet, or no item views: the table.
+  assert.equal(defaultView(null), "table");
+  assert.equal(defaultView({ views: [MONDAY_VIEWS[2]] }), "table");
+});
+
+test("view tabs follow Board.views; editors may add the missing ones", () => {
+  assert.deepEqual(
+    viewTabsOf({ views: CLICKUP_VIEWS }).map((tab) => [
+      tab.view,
+      tab.label,
+      tab.icon,
+    ]),
+    [
+      ["list", "List", "list"],
+      ["table", "Main table", "table"],
+      ["kanban", "Kanban", "kanban"],
+    ],
+  );
+  assert.deepEqual(viewTabsOf({ views: MONDAY_VIEWS }).at(-1), {
+    view: "app",
+    installId: "9",
+    label: "Status summary",
+    icon: "app",
+  });
+  assert.deepEqual(missingViews({ views: MONDAY_VIEWS }), ["list"]);
+  assert.deepEqual(missingViews({ views: CLICKUP_VIEWS }), []);
+  const full = Array.from({ length: 20 }, (_, index) =>
+    view(String(index), "app", "App", { app_install_id: index + 1 }),
+  );
+  assert.deepEqual(missingViews({ views: full }), []);
+});
+
+test("items open as a task view from List, else as the item card", () => {
+  const clickup = { views: CLICKUP_VIEWS };
+  const monday = { views: MONDAY_VIEWS };
+  // A direct link (or the board's own link) follows the default view.
+  assert.equal(itemViewKind({ board: clickup }), "task");
+  assert.equal(
+    itemViewKind({ board: clickup, lastView: { view: null } }),
+    "task",
+  );
+  assert.equal(itemViewKind({ board: monday }), "card");
+  // Otherwise the view the user came from decides.
+  assert.equal(
+    itemViewKind({ board: clickup, lastView: { view: "table" } }),
+    "card",
+  );
+  assert.equal(
+    itemViewKind({ board: monday, lastView: { view: "list" } }),
+    "task",
+  );
+  assert.equal(
+    itemViewKind({ board: clickup, lastView: { view: "activity" } }),
+    "card",
+  );
 });
 
 test("hashFromUrl accepts only in-app links", () => {

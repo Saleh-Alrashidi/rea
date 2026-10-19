@@ -4,11 +4,13 @@
  * EventSource: jobs are followed by polling): non-admins get a message,
  * an admin walks every step with focus moving to each step's heading,
  * the wizard is kept while the page is away and dropped once it is back
- * at the source step, and the shell is refreshed once at the end.
+ * at the source step, the shell is refreshed once at the end, and a
+ * reloaded page offers the jobs it lost track of.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mount } from "../web/pages/import.js";
+import * as A from "../web/ui/import/import-api.js";
 import { fire } from "./fake-dom.js";
 import { $, $$, installImportDom, label, recorder } from "./web-import-dom.js";
 import { liveServer } from "./web-import-fixtures.js";
@@ -139,4 +141,47 @@ test("after a reload, a scan still running is offered and can be followed", asyn
   await untilStep(container, "Scanning monday.com");
   release();
   await untilStep(container, "Review what to import");
+});
+
+/** Reads job `id` until it ends. */
+async function ended(id) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const job = await A.getJob(id);
+    if (job.state !== "running") return job;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`job ${id} did not end`);
+}
+
+test("after a reload, the newest scan that was not imported is offered", async (t) => {
+  const doc = installImportDom(t);
+  await liveServer(t);
+  const token = "tok-0123456789abcdef";
+  const ready = await A.scanWithToken({ source: "monday", token });
+  await ended(ready);
+  const used = await A.scanWithToken({ source: "clickup", token });
+  await ended(used);
+  await ended(await A.runImport({ scanJobId: used, plan: {} }));
+  const { mount: mountAgain } = await import("../web/pages/import.js?offer");
+  const container = doc.createElement("div");
+  doc.body.append(container);
+  const cleanup = await mountAgain(container, context());
+  t.after(() => cleanup?.());
+  const offer = "Return to the review";
+  for (let n = 0; n < 200 && !buttonNamed(container, offer); n += 1)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(
+    $(container, "div.import-banner").textContent,
+    /A scan from monday\.com that you started earlier is ready to review/,
+    "the imported ClickUp scan is skipped",
+  );
+  buttonNamed(container, offer).click();
+  await untilStep(container, "Review what to import");
+  buttonNamed(container, "Import").click();
+  await untilStep(container, "Import finished");
+  const scans = (await A.listJobs()).filter((job) => job.kind === "scan");
+  assert.ok(
+    scans.every((job) => job.import_job_id),
+    "both are imported now",
+  );
 });

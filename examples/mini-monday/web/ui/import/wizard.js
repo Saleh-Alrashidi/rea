@@ -6,12 +6,15 @@
  * double clicks), so the page only renders states and sends events.
  *
  * Steps: source → scanning → review → importing → done. A failed or
- * cancelled scan goes back to the source step with its message; a failed
- * import goes back to the review (the scan's result is kept on the server
- * for 30 minutes, and an import refused because it expired goes back to
- * the source step); "Import more" starts over. "Back" on the review parks
- * the scan (`parked`), so the source step can return to it; a job the page
- * lost track of (a reload) is offered as `earlier` and can be adopted.
+ * cancelled scan goes back to the source step with its message. A scan is
+ * imported at most once (the server refuses a second run with
+ * `ALREADY_IMPORTED` and the first import's job, which the wizard then
+ * follows to its progress or report), so a failed import goes back to the
+ * source step with its message too, and so does an import refused because
+ * the scan expired (scans are kept on the server for 30 minutes); "Import
+ * more" starts over. "Back" on the review parks the scan (`parked`), so
+ * the source step can return to it; a job the page lost track of (a
+ * reload) is offered as `earlier` and can be adopted.
  *
  * Events:
  *   { type: "choose", source }              pick a source card
@@ -116,14 +119,17 @@ function detailOf(error) {
 }
 
 /**
- * A refused request (an `ApiError`: `.code`, `.message`, and `.details`
- * for an invalid plan's `[{ path, message }]`) as the wizard keeps it.
+ * A refused request (an `ApiError`: `.code`, `.message`, `.details` for
+ * an invalid plan's `[{ path, message }]` and `.importJobId` for a scan
+ * imported before) as the wizard keeps it.
  */
 export function requestFailure(error) {
   return {
     code: typeof error?.code === "string" ? error.code : undefined,
     message: typeof error?.message === "string" ? error.message : undefined,
     errors: Array.isArray(error?.details) ? error.details : null,
+    importJobId:
+      typeof error?.importJobId === "string" ? error.importJobId : null,
   };
 }
 
@@ -165,14 +171,8 @@ function importJob(state, job) {
   }
   if (job.state === "failed") {
     if (!job.error) return next;
-    return {
-      ...next,
-      step: "review",
-      importJobId: null,
-      progress: null,
-      cancelling: false,
-      error: errorOf(job.error),
-    };
+    // The scan cannot be imported again, so the review is no use now.
+    return { ...initialState(state.source), error: errorOf(job.error) };
   }
   return next;
 }
@@ -267,6 +267,12 @@ function onSubmitFailed(state, error) {
   // `POST /import/run` answers 404 once the scan expired.
   if (state.step === "review" && error?.code === "NOT_FOUND") {
     return expired(state, "scan");
+  }
+  // The scan was imported before (another tab, a retry): follow that run.
+  const importJobId = error?.importJobId;
+  if (state.step === "review" && error?.code === "ALREADY_IMPORTED") {
+    if (typeof importJobId === "string")
+      return onStarted(state, { type: "import-started", jobId: importJobId });
   }
   return { ...state, pending: false, error: errorOf(error) };
 }

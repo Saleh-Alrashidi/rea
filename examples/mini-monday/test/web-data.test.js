@@ -211,8 +211,8 @@ test("loadBoard() follows items_page cursors and orders groups", async (t) => {
     pageCalls.map((call) => call.body.variables.cursor),
     [null, "page-2"],
   );
-  // Two columns: 3,000 fields / (5 + 3 × 2) per item.
-  for (const call of pageCalls) assert.equal(call.body.variables.limit, 272);
+  // Two columns: 3,000 fields / (7 + 3 × 2) per item.
+  for (const call of pageCalls) assert.equal(call.body.variables.limit, 230);
 });
 
 test("loadItem() sorts updates newest first", async (t) => {
@@ -263,6 +263,8 @@ test("every document the UI sends parses with the server parser", async (t) => {
     deleteGroup: { boardId: "1", groupId: "g" },
     createColumn: { boardId: "1", title: "T", type: "text" },
     createItem: { boardId: "1", groupId: null, name: "I", values: null },
+    createSubitem: { parentId: "1", name: "S", values: null },
+    createBoardView: { boardId: "1", type: "list" },
     changeValue: { boardId: "1", itemId: "1", columnId: "status", value: "{}" },
     renameItem: { boardId: "1", itemId: "1", value: "I" },
     moveItem: { itemId: "1", groupId: "g" },

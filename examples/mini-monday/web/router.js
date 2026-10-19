@@ -97,6 +97,7 @@ export const teamHash = (id) => `#/teams/${id}`;
 
 /** Board views reachable by URL (app views carry an install ID). */
 export const BOARD_VIEWS = Object.freeze([
+  "list",
   "table",
   "kanban",
   "activity",
@@ -104,12 +105,16 @@ export const BOARD_VIEWS = Object.freeze([
   "app",
 ]);
 
-/** Hash of a board view (`{ view, installId }`); table is the default. */
+/**
+ * Hash of a board view (`{ view, installId }`). Without a known view it is
+ * the board's own link, which opens the board's default view (SPEC-5
+ * §3.1); table and list have explicit routes.
+ */
 export function viewHash(boardId, { view, installId } = {}) {
   if (view === "app" && installId) {
     return `${boardHash(boardId)}/views/app-${installId}`;
   }
-  if (view && view !== "table" && BOARD_VIEWS.includes(view)) {
+  if (view && view !== "app" && BOARD_VIEWS.includes(view)) {
     return `${boardHash(boardId)}/views/${view}`;
   }
   return boardHash(boardId);
@@ -328,10 +333,19 @@ export function createRouter({ window: win = globalThis.window } = {}) {
 const page = (name) => () => import(`./pages/${name}.js`);
 const BOARD = page("board");
 const boardKey = (params) => `board:${params.boardId}`;
+/** A board route whose `view` param is fixed (null: the default view). */
+const boardRoute = (path, view) => [
+  `/boards/:boardId${path}`,
+  BOARD,
+  { name: "board", key: boardKey, params: { view } },
+];
 const NOTES = page("notes");
 const ADMIN = page("admin");
 
-/** `[pattern, loader, options]` for every route of SPEC-2 §5.1 and SPEC-4 §6. */
+/**
+ * `[pattern, loader, options]` for every route of SPEC-2 §5.1, SPEC-4 §6
+ * and SPEC-5 §3.1.
+ */
 export const APP_ROUTES = Object.freeze([
   ["/home", page("home"), { name: "home" }],
   ["/my-work", page("my-work"), { name: "my-work" }],
@@ -342,36 +356,16 @@ export const APP_ROUTES = Object.freeze([
     page("workspace-settings"),
     { name: "workspace-settings" },
   ],
-  [
-    "/boards/:boardId",
-    BOARD,
-    { name: "board", key: boardKey, params: { view: "table" } },
-  ],
-  [
-    "/boards/:boardId/views/kanban",
-    BOARD,
-    { name: "board", key: boardKey, params: { view: "kanban" } },
-  ],
-  [
-    "/boards/:boardId/views/activity",
-    BOARD,
-    { name: "board", key: boardKey, params: { view: "activity" } },
-  ],
-  [
-    "/boards/:boardId/views/forms",
-    BOARD,
-    { name: "board", key: boardKey, params: { view: "forms" } },
-  ],
-  [
-    "/boards/:boardId/views/app-:installId",
-    BOARD,
-    { name: "board", key: boardKey, params: { view: "app" } },
-  ],
-  [
-    "/boards/:boardId/items/:itemId",
-    BOARD,
-    { name: "board", key: boardKey, params: { view: null } },
-  ],
+  // The board's own link opens its default view; an item route keeps
+  // the view the user came from (both have no `view`).
+  boardRoute("", null),
+  boardRoute("/views/list", "list"),
+  boardRoute("/views/table", "table"),
+  boardRoute("/views/kanban", "kanban"),
+  boardRoute("/views/activity", "activity"),
+  boardRoute("/views/forms", "forms"),
+  boardRoute("/views/app-:installId", "app"),
+  boardRoute("/items/:itemId", null),
   ["/docs", page("docs"), { name: "docs" }],
   ["/docs/:docId", page("doc-editor"), { name: "doc-editor" }],
   ["/notes", NOTES, { name: "notes", key: () => "notes" }],

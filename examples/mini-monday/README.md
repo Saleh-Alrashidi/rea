@@ -94,13 +94,15 @@ Tests point the importer at fake upstream servers with
 [Import from monday.com or ClickUp](#import-from-mondaycom-or-clickup));
 leave them unset otherwise.
 
-The data file format is `mini-monday-store/3`. A part-1 file is refused
-with a message; move it away and the server reseeds. A
-`mini-monday-store/2` file (which wrote people's names into notification
-and activity texts) is upgraded once at start-up: names become mentions
-rendered per viewer, a name that matches no single user becomes "Someone",
-the old file is kept as `<file>.v2.bak` (private, like the data file) and
-the result is saved as `/3`, which older versions refuse as unsupported.
+The data file format is `mini-monday-store/4` (subitems, column roles and
+update authors). A part-1 file is refused with a message; move it away and
+the server reseeds. Older files are upgraded once at start-up, the old
+file is kept as `<file>.v<version>.bak` (private, like the data file) and
+the result is saved as `/4`, which older versions refuse as unsupported. A
+`/3` file loads unchanged. A `mini-monday-store/2` file (which wrote
+people's names into notification and activity texts) goes through the
+`/3` upgrade first: names become mentions rendered per viewer, and a name
+that matches no single user becomes "Someone".
 
 ## Deploy privately on CranL
 
@@ -391,17 +393,17 @@ after the scan ends, visible only to the admin who started it.
 
 ### What maps to what
 
-| Source                 | Worklane                                                                                                                               |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| monday.com workspace   | A workspace (open/closed kept). Boards and docs outside any workspace go to "Main workspace".                                          |
-| ClickUp Space          | A workspace `<Team> / <Space>` (private spaces closed); workspace-level docs go to `<Team> / Workspace docs`.                          |
-| monday.com board       | A board (Main/Private/Shareable from `board_kind`) with its groups, columns, items and members (owners → owner, subscribers → editor). |
-| ClickUp List           | A board `<Folder> / <List>` (Private when the list, folder or space is), groups "Open" and "Closed" by status type.                    |
-| CSV file, Excel export | One closed workspace `Imported from <file>` with one Private board named after the file.                                               |
-| Subitems / subtasks    | Items right after their parent in the parent's group, with a "Parent item" text column.                                                |
-| Updates / comments     | Updates with their original dates; replies become "Reply: …"; text only (HTML is never kept).                                          |
-| Docs                   | Docs owned by the importing admin (public ones Workspace-visible, others Private), as SPEC-2 blocks.                                   |
-| People                 | Matched by email to active Worklane users, or invited (member, viewer or guest), or skipped (per person).                              |
+| Source                 | Worklane                                                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| monday.com workspace   | A workspace (open/closed kept). Boards and docs outside any workspace go to "Main workspace".                                                                                                          |
+| ClickUp Space          | A workspace `<Team> / <Space>` (private spaces closed); workspace-level docs go to `<Team> / Workspace docs`.                                                                                          |
+| monday.com board       | A board (Main/Private/Shareable from `board_kind`) with its groups, columns, items and members (owners → owner, subscribers → editor).                                                                 |
+| ClickUp List           | A board `<Folder> / <List>` (Private when the list, folder or space is), groups "Open" and "Closed" by status type, opening in a List view (then Main table and Kanban).                               |
+| CSV file, Excel export | One closed workspace `Imported from <file>` with one Private board named after the file.                                                                                                               |
+| Subitems / subtasks    | Real subitems of their parent (`parent_id`), in their own group (a ClickUp subtask keeps its own status), up to 5 levels deep; deeper ones join their deepest allowed ancestor (`subitems_flattened`). |
+| Updates / comments     | Updates with their original dates and authors (one without a Worklane user is kept by name, the body as written); replies become "Reply: …"; text only (HTML is never kept).                           |
+| Docs                   | Docs owned by the importing admin (public ones Workspace-visible, others Private), as SPEC-2 blocks.                                                                                                   |
+| People                 | Matched by email to active Worklane users, or invited (member, viewer or guest), or skipped (per person).                                                                                              |
 
 monday.com columns: `status`/`color` → Status with their labels and colors,
 `people`/`person` → People, `date` → Date, `numbers` → Numbers, `text` and
@@ -413,7 +415,11 @@ the right day from UTC−9:30 to UTC+14; `date_only`),
 Priority (Urgent, High, Normal, Low), Time estimate (h), Tags, Description,
 and custom fields (`drop_down` → Status, `number`/`currency`/`emoji` →
 Numbers, `date` → Date, `users` → People, `text`/`short_text`/`email`/
-`phone`/`url` → Text, `checkbox` → Text "Yes"/"No"). CSV and Excel columns
+`phone`/`url` → Text, `checkbox` → Text "Yes"/"No"); the standard ClickUp
+columns keep what they mean as column roles (`status`, `assignees`,
+`due_date`, `start_date`, `priority`, `time_estimate`, `tags`,
+`description`) and each status its type (open, custom, done, closed), so
+the List view finds them without matching titles. CSV and Excel columns
 are typed from their values (dates, numbers, up to 30 short values →
 Status, emails or Assignee/Owner/Person headers → People, else Text); a
 Name/Task name/Item column names the items and a Group/List/Status type
@@ -424,9 +430,12 @@ default) or an existing one you can manage, which boards and docs to
 include, and what happens to each person. People values and board grants
 keep only mapped people who may open the board (guests only where guests
 are allowed); refused grants and dropped people are listed as warnings.
-The importing admin owns every created board and doc. Importing the same
-board again creates a new copy named `<name> (imported again)`: nothing
-is merged.
+The importing admin owns every created board and doc. A scan is
+imported once: running it again (another tab, the API) is refused with
+409 `ALREADY_IMPORTED` and the ID of its import, which the wizard then
+follows to its progress or report. Importing the same board again from a
+new scan creates a new copy named `<name> (imported again)`: nothing is
+merged.
 
 Each board is written in one step: one save, one `board_imported` change
 event, no per-item events and no notifications except one "Import
@@ -493,13 +502,13 @@ The wizard uses these routes. Locally an admin's API token with
 else gets 403. In hosted mode they sit behind the site gate, which lets
 API tokens through to `/v2` only, so there they need a signed-in browser.
 
-| Route                           | Does                                                                                                                                                                       |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /import/scan`             | JSON `{ source: "monday" \| "clickup", token, options }`, or a raw file (`application/octet-stream`, `X-Import-Filename`, `X-Import-Kind: csv \| xlsx`) → 202 `{ job_id }` |
-| `GET /import/jobs/<id>`         | The job: `state`, `progress`, and the `preview` of a scan or the `report` of an import                                                                                     |
-| `POST /import/jobs/<id>/cancel` | Cancels it; an import stops before its next board or doc and keeps what it created                                                                                         |
-| `POST /import/run`              | `{ scan_job_id, plan: { users, workspace_map, include } }` → 202 `{ job_id }`; a bad plan is 400 with each path                                                            |
-| `GET /import/jobs`              | Your running and recent jobs (`source`, `state`, `progress`, times; no source data), so a reloaded page can follow, cancel or review them                                  |
+| Route                           | Does                                                                                                                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /import/scan`             | JSON `{ source: "monday" \| "clickup", token, options }`, or a raw file (`application/octet-stream`, `X-Import-Filename`, `X-Import-Kind: csv \| xlsx`) → 202 `{ job_id }`             |
+| `GET /import/jobs/<id>`         | The job: `state`, `progress`, and the `preview` of a scan or the `report` of an import                                                                                                 |
+| `POST /import/jobs/<id>/cancel` | Cancels it; an import stops before its next board or doc and keeps what it created                                                                                                     |
+| `POST /import/run`              | `{ scan_job_id, plan: { users, workspace_map, include } }` → 202 `{ job_id }`; a bad plan is 400 with each path; a scan imported before is 409 `ALREADY_IMPORTED` with `import_job_id` |
+| `GET /import/jobs`              | Your running and recent jobs (`source`, `state`, `progress`, times, a scan's `import_job_id`; no source data), so a reloaded page can follow, cancel or review them                    |
 
 Progress also arrives on `GET /v2/events?stream=me` as `event: import`.
 While the source makes a scan wait (ClickUp's 90 requests a minute,
@@ -582,7 +591,7 @@ apps/status-summary/  example iframe app
 sdk/               the iframe-app SDK (served from the apps origin)
 cli/               the mm CLI
 scripts/           browser tests (e2e-smoke, e2e-roles, e2e-hosted,
-                   e2e-import) and their harness
+                   e2e-import, e2e-clickup) and their harness
 test/              node:test suites; fixtures/import/ has the fake
                    monday.com and ClickUp servers and an .xlsx writer
 ```
@@ -718,6 +727,7 @@ npm run e2e                    # node scripts/e2e-smoke.mjs
 node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
 node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
 node scripts/e2e-import.mjs    # the importer against fake upstreams
+node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
 ```
 
 - The unit and integration suites cover the GraphQL engine, the store and
@@ -740,7 +750,12 @@ node scripts/e2e-import.mjs    # the importer against fake upstreams
   and `e2e-roles-ux3.mjs` cover the server's verdicts and explanations in
   the share dialog and people pickers, refused assignees, the share dialog
   by keyboard and at 360 px, the "/" menu next to its block and the "Live
-  updates paused" banner. All of them fail on console
+  updates paused" banner. `e2e-clickup.mjs` imports a synthetic ClickUp
+  meetings list (`test/fixtures/import/clickup-meetings-data.js`) in code
+  and covers the List view (status groups and pills, subtasks, the status
+  menu, search, Show closed) and the task view (fields, subtasks,
+  activity with ClickUp authors, a new comment, focus on close), with
+  contrast checks in light and dark. All of them fail on console
   errors, page errors, CSP violations, failed requests and unexpected HTTP
   errors, and save screenshots to `e2e-output/`.
 - The `test/hosted-*.test.js` suites cover hosted mode: configuration

@@ -103,7 +103,8 @@ monday's official client types (`@mondaydotcomorg/api`; a copy of its
   timeline, link, email, phone, checkbox, rating, mirror, formula, file, …) →
   text from `column_values.text`, with one warning per column naming the
   original type.
-- Subitems become items in the same group with `parent_source_id`; their
+- Subitems become items in the same group with `parent_source_id` (real
+  subitems since SPEC-5 §2.1, no "Parent item" column); their
   columns are merged into the board's columns by title + type when they match,
   otherwise added as "<title> (subitem)".
 - Updates: `text_body` (plain text) preferred; HTML is never kept.
@@ -197,7 +198,9 @@ REST with header `Authorization: <token>`.
   listed in the report.
 - Re-import: if a board with the same `import.source` + `source_id` exists, the
   preview flags it and the default is to create a new copy named "<name>
-  (imported again)"; no merging.
+  (imported again)"; no merging. (SPEC-5 §2.5: this takes a new scan; one
+  scan job is imported at most once, and `POST /import/run` answers 409
+  `ALREADY_IMPORTED` with `import_job_id` for a second run.)
 
 ## 5. HTTP and GraphQL
 

@@ -305,6 +305,18 @@ test("jobs are read and cancelled by their creator; runs report plan errors", as
   const finished = await (await s.job(job_id)).json();
   assert.equal(finished.state, "done");
   assert.equal(finished.report.created.boards, 3);
+  assert.equal((await (await s.job(scan.job_id)).json()).import_job_id, job_id);
+  for (const plan of [{}, { users: { "u-sam": "match:99999" } }]) {
+    const again = await s.send("/import/run", {
+      body: { scan_job_id: scan.job_id, plan },
+    });
+    assert.equal(again.status, 409, "a scan is imported once");
+    const [error] = (await again.json()).errors;
+    assert.deepEqual(error, {
+      message: "This scan was already imported",
+      extensions: { import_job_id: job_id, code: "ALREADY_IMPORTED" },
+    });
+  }
   const cancel = await s.send(`/import/jobs/${job_id}/cancel`, { body: {} });
   assert.equal(cancel.status, 200);
   assert.equal(

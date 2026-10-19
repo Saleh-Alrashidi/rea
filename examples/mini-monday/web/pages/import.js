@@ -17,7 +17,8 @@
  * lands in it. The source token is never part of it: it lives only in the
  * scan request (`ui/import/source-step.js`). A fresh wizard (after a
  * reload) asks the server for this admin's jobs and offers to follow or
- * cancel one still running, or to return to a finished scan. The scan
+ * cancel one still running, or to return to a finished scan that was not
+ * imported yet (each scan is imported at most once). The scan
  * choices of each source (flags and limits, never the token) stay in the
  * session too, so a retry after a failure starts from them.
  */
@@ -112,16 +113,17 @@ function selectionFor(s, previous, next) {
 
 /**
  * Offers the job a fresh wizard lost track of: one still running, else
- * the newest job when it is a finished scan (not yet imported, so its
- * review can be opened again).
+ * the newest finished scan that was not imported (a scan is imported
+ * once, `import_job_id`), so its review can be opened again.
  */
 function findEarlier(s) {
   listJobs().then(
     (jobs) => {
       const running = jobs.find((job) => job.state === "running");
-      const [newest] = jobs;
-      const ready =
-        newest?.kind === "scan" && newest.state === "done" ? newest : null;
+      const ready = jobs.find(
+        (job) =>
+          job.kind === "scan" && job.state === "done" && !job.import_job_id,
+      );
       const job = running ?? ready;
       if (job) dispatch(s, { type: "earlier", job });
     },

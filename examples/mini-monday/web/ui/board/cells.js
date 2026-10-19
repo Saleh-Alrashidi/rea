@@ -63,9 +63,55 @@ function statusChoice({ option, selected, onPick }) {
 }
 
 /**
- * Colored status pill; clicking opens a label picker, a menu of radio items
- * (arrow keys, Home/End and typeahead move; focus starts on the current
- * label).
+ * Opens the label picker of status `column` next to `anchor`: a menu of
+ * radio items (arrow keys, Home/End and typeahead move; focus starts on
+ * the current label) plus "Clear". `onChange(index | null)` runs only for
+ * a different label.
+ * @param {{ anchor: HTMLElement, column: object, value: number | null,
+ *   onChange(index: number | null): void }} options
+ */
+export function openStatusMenu({ anchor, column, value, onChange }) {
+  const popover = openPopover({
+    anchor,
+    label: `Choose ${column.title}`,
+    role: "menu",
+    content: () =>
+      h(
+        "div",
+        { class: "status-picker", on: { keydown: onMenuKeydown } },
+        (column.status?.options ?? []).map((choice) =>
+          statusChoice({
+            option: choice,
+            selected: choice.index === value,
+            onPick(index) {
+              popover.close();
+              if (index !== value) onChange(index);
+            },
+          }),
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            role: "menuitem",
+            tabindex: "-1",
+            class: "status-choice status-clear",
+            on: {
+              click() {
+                popover.close();
+                if (value !== null) onChange(null);
+              },
+            },
+          },
+          "Clear",
+        ),
+      ),
+  });
+  return popover;
+}
+
+/**
+ * Colored status pill; clicking opens the label picker (`openStatusMenu`).
  * @param {{ column: object, value: number | null, label: string,
  *   onChange(index: number | null): void, focusKey?: string,
  *   placeholder?: string }} options
@@ -83,7 +129,9 @@ export function statusPill(options) {
       "aria-expanded": "false",
       "aria-label": `${label}: ${text || "not set"}. Change status`,
       dataset: { focusKey },
-      on: { click: () => openStatusPicker() },
+      on: {
+        click: () => openStatusMenu({ anchor: pill, column, value, onChange }),
+      },
     },
     text ||
       (placeholder ? h("span", { class: "placeholder" }, placeholder) : ""),
@@ -93,46 +141,6 @@ export function statusPill(options) {
     pill.style.backgroundColor = option.color;
     pill.style.color = textColorOn(option.color);
   }
-
-  function openStatusPicker() {
-    const popover = openPopover({
-      anchor: pill,
-      label: `Choose ${column.title}`,
-      role: "menu",
-      content: () =>
-        h(
-          "div",
-          { class: "status-picker", on: { keydown: onMenuKeydown } },
-          (column.status?.options ?? []).map((choice) =>
-            statusChoice({
-              option: choice,
-              selected: choice.index === value,
-              onPick(index) {
-                popover.close();
-                if (index !== value) onChange(index);
-              },
-            }),
-          ),
-          h(
-            "button",
-            {
-              type: "button",
-              role: "menuitem",
-              tabindex: "-1",
-              class: "status-choice status-clear",
-              on: {
-                click() {
-                  popover.close();
-                  if (value !== null) onChange(null);
-                },
-              },
-            },
-            "Clear",
-          ),
-        ),
-    });
-  }
-
   return pill;
 }
 

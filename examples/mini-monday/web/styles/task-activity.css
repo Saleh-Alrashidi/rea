@@ -1,0 +1,195 @@
+/* The task view's Activity pane (SPEC-5 §4.2): a sunken column with its
+   header, the comment stream (oldest first, scrolling on its own) and
+   the composer pinned at the bottom. Under 900px it follows the task's
+   fields and the composer stays in view at the bottom. Logical
+   properties only. */
+
+/* ----------------------------------------------------------- activity */
+
+.task-activity {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-inline-start: 1px solid var(--cu-border);
+  background: var(--color-sunken);
+}
+
+.task-activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--cu-border);
+}
+
+.task-activity-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.task-activity-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.task-stream {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5);
+}
+
+.task-stream-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-event {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.task-event strong {
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-semibold);
+}
+
+.task-comment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+
+.task-comment.pending {
+  opacity: 0.6;
+}
+
+.task-comment-main {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cu-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+
+.task-comment-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+  font-size: var(--text-sm);
+}
+
+.task-comment-author {
+  font-weight: var(--weight-semibold);
+  unicode-bidi: plaintext;
+}
+
+.task-comment-tag {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--color-sunken);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.task-time {
+  margin-inline-start: auto;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.task-event .task-time {
+  margin-inline-start: 0;
+}
+
+.task-comment-body {
+  font-size: var(--text-md);
+  line-height: 1.5;
+  text-align: start;
+  unicode-bidi: plaintext;
+}
+
+.task-comment-body a {
+  color: var(--cu-accent-text);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.task-activity-footer {
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--cu-border);
+  background: var(--color-sunken);
+}
+
+.task-composer {
+  margin: 0;
+}
+
+.task-composer .composer-input {
+  height: auto;
+  min-height: 72px;
+  max-height: 40vh;
+  background: var(--color-panel);
+  resize: none;
+  field-sizing: content;
+  unicode-bidi: plaintext;
+}
+
+.task-composer .btn-primary {
+  border-color: var(--cu-accent-strong);
+  background: var(--cu-accent-strong);
+}
+
+.task-composer .btn-primary:hover {
+  background: var(--cu-accent-hover);
+}
+
+.task-readonly-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* One full-screen column (task-view.css): the stream grows with the page
+   and the composer stays in view. */
+@media (max-width: 899px) {
+  .task-activity {
+    border-inline-start: 0;
+    border-top: 1px solid var(--cu-border);
+  }
+
+  .task-stream {
+    overflow: visible;
+    padding-inline: 16px;
+  }
+
+  .task-activity-header {
+    padding-inline: 16px;
+  }
+
+  .task-activity-footer {
+    position: sticky;
+    bottom: 0;
+    padding-inline: 16px;
+  }
+}

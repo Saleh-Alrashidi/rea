@@ -1,7 +1,9 @@
 /**
  * Boards, groups, columns and views: record constructors (shared with the
- * seed) and the part-1 board API, extended with workspaces, board kinds and
- * members (SPEC-2 §2) and activity entries for group and column changes.
+ * seed and imports) and the part-1 board API, extended with workspaces,
+ * board kinds and members (SPEC-2 §2), activity entries for group and
+ * column changes, column roles and the views users add (SPEC-5 §1.2,
+ * §1.5).
  *
  * Part-1 methods keep their names and behavior; mutators that record
  * activity take a trailing `{ actorId }` option.
@@ -9,6 +11,7 @@
 import { DEFAULT_STATUS_SETTINGS } from "../column-values.js";
 import {
   BOARD_KINDS,
+  COLUMN_ROLES,
   COLUMN_TYPES,
   GROUP_COLOR,
   byId,
@@ -21,6 +24,7 @@ import {
   onBoard,
   push,
   readChoice,
+  readName,
   removeWhere,
   replace,
   requireText,
@@ -29,6 +33,7 @@ import {
   withChanges,
 } from "../store-state.js";
 import { recordActivity } from "./activity.js";
+import { withDescendants } from "./subitems.js";
 import { targetWorkspace } from "./workspaces.js";
 
 /** Groups and columns of a board made by `createBoard`. */
@@ -42,11 +47,56 @@ export const DEFAULT_CONTENT = Object.freeze({
   ],
 });
 
-/** Column record; `settings_str` is derived for GraphQL and not persisted. */
-export function makeColumn({ id, board_id, title, type, settings }) {
+/** The views users can add (SPEC-5 §1.5), with their default names. */
+export const VIEW_NAMES = Object.freeze({
+  list: "List",
+  table: "Main table",
+  kanban: "Kanban",
+});
+export const MAX_VIEWS = 20;
+const viewList = (...types) =>
+  Object.freeze(
+    types.map((type) => Object.freeze({ type, name: VIEW_NAMES[type] })),
+  );
+/**
+ * The views a board starts with, in record order (its default view is the
+ * first non-app one): new boards and imports from most sources get
+ * DEFAULT_VIEWS, ClickUp imports CLICKUP_VIEWS.
+ */
+export const DEFAULT_VIEWS = viewList("table", "kanban");
+export const CLICKUP_VIEWS = viewList("list", "table", "kanban");
+
+/**
+ * Column record; `settings_str` is derived for GraphQL and not persisted.
+ * `role` (SPEC-5 §1.2) is absent unless the column has one.
+ */
+export function makeColumn({ id, board_id, title, type, settings, role }) {
   const copy = deepFreeze(structuredClone(settings));
   const settings_str = JSON.stringify(copy);
-  return { id, board_id, title, type, settings: copy, settings_str };
+  const column = { id, board_id, title, type, settings: copy, settings_str };
+  return role === undefined ? column : { ...column, role };
+}
+
+/**
+ * Why the roles of one board's `columns` break the role rules (a known
+ * role on a column of the type it needs, at most one column per role),
+ * else null.
+ */
+export function columnRoleProblem(columns) {
+  const seen = new Set();
+  for (const { id, board_id, type, role } of columns) {
+    if (role === undefined) continue;
+    const where = `column ${id} of board ${board_id}`;
+    if (!Object.hasOwn(COLUMN_ROLES, role)) {
+      return `${where} has an unknown role ${role}`;
+    }
+    if (COLUMN_ROLES[role] !== type) {
+      return `${where} has role ${role}, which needs a ${COLUMN_ROLES[role]} column`;
+    }
+    if (seen.has(role)) return `${where} repeats the role ${role}`;
+    seen.add(role);
+  }
+  return null;
 }
 
 /** A board whose creator (when known) is its first owner. */
@@ -90,16 +140,19 @@ export function insertView(ctx, boardId, { name, type, installId = null }) {
   return push(ctx.state.views, { ...view, app_install_id: installId });
 }
 
-/** Adds groups and columns from `|` rows plus the table and kanban views. */
-export function insertContent(ctx, boardId, { groups, columns }) {
+/** Adds groups and columns from `|` rows plus `views` (`[{ type, name }]`). */
+export function insertContent(
+  ctx,
+  boardId,
+  { groups, columns, views = DEFAULT_VIEWS },
+) {
   for (const [id, title, color] of groups.map((row) => row.split("|"))) {
     insertGroup(ctx, boardId, { id, title, color });
   }
   for (const [id, title, type] of columns.map((row) => row.split("|"))) {
     insertColumn(ctx, boardId, { id, title, type });
   }
-  insertView(ctx, boardId, { name: "Main table", type: "table" });
-  insertView(ctx, boardId, { name: "Kanban", type: "kanban" });
+  for (const view of views) insertView(ctx, boardId, view);
 }
 
 export function sortedGroups(state, boardId) {
@@ -107,11 +160,19 @@ export function sortedGroups(state, boardId) {
   return groups.sort((a, b) => a.position - b.position);
 }
 
-/** Removes items (with their updates) matching `predicate`. */
+/**
+ * The one way items leave the store: removes the items matching
+ * `predicate` with all their descendants, whatever their group (SPEC-5
+ * §1.1), and the updates of all of them. Returns the removed items in
+ * store order.
+ */
 export function removeItems(state, predicate) {
-  const ids = new Set(state.items.filter(predicate).map((item) => item.id));
+  const matched = state.items.filter(predicate).map((item) => item.id);
+  const ids = withDescendants(state.items, new Set(matched));
+  const removed = state.items.filter((item) => ids.has(item.id));
   removeWhere(state.items, (item) => ids.has(item.id));
   removeWhere(state.updates, (update) => ids.has(update.item_id));
+  return removed;
 }
 
 function boardReads(state) {
@@ -206,6 +267,27 @@ function boardMutators(ctx) {
       const deleted = Object.freeze({ ...board, state: "deleted" });
       return commit(ctx, { type: "board_deleted", board_id: id }, deleted);
     },
+    /**
+     * Adds a `list`, `table` or `kanban` view (each at most once, at most
+     * MAX_VIEWS views per board) named `name` or the type's default name.
+     */
+    createView(boardId, { type, name } = {}) {
+      if (!byId(state.boards, boardId)) return null;
+      readChoice(type, Object.keys(VIEW_NAMES), "View type");
+      const title =
+        name === undefined ? VIEW_NAMES[type] : readName(name, "View name");
+      const views = forBoard(state.views, boardId);
+      if (views.some((view) => view.type === type)) {
+        const message = `The board already has a ${VIEW_NAMES[type]} view`;
+        return failure("view_exists", { message });
+      }
+      if (views.length >= MAX_VIEWS) {
+        const message = `A board has at most ${MAX_VIEWS} views`;
+        return failure("too_many_views", { message });
+      }
+      const view = insertView(ctx, boardId, { name: title, type });
+      return commit(ctx, { type: "view_created", board_id: boardId }, view);
+    },
   };
 }
 
@@ -246,9 +328,10 @@ function groupMutators(ctx) {
       return commit(ctx, groupEvent("group_updated", next), next);
     },
     /**
-     * Deletes the group and its items; forms aimed at it fall back. A
-     * board keeps at least one group (`last_group`), so new items and
-     * form responses always have somewhere to go.
+     * Deletes the group and its items (with their subitems, wherever they
+     * sit); forms aimed at it fall back. A board keeps at least one group
+     * (`last_group`), so new items and form responses always have
+     * somewhere to go.
      */
     deleteGroup(boardId, groupId, opts = {}) {
       const group = onBoard(state.groups, boardId, groupId);

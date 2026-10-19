@@ -5,13 +5,15 @@
  */
 
 import { request } from "../../api.js";
-import { formHash } from "../../router.js";
+import { formHash, viewHash } from "../../router.js";
 import { confirmDialog, formDialog } from "../components/dialog.js";
 import { BOARD_KINDS } from "../components/labels.js";
 import { boardKindConfirmation } from "../components/share-model.js";
 import { showError } from "../components/toast.js";
 import { CREATE_MUTATIONS } from "../shell/create.js";
 import { mutate } from "./board-data.js";
+import { ITEM_VIEWS } from "./board-views.js";
+import { descendantIds } from "./list-model.js";
 import {
   ADDABLE_COLUMN_TYPES,
   GROUP_COLORS,
@@ -199,6 +201,29 @@ function groupActions(app, kit) {
   };
 }
 
+/** Board views editors add (SPEC-5 §1.5): list, table or kanban. */
+function viewActions(app, kit) {
+  const { state, run } = kit;
+  return {
+    /** Adds a view of `type` with its default name and opens it. */
+    async addView(type) {
+      if (!Object.hasOwn(ITEM_VIEWS, type)) return;
+      const boardId = kit.boardId();
+      const view = await run(
+        "createBoardView",
+        { boardId, type },
+        {
+          optimistic() {
+            const name = ITEM_VIEWS[type].label;
+            state.board.views = [...state.board.views, { id: "", type, name }];
+          },
+        },
+      );
+      if (view?.id) app.navigate(viewHash(boardId, { view: type }));
+    },
+  };
+}
+
 /** Column creation. */
 function columnActions(kit) {
   const { run } = kit;
@@ -237,9 +262,9 @@ function columnActions(kit) {
   };
 }
 
-/** Item create, rename, values, move, delete and updates. */
-function itemActions(app, kit) {
-  const { state, run } = kit;
+/** Item and subitem creation. */
+function creationActions(kit) {
+  const { run } = kit;
   return {
     /**
      * Creates an item (in `groupId`, or the first group when null) with
@@ -254,6 +279,25 @@ function itemActions(app, kit) {
       });
       return item?.id ? String(item.id) : null;
     },
+    /**
+     * Creates a subitem of `parentId` in its parent's group (SPEC-5 §1.6)
+     * with optional UI `values`; resolves with the new item's ID.
+     */
+    async createSubitem({ parentId, name, values = {} }) {
+      const item = await run("createSubitem", {
+        parentId,
+        name,
+        values: kit.encodeValues(values),
+      });
+      return item?.id ? String(item.id) : null;
+    },
+  };
+}
+
+/** Item rename, values, move, delete and updates. */
+function itemActions(app, kit) {
+  const { state, run } = kit;
+  return {
     renameItem(item, name) {
       run(
         "renameItem",
@@ -300,22 +344,29 @@ function itemActions(app, kit) {
         },
       );
     },
+    /** Deletes the item with its subitems (the server cascades). */
     async deleteItem(item) {
+      const gone = descendantIds(state.board.items, item.id);
+      const message =
+        gone.size > 0
+          ? `“${item.name}”, its ${plural(gone.size, "subitem")} and their updates will be deleted.`
+          : `“${item.name}” and its updates will be deleted.`;
       const confirmed = await confirmDialog({
         title: "Delete item?",
-        message: `“${item.name}” and its updates will be deleted.`,
+        message,
         confirmButton: "Delete item",
         danger: true,
       });
       if (!confirmed) return;
-      app.onItemDeleted(item.id);
+      gone.add(item.id);
+      for (const id of gone) app.onItemDeleted(id);
       run(
         "deleteItem",
         { itemId: item.id },
         {
           optimistic() {
             state.board.items = state.board.items.filter(
-              (entry) => entry.id !== item.id,
+              (entry) => !gone.has(entry.id),
             );
           },
         },
@@ -394,7 +445,9 @@ export function createActions(app) {
   return {
     ...boardActions(app, kit),
     ...groupActions(app, kit),
+    ...viewActions(app, kit),
     ...columnActions(kit),
+    ...creationActions(kit),
     ...itemActions(app, kit),
     ...formActions(app, kit),
   };

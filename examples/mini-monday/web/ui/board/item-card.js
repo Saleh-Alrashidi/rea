@@ -3,19 +3,22 @@
  * column values and updates (newest first) with a composer. Escape, the
  * close button and a backdrop click close it. View-only users see the same
  * card read-only, without the composer (posting updates needs editor).
+ *
+ * The task view (`task-view.js`, SPEC-5 §4) shares its dialog shell
+ * (`createModalPanel`) and composer.
  */
 
 import { clear, h } from "../../dom.js";
 import { avatar } from "../components/avatar.js";
-import { accessBadge } from "../components/badge.js";
+import { accessBadge, badge } from "../components/badge.js";
 import { emptyState } from "../components/empty-state.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
-import { SOMEONE } from "../components/labels.js";
 import { findByFocusKey } from "../components/focus.js";
 import { closePopover, isPopoverOpen } from "../components/popover.js";
 import { skeletonList } from "../components/skeleton.js";
 import { cellEditor } from "./cells.js";
+import { updateAuthor } from "./task-model.js";
 import { safeColor } from "./values.js";
 
 const MAX_UPDATE = 10_000;
@@ -32,7 +35,8 @@ const CARD_MESSAGES = Object.freeze({
   },
 });
 
-function formatTime(iso) {
+/** A timestamp in full: "Oct 18, 2026, 10:00 AM" (local), or "". */
+export function formatTime(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString(undefined, {
@@ -170,15 +174,33 @@ function fieldsSection(props) {
   );
 }
 
-function composer(props) {
+/** The card's composer words (`composer` options). */
+const CARD_COMPOSER = Object.freeze({
+  placeholder: "Write an update…",
+  label: "Write an update",
+  submit: "Update",
+  focusKey: "card-composer",
+});
+
+/**
+ * The update composer: a textarea (Ctrl/⌘+Enter posts) whose text is
+ * kept in the page's draft (`props.onDraft`), posted with
+ * `actions.addUpdate`. `words` names it (`CARD_COMPOSER`).
+ * @param {{ item: object, actions: object, draft: string,
+ *   onDraft(text: string): void }} props
+ * @param {{ placeholder: string, label: string, submit: string,
+ *   focusKey: string, className?: string }} words
+ */
+export function composer(props, words) {
   const { item, actions, draft, onDraft } = props;
   const textarea = h("textarea", {
     class: "input composer-input",
     rows: 3,
     maxlength: MAX_UPDATE,
-    placeholder: "Write an update…",
-    "aria-label": "Write an update",
-    dataset: { focusKey: "card-composer" },
+    placeholder: words.placeholder,
+    "aria-label": words.label,
+    dir: "auto",
+    dataset: { focusKey: words.focusKey },
     value: draft,
     on: {
       input: (event) => onDraft(event.currentTarget.value),
@@ -193,7 +215,7 @@ function composer(props) {
   const form = h(
     "form",
     {
-      class: "composer",
+      class: ["composer", words.className],
       on: {
         submit(event) {
           event.preventDefault();
@@ -210,23 +232,39 @@ function composer(props) {
       "div",
       { class: "composer-actions" },
       h("span", { class: "muted composer-hint" }, "Ctrl + Enter to post"),
-      h("button", { type: "submit", class: "btn btn-primary" }, "Update"),
+      h("button", { type: "submit", class: "btn btn-primary" }, words.submit),
     ),
   );
   return form;
 }
 
-function updateEntry(update, users) {
-  // The API hides authors outside a guest's directory.
-  const author = update.creator ?? { id: "0", name: SOMEONE, initials: "?" };
+/** Initials on a neutral gray (white text at 4.8:1) for source authors. */
+const SOURCE_AUTHOR_COLOR = "#6b7280";
+
+/**
+ * The avatar of an update's author (`updateAuthor`): the user's, or the
+ * initials of an imported update's source author on a neutral color.
+ * @param {{ user: object | null, name: string }} author
+ * @param {Map} users directory users (they carry the avatar colors)
+ */
+export function authorAvatar(author, users, { size = "sm" } = {}) {
+  if (author.user) return avatar(person(users, author.user), { size });
+  return avatar({ name: author.name, color: SOURCE_AUTHOR_COLOR }, { size });
+}
+
+function updateEntry(update, { users, source }) {
+  // The API hides authors outside a guest's directory; an imported
+  // update names its source author instead (SPEC-5 §1.4).
+  const author = updateAuthor(update, source);
   return h(
     "li",
     { class: ["update", update.pending && "pending"] },
     h(
       "div",
       { class: "update-header" },
-      avatar(person(users, author), { size: "sm" }),
+      authorAvatar(author, users),
       h("span", { class: "update-author" }, author.name),
+      author.tag ? badge(author.tag, { className: "update-source" }) : null,
       h(
         "time",
         { class: "update-time", datetime: update.created_at },
@@ -244,7 +282,12 @@ function updateList(props) {
     return h(
       "ol",
       { class: "update-list" },
-      updates.map((update) => updateEntry(update, props.users)),
+      updates.map((update) =>
+        updateEntry(update, {
+          users: props.users,
+          source: props.board.import?.source,
+        }),
+      ),
     );
   }
   return emptyState({
@@ -268,7 +311,7 @@ function updatesSection(props) {
       h("span", null, "Updates"),
     ),
     props.caps.edit
-      ? composer(props)
+      ? composer(props, CARD_COMPOSER)
       : h(
           "p",
           { class: "card-readonly-note" },
@@ -361,14 +404,19 @@ function returnFocus(key) {
 }
 
 /**
- * Creates the item card panel. `render(props)` fills it; `props.status` is
- * "loading", "missing", "error" or "ready" (with `item`, `detail`, `board`,
- * `users`, `actions`, `caps`, `draft`, `onDraft`).
+ * A modal panel: `<dialog class={className}>` that Escape (closing an open
+ * popover first), a click on its backdrop and the browser's own close
+ * dismiss through `onClose`. Focus returns to the control that opened it,
+ * found again by focus key since closing re-renders the board view. The
+ * panel's content fills the dialog (it has no padding), so only the
+ * backdrop targets the dialog itself.
  *
- * @param {{ onClose(): void }} options
+ * @param {{ className: string, label: string, onClose(): void }} options
+ * @returns {{ element: HTMLDialogElement, show(): void, hide(): void,
+ *   fill(content: Node, label: string): void }}
  */
-export function createItemCard({ onClose }) {
-  const dialog = h("dialog", { class: "item-card", "aria-label": "Item card" });
+export function createModalPanel({ className, label, onClose }) {
+  const dialog = h("dialog", { class: className, "aria-label": label });
   dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     if (isPopoverOpen()) closePopover();
@@ -379,8 +427,8 @@ export function createItemCard({ onClose }) {
     if (event.target === dialog) onClose();
   });
   let shown = false;
-  // The control that opened the card ("Open", a kanban title), by focus key:
-  // closing re-renders the board view, so the element itself may be gone.
+  // The control that opened the panel ("Open", a kanban title), by focus
+  // key: closing re-renders the board view, so the element may be gone.
   let returnKey = null;
   dialog.addEventListener("close", () => {
     // The browser may close a modal itself (for example on a repeated
@@ -409,6 +457,31 @@ export function createItemCard({ onClose }) {
       if (wasOpen) returnFocus(returnKey);
       returnKey = null;
     },
+    /** Replaces the panel's content and accessible name. */
+    fill(content, name) {
+      dialog.setAttribute("aria-label", name);
+      clear(dialog).append(content);
+    },
+  };
+}
+
+/**
+ * Creates the item card panel. `render(props)` fills it; `props.status` is
+ * "loading", "missing", "error" or "ready" (with `item`, `detail`, `board`,
+ * `users`, `actions`, `caps`, `draft`, `onDraft`).
+ *
+ * @param {{ onClose(): void }} options
+ */
+export function createItemCard({ onClose }) {
+  const panel = createModalPanel({
+    className: "item-card",
+    label: "Item card",
+    onClose,
+  });
+  return {
+    element: panel.element,
+    show: panel.show,
+    hide: panel.hide,
     render(props) {
       const full = { ...props, onClose };
       let content;
@@ -418,11 +491,7 @@ export function createItemCard({ onClose }) {
           full,
           CARD_MESSAGES[props.status] ?? CARD_MESSAGES.loading,
         );
-      dialog.setAttribute(
-        "aria-label",
-        props.item ? `Item ${props.item.name}` : "Item card",
-      );
-      clear(dialog).append(content);
+      panel.fill(content, props.item ? `Item ${props.item.name}` : "Item card");
     },
   };
 }

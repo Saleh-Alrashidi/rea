@@ -1,5 +1,5 @@
 /**
- * The upgrade of `mini-monday-store/2` data files to the current format
+ * The upgrade of `mini-monday-store/2` data files to version 3
  * (`persistence.js` runs it once, when it loads a /2 file).
  *
  * Version 2 wrote the names of the people a text mentions into the text:
@@ -19,8 +19,6 @@
 import { ACCESS_ROLES, HIDDEN_USER_NAME } from "../access.js";
 import { deepFreeze, onBoard } from "../store-state.js";
 import { byActor, mention } from "./activity.js";
-
-export const LEGACY_FORMAT = "mini-monday-store/2";
 
 /** What followed the actor's name in each kind of /2 notification text. */
 const NOTIFICATION_RESTS = Object.freeze({

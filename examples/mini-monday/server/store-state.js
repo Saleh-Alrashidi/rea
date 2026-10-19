@@ -28,6 +28,33 @@ export const COLUMN_TYPES = Object.freeze([
   "date",
   "numbers",
 ]);
+/**
+ * Column roles (SPEC-5 §1.2): what a column means in its source, set by
+ * whoever created it (imports), with the column type each role needs. A
+ * board has at most one column per role.
+ */
+export const COLUMN_ROLES = Object.freeze({
+  status: "status",
+  assignees: "people",
+  due_date: "date",
+  start_date: "date",
+  priority: "status",
+  time_estimate: "numbers",
+  tags: "text",
+  description: "text",
+});
+/**
+ * Status label types (SPEC-5 §1.3), kept per label index in a status
+ * column's `settings.labels_types`; `done` and `closed` mean finished.
+ */
+export const STATUS_LABEL_TYPES = Object.freeze([
+  "open",
+  "custom",
+  "done",
+  "closed",
+]);
+/** Board view types (SPEC-5 §1.5); `app` views come from app installs. */
+export const VIEW_TYPES = Object.freeze(["table", "kanban", "list", "app"]);
 export const GROUP_COLOR = "#579bfc";
 export const SCOPE_KEY = /^(?:install|app):[1-9]\d*$/;
 export const BOARD_KINDS = Object.freeze(["public", "private", "share"]);

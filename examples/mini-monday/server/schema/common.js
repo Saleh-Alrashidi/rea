@@ -103,6 +103,7 @@ export function parseJson(text, label) {
 const FAILURE_CODES = Object.freeze({
   version_conflict: "VERSION_CONFLICT",
   forbidden: "FORBIDDEN",
+  not_found: "NOT_FOUND",
 });
 const FAILURE_MESSAGES = Object.freeze({
   email_taken: "That email address is already in use",
@@ -113,8 +114,8 @@ const FAILURE_MESSAGES = Object.freeze({
 /**
  * Maps a store result to the API: a record is returned, a store failure
  * (`{ ok: false, reason }`) becomes BAD_USER_INPUT (or VERSION_CONFLICT
- * with `extensions.version`, or FORBIDDEN), and null (unknown ID) becomes
- * `onMissing()`.
+ * with `extensions.version`, FORBIDDEN or NOT_FOUND), and null (unknown
+ * ID) becomes `onMissing()`.
  */
 export function storeResult(result, onMissing) {
   if (result === null || result === undefined) return onMissing();

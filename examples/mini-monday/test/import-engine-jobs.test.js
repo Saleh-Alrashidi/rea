@@ -344,26 +344,81 @@ test("imports run from a finished scan of the same admin and can be cancelled", 
     { ok: false, reason: "unknown_scan" },
     "creator only",
   );
+  assert.equal(jobs.get(scan.job.id, admin).import_job_id, null);
   const started = jobs.startImport({
     userId: admin,
     scanJobId: scan.job.id,
     plan: {},
   });
   assert.equal(started.ok, true);
+  const refused = {
+    ok: false,
+    reason: "already_imported",
+    importJobId: started.job.id,
+  };
+  assert.deepEqual(
+    jobs.startImport({ userId: admin, scanJobId: scan.job.id, plan: {} }),
+    refused,
+    "a scan is imported once: refused before the busy check",
+  );
+  assert.deepEqual(
+    jobs.startImport({
+      userId: admin,
+      scanJobId: scan.job.id,
+      plan: { users: { "u-x": "skip" } },
+    }),
+    refused,
+    "and before the plan check",
+  );
+  assert.equal(jobs.get(scan.job.id, admin).import_job_id, started.job.id);
+  assert.equal(
+    jobs.list(admin).find((entry) => entry.id === scan.job.id).import_job_id,
+    started.job.id,
+    "the list names the import too",
+  );
+  assert.ok(!("import_job_id" in jobs.get(started.job.id, admin)));
   jobs.cancel(started.job.id, admin);
   await finished(jobs, started.job.id, admin);
   const job = jobs.get(started.job.id, admin);
   assert.equal(job.state, "cancelled");
   assert.equal(job.report.cancelled, true);
   assert.ok(job.report.created.boards < 3);
-  const again = jobs.startImport({
-    userId: admin,
-    scanJobId: scan.job.id,
-    plan: {},
-  });
-  await finished(jobs, again.job.id, admin);
-  assert.equal(jobs.get(again.job.id, admin).state, "done");
-  assert.equal(jobs.get(again.job.id, admin).report.created.boards, 3);
+  assert.deepEqual(
+    jobs.startImport({ userId: admin, scanJobId: scan.job.id, plan: {} }),
+    refused,
+    "a stopped import still used its scan",
+  );
+});
+
+test("a new scan of the same source imports again, as copies", async (t) => {
+  const quick = { scan: async () => sampleSnapshot() };
+  const connectors = { monday: quick, clickup: quick, files: quick };
+  const { jobs, admin, store } = await registry(t, { connectors });
+  for (const round of [1, 2]) {
+    const scan = jobs.startScan({
+      userId: admin,
+      source: "monday",
+      token: TOKEN,
+    });
+    await finished(jobs, scan.job.id, admin);
+    const run = jobs.startImport({
+      userId: admin,
+      scanJobId: scan.job.id,
+      plan: {},
+    });
+    await finished(jobs, run.job.id, admin);
+    const job = jobs.get(run.job.id, admin);
+    assert.deepEqual(
+      [job.state, job.report.created.boards],
+      ["done", 3],
+      `run ${round}`,
+    );
+  }
+  const names = store.listBoards({ limit: 100 }).map((board) => board.name);
+  assert.deepEqual(
+    names.filter((name) => name.startsWith("Roadmap")),
+    ["Roadmap", "Roadmap (imported again)"],
+  );
 });
 
 test("finished jobs and their snapshots are discarded after 30 minutes", async (t) => {

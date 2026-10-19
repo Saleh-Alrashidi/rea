@@ -4,6 +4,12 @@
  * (status → label, text → string, numbers → finite number, date →
  * "YYYY-MM-DD", people → user source IDs). Used by `snapshot-board.js`.
  *
+ * A column may name its `role` (SPEC-5 §1.2, COLUMN_ROLES) and a status
+ * label its `type` (STATUS_LABEL_TYPES). Unknown ones are dropped with a
+ * warning, and so is a role on a column of another type or one that an
+ * earlier column of the board already has (`checkRoles`, after
+ * `capLabels` settled the types).
+ *
  * Values follow the column formats `server/column-values.js` owns (it
  * parses numeric and date text and checks stored values). A status value
  * that names a label the column does not list adds that label (lossless);
@@ -15,7 +21,11 @@ import {
   parseSimpleColumnValue,
 } from "../column-values.js";
 import { LIMITS } from "../input.js";
-import { COLUMN_TYPES } from "../store-state.js";
+import {
+  COLUMN_ROLES,
+  COLUMN_TYPES,
+  STATUS_LABEL_TYPES,
+} from "../store-state.js";
 import {
   LABEL_COLOR,
   keyPath,
@@ -36,6 +46,15 @@ export const MAX_LABELS = 200;
 const ISO_DATE_TIME = /^(\d{4}-\d{2}-\d{2})T/;
 
 // ----------------------------------------------------------------- columns
+
+/** An optional label type; anything else is dropped with a warning. */
+function readLabelType(c, value, path) {
+  if (value === undefined || value === null) return undefined;
+  if (STATUS_LABEL_TYPES.includes(value)) return value;
+  const message = `Label type ${shown(value)} is not one of ${STATUS_LABEL_TYPES.join(", ")}; it was left out`;
+  c.warn(path, "invalid_label_type", message);
+  return undefined;
+}
 
 function readLabels(c, raw, { path, title }) {
   const list = readArray(c, raw, {
@@ -60,7 +79,8 @@ function readLabels(c, raw, { path, title }) {
       path: `${at}.color`,
       fallback: LABEL_COLOR,
     });
-    labels.push({ label, color });
+    const type = readLabelType(c, entry.type, `${at}.type`);
+    labels.push(type === undefined ? { label, color } : { label, color, type });
     byLower.set(key, label);
   }
   return { labels, byLower };
@@ -84,6 +104,12 @@ function readColumn(c, raw, { path, taken, scope }) {
       : type;
   const column = { path, title, type, original_type: original };
   column.source_id = uniqueSourceId(c, { id, taken, path, scope });
+  const role = raw.role ?? null;
+  if (role !== null && Object.hasOwn(COLUMN_ROLES, role)) column.role = role;
+  else if (role !== null) {
+    const message = `Role ${shown(role)} of “${title}” is not a Worklane column role; it was left out`;
+    c.warn(`${path}.role`, "invalid_role", message);
+  }
   if (type === "status") {
     const labelPath = `${path}.labels`;
     Object.assign(
@@ -120,6 +146,28 @@ export function capLabels(c, columns) {
     const message = `“${column.title}” has ${column.labels.length} labels (at most ${MAX_LABELS}); it was imported as a text column`;
     c.warn(column.path, "too_many_labels", message);
     column.type = "text";
+  }
+}
+
+/**
+ * Drops roles on columns of another type than the role needs and roles
+ * an earlier column has (each with a warning); run after `capLabels`.
+ */
+export function checkRoles(c, columns) {
+  const taken = new Set();
+  for (const column of columns) {
+    const { role } = column;
+    if (role === undefined) continue;
+    const at = `${column.path}.role`;
+    if (COLUMN_ROLES[role] !== column.type) {
+      const message = `“${column.title}” is a ${column.type} column, so it cannot have the role ${role} (a ${COLUMN_ROLES[role]} role); the role was left out`;
+      c.warn(at, "invalid_role", message);
+      delete column.role;
+    } else if (taken.has(role)) {
+      const message = `Another column already has the role ${role}; it was left out of “${column.title}”`;
+      c.warn(at, "duplicate_role", message);
+      delete column.role;
+    } else taken.add(role);
   }
 }
 

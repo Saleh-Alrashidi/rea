@@ -278,8 +278,7 @@ function targetOf(ctx, workspace) {
 function importOneBoard(ctx, { task, workspace }) {
   const { store, report, snapshot, importerId, people } = ctx;
   const board = task.entry;
-  const sourceName = SOURCE_NAMES[snapshot.source];
-  const built = boardSpec(board, { people, sourceName });
+  const built = boardSpec(board, { people, source: snapshot.source });
   const again = earlierImport(store, snapshot.source, board) !== null;
   const counts = boardCounts(board);
   const items = count(counts.items + counts.subitems, "item");

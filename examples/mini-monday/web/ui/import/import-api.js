@@ -4,8 +4,9 @@
  * `event: import` messages of the user's `stream=me` stream. Requests go
  * through the app's `requestJson` (same-origin with the session cookie);
  * failures throw its `ApiError` (`.code`, `.status`, `.errors`; an invalid
- * plan's `extensions.errors` as `.details`), and a site session the gate
- * ended opens the sign-in page as everywhere else.
+ * plan's `extensions.errors` as `.details`; a scan imported before,
+ * `ALREADY_IMPORTED`, with that import's job ID as `.importJobId`), and a
+ * site session the gate ended opens the sign-in page as everywhere else.
  *
  * The source token goes into one request body and nowhere else: it is
  * never stored, logged or kept by this module.
@@ -76,10 +77,22 @@ export const getJob = async (id) => requestJson(jobPath(id), { method: "GET" });
 /** Cancels a running job; resolves with its view. */
 export const cancelJob = async (id) => requestJson(jobPath(id, "/cancel"));
 
-/** Starts importing scan `scanJobId` with `plan`; resolves with the job ID. */
+/**
+ * Starts importing scan `scanJobId` with `plan`; resolves with the job
+ * ID. A scan that was imported before is refused with `ALREADY_IMPORTED`
+ * and `.importJobId` (null when the answer names no valid job).
+ */
 export async function runImport({ scanJobId, plan }) {
   const body = { scan_job_id: scanJobId, plan };
-  return jobIdOf(await requestJson(RUN_PATH, { body }));
+  try {
+    return jobIdOf(await requestJson(RUN_PATH, { body }));
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "ALREADY_IMPORTED") {
+      const id = error.errors[0]?.extensions?.import_job_id;
+      error.importJobId = typeof id === "string" && JOB_ID.test(id) ? id : null;
+    }
+    throw error;
+  }
 }
 
 /**

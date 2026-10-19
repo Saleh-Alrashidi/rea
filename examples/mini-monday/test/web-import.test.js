@@ -197,16 +197,18 @@ test("failed and cancelled scans go back to the source step with a message", () 
   assert.equal(plain.error.detail, null, "no detail when the text is shown");
 });
 
-test("imports that fail return to the review; stopped ones show their report", () => {
+test("imports that fail return to the source step; stopped ones show their report", () => {
   const failed = W.transition(importing(), {
     type: "job",
     job: job(IMPORT, "import", "failed", {
       error: { code: "IMPORT_FAILED", message: "The import failed" },
     }),
   });
-  assert.equal(failed.step, "review");
-  assert.equal(failed.importJobId, null);
-  assert.equal(failed.preview, PREVIEW_STUB, "the review keeps its preview");
+  assert.equal(failed.step, "source", "its scan cannot be imported again");
+  assert.deepEqual(
+    [failed.source, failed.importJobId, failed.scanJobId, failed.preview],
+    ["monday", null, null, null],
+  );
   assert.equal(failed.error.message, "The import failed");
   const stopped = { ...REPORT, cancelled: true };
   const done = W.transition(importing(), {
@@ -232,6 +234,53 @@ test("imports that fail return to the review; stopped ones show their report", (
   assert.deepEqual(invalid.error.errors, [
     { path: 'plan.users["u1"]', message: "No email" },
   ]);
+});
+
+test("a scan imported before follows that import to its report", () => {
+  const refused = W.requestFailure(
+    Object.assign(new Error("This scan was already imported"), {
+      code: "ALREADY_IMPORTED",
+      importJobId: IMPORT,
+    }),
+  );
+  assert.equal(refused.importJobId, IMPORT);
+  const following = walk(
+    reviewing(),
+    { type: "submit" },
+    { type: "submit-failed", error: refused },
+  );
+  assert.deepEqual(
+    [following.step, following.importJobId, following.pending, following.error],
+    ["importing", IMPORT, false, null],
+  );
+  assert.equal(W.followedJob(following), IMPORT);
+  const running = W.transition(following, {
+    type: "job",
+    job: job(IMPORT, "import", "running", { progress: { phase: "boards" } }),
+  });
+  assert.equal(running.progress.phase, "boards", "its progress shows");
+  const done = W.transition(running, {
+    type: "job",
+    job: job(IMPORT, "import", "done", { report: REPORT }),
+  });
+  assert.deepEqual([done.step, done.report], ["done", REPORT]);
+  const nameless = walk(
+    reviewing(),
+    { type: "submit" },
+    {
+      type: "submit-failed",
+      error: {
+        code: "ALREADY_IMPORTED",
+        message: "Imported",
+        importJobId: null,
+      },
+    },
+  );
+  assert.deepEqual(
+    [nameless.step, nameless.error.message],
+    ["review", "Imported"],
+    "without a job to follow, the review shows the refusal",
+  );
 });
 
 test("jobs the server lost and expired scans go back to the source step", () => {
@@ -284,6 +333,7 @@ test("error messages, request failures and job details", () => {
       code: "A",
       message: "B",
       errors: null,
+      importJobId: null,
     },
   );
   assert.equal(W.needsDetails(job(SCAN, "scan", "running")), false);

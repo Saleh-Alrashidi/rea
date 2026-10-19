@@ -1,41 +1,26 @@
 /**
- * One snapshot board as a `store.importBoard` spec (SPEC-4 §4): members
- * of mapped users, groups, columns (plus a "Parent item" text column when
- * the board has subitems), and items in board order, each followed by its
- * subitems, with people and authors mapped to Worklane users.
+ * One snapshot board as a `store.importBoard` spec (SPEC-4 §4, SPEC-5
+ * §2): members of mapped users, groups, columns (with their roles and
+ * status label types), items in board order with their parents and
+ * updates, and the board's views, with people and authors mapped to
+ * Worklane users.
  *
- * Worklane items have no parent, so a subitem becomes an item of its group
- * right after its parent, and the parent's name is kept in the "Parent
- * item" column. An update whose author has no Worklane user keeps the
- * author's name in its first line. What cannot be mapped (members and
- * people of skipped users) is returned in `notes` for the report.
+ * Items keep their source ID as `key` and name their parent by its key
+ * (`parentKey`), so a subitem stays a subitem of its parent whatever its
+ * group; validation (`snapshot-board.js`) already cleared unknown parents,
+ * broke cycles and capped the depth. An update whose author has no
+ * Worklane user names the author in `authorName` and keeps its body as
+ * written. ClickUp boards get CLICKUP_VIEWS (List first), other sources
+ * DEFAULT_VIEWS. What cannot be mapped (members and people of skipped
+ * users) is returned in `notes` for the report.
  */
-import { LIMITS } from "../input.js";
-import { truncate } from "./snapshot-rules.js";
-
-const PARENT_TITLE = "Parent item";
-
-/** A key that no column of `columns` uses. */
-function freshKey(base, columns) {
-  const taken = new Set(columns.map((column) => column.source_id));
-  let key = base;
-  for (let n = 2; taken.has(key); n += 1) key = `${base}#${n}`;
-  return key;
-}
-
-function parentColumn(board) {
-  if (!board.items.some((item) => item.parent_source_id !== null)) return null;
-  const titles = new Set(board.columns.map((c) => c.title.toLowerCase()));
-  const title = titles.has(PARENT_TITLE.toLowerCase())
-    ? `${PARENT_TITLE} (imported)`
-    : PARENT_TITLE;
-  return { key: freshKey("parent", board.columns), title, type: "text" };
-}
+import { CLICKUP_VIEWS, DEFAULT_VIEWS } from "../store/boards.js";
 
 /**
- * Item indexes in board order: every item whose parent is in the same
- * group comes right after its parent (depth first), the rest in snapshot
- * order. Validation already broke parent cycles.
+ * Item indexes in board order: each top-level item in snapshot order,
+ * followed by its subitems (depth first) whatever their groups, so within
+ * every group a parent comes before its subitems. Validation already
+ * broke parent cycles.
  */
 export function itemOrder(items) {
   const byId = new Map(items.map((item, index) => [item.source_id, index]));
@@ -43,14 +28,9 @@ export function itemOrder(items) {
   const roots = [];
   for (const [index, item] of items.entries()) {
     const parent = byId.get(item.parent_source_id);
-    const nested =
-      parent !== undefined &&
-      items[parent].group_source_id === item.group_source_id;
-    if (!nested) {
-      roots.push(index);
-      continue;
-    }
-    children.set(parent, [...(children.get(parent) ?? []), index]);
+    if (parent === undefined) roots.push(index);
+    else if (children.has(parent)) children.get(parent).push(index);
+    else children.set(parent, [index]);
   }
   const order = [];
   const stack = roots.toReversed();
@@ -70,8 +50,7 @@ function notePeople(notes, { key, ids, people }) {
   for (const id of ids) entry.names.add(people.get(id)?.name ?? id);
 }
 
-function itemValues(item, ctx) {
-  const { columns, people, notes, parent, parentName } = ctx;
+function itemValues(item, { columns, people, notes }) {
   const entries = [];
   for (const [key, value] of Object.entries(item.values)) {
     if (columns.get(key)?.type !== "people") {
@@ -84,35 +63,35 @@ function itemValues(item, ctx) {
     if (mapped.length > 0)
       entries.push([key, mapped.map((id) => people.get(id).userId)]);
   }
-  if (parent && parentName) entries.push([parent.key, parentName]);
   return Object.fromEntries(entries);
 }
 
-function itemUpdates(item, { people, sourceName }) {
+function itemUpdates(item, people) {
   return item.updates.map((update) => {
     const author = people.get(update.author_source_id) ?? null;
     const creatorId = author?.userId ?? null;
     const name = update.author_name ?? author?.name ?? null;
-    const body =
-      creatorId === null && name !== null
-        ? truncate(
-            `${name} wrote on ${sourceName}:\n${update.body}`,
-            LIMITS.updateBody,
-          )
-        : update.body;
-    return { body, creatorId, createdAt: update.created_at };
+    const spec = { body: update.body, creatorId, createdAt: update.created_at };
+    return creatorId === null && name !== null
+      ? { ...spec, authorName: name }
+      : spec;
   });
 }
 
+function specColumn({ source_id, title, type, labels, role }) {
+  const column = { key: source_id, title, type, labels };
+  return role === undefined ? column : { ...column, role };
+}
+
 /**
- * The spec for `board`. `people` maps user source IDs to `{ userId (null
- * when skipped), name }`. Returns `{ spec: { members, groups, columns,
- * items }, memberIndex, itemIndex, notes: { members: [names], people:
- * Map(column key → { names: Set, items }) } }`, where `memberIndex[i]` /
- * `itemIndex[i]` is the snapshot index of `spec.members[i]` /
- * `spec.items[i]`.
+ * The spec for `board` of a `source` snapshot. `people` maps user source
+ * IDs to `{ userId (null when skipped), name }`. Returns `{ spec: {
+ * members, groups, columns, items, views }, memberIndex, itemIndex,
+ * notes: { members: [names], people: Map(column key → { names: Set,
+ * items }) } }`, where `memberIndex[i]` / `itemIndex[i]` is the snapshot
+ * index of `spec.members[i]` / `spec.items[i]`.
  */
-export function boardSpec(board, { people, sourceName }) {
+export function boardSpec(board, { people, source }) {
   const notes = { members: [], people: new Map() };
   const members = [];
   const memberIndex = [];
@@ -125,21 +104,19 @@ export function boardSpec(board, { people, sourceName }) {
     members.push({ userId: person.userId, role: member.role });
     memberIndex.push(index);
   }
-  const parent = parentColumn(board);
   const columns = new Map(board.columns.map((c) => [c.source_id, c]));
-  const names = new Map(board.items.map((item) => [item.source_id, item.name]));
   const itemIndex = itemOrder(board.items);
-  const ctx = { columns, people, notes, parent, sourceName };
   const items = itemIndex.map((index) => {
     const item = board.items[index];
-    const parentName = names.get(item.parent_source_id) ?? null;
     return {
+      key: item.source_id,
+      parentKey: item.parent_source_id,
       groupKey: item.group_source_id,
       name: item.name,
-      values: itemValues(item, { ...ctx, parentName }),
+      values: itemValues(item, { columns, people, notes }),
       creatorId: people.get(item.creator_source_id)?.userId ?? null,
       createdAt: item.created_at,
-      updates: itemUpdates(item, ctx),
+      updates: itemUpdates(item, people),
     };
   });
   const groups = board.groups.map(({ source_id, title, color }) => ({
@@ -147,13 +124,13 @@ export function boardSpec(board, { people, sourceName }) {
     title,
     color,
   }));
-  const specColumns = board.columns.map((c) => ({
-    key: c.source_id,
-    title: c.title,
-    type: c.type,
-    labels: c.labels,
-  }));
-  if (parent) specColumns.push(parent);
-  const spec = { members, groups, columns: specColumns, items };
+  const views = source === "clickup" ? CLICKUP_VIEWS : DEFAULT_VIEWS;
+  const spec = {
+    members,
+    groups,
+    columns: board.columns.map(specColumn),
+    items,
+    views,
+  };
   return { spec, memberIndex, itemIndex, notes };
 }

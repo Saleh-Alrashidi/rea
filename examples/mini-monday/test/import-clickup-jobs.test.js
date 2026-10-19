@@ -80,13 +80,46 @@ test("a ClickUp scan is previewed and imported through the jobs", async (t) => {
   const plan1 = items.find((item) => item.name === "Plan the sprint");
   assert.equal(store.listUpdates(plan1.id, { limit: 100 }).length, 32);
   const ship = items.find((item) => item.name === "Ship it");
-  const assignees = store
-    .listColumns(board.id)
-    .find((c) => c.title === "Assignees");
+  const columns = store.listColumns(board.id);
+  const assignees = columns.find((c) => c.role === "assignees");
   const invited = store.findUserByEmail("alex@former.test");
   assert.deepEqual(ship.values[assignees.id], [invited.id]);
   const groups = store.listGroups(board.id).map((group) => group.title);
   assert.deepEqual(groups, ["Open", "Closed"]);
+  const status = columns.find((c) => c.role === "status");
+  assert.deepEqual(Object.values(status.settings.labels_types), [
+    "open",
+    "custom",
+    "custom",
+    "done",
+    "closed",
+    "custom",
+  ]);
+  assert.deepEqual(
+    store.listViews(board.id).map((view) => view.type),
+    ["list", "table", "kanban"],
+  );
+  const named = (name) => items.find((item) => item.name === name);
+  const [tests, unit, fixtures] = ["Write tests", "Unit tests", "Fixtures"].map(
+    named,
+  );
+  assert.deepEqual(
+    [unit.parent_id, fixtures.parent_id, tests.parent_id],
+    [tests.id, unit.id, undefined],
+    "subtasks are real subitems, two levels deep",
+  );
+  assert.notEqual(unit.group_id, tests.group_id, "each in its own group");
+  // A scan is imported once; the second run names the first.
+  const second = jobs.startImport({
+    userId: admin,
+    scanJobId: scanned.id,
+    plan,
+  });
+  assert.deepEqual(second, {
+    ok: false,
+    reason: "already_imported",
+    importJobId: run.job.id,
+  });
   const leaks = (value) => JSON.stringify(value).includes(server.token);
   assert.ok(!leaks(jobs.get(started.job.id, admin)) && !leaks(done));
   assert.ok(!leaks(log.entries) && !leaks(published));
