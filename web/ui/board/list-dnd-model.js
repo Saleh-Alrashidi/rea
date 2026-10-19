@@ -6,22 +6,26 @@
  * resolve through the same `resolveDrop`.
  *
  * Targets:
- * - `{ type: "row", rowKey, zone, strict? }`: a row's top 35% is
- *   "before", its bottom 35% "after" and the middle 30% "inside"
+ * - `{ type: "row", rowKey, zone, strict?, keepValues? }`: a row's top
+ *   35% is "before", its bottom 35% "after" and the middle 30% "inside"
  *   (`zoneAt`). Before / after make the task that row's sibling (its
  *   parent; the top level at depth 0). "After" an expanded parent whose
  *   subtasks show lands before its first subtask, where the line is
  *   drawn, unless `strict` (the keyboard's "after this row"). Inside
- *   makes the task the row's last subtask.
+ *   makes the task the row's last subtask. `keepValues` (keyboard moves and
+ *   the row menu, `keyboardTarget`) keeps the task's own values and board
+ *   group.
  * - `{ type: "group", groupKey }`: a group header or an empty group: the
  *   end of that group, at the top level.
  * - `{ type: "parent", itemId }`: the last subtask of that task, wherever
  *   it shows (the row menu's "Make subtask of…").
  *
- * Landing at the top level of a group the task is not in applies the
- * group's `move` (`listGroups`: a status or priority label or none, the
- * assignees replaced or cleared, the board group); a nested landing keeps
- * the task's own values, as subtasks carry their own status.
+ * Only dragging applies a group's values: landing at the top level of a
+ * group the task is not in applies the group's `move` (`listGroups`: a
+ * status or priority label or none, the assignees replaced or cleared,
+ * the board group). A nested landing keeps the task's own values, as
+ * subtasks carry their own status, and so does a `keepValues` target: the
+ * task then shows in its own group (`ownGroup`), not the row's.
  *
  * Invalid drops (`reason`): "own-subtree" (into or next to a dragged
  * task's subtree), "too-deep" (past MAX_SUBTASK_DEPTH), "no-op" (nothing
@@ -218,11 +222,26 @@ function landRequests(layout, { items, place, siblings, index }) {
     if ((item.parentId ?? null) !== place.parentId) {
       request.parentId = place.parentId;
     }
-    if (place.depth === 0)
+    if (place.depth === 0 && !place.keepValues) {
       Object.assign(request, groupChange(layout, item, place.group));
+    }
     previous = item;
     return request;
   });
+}
+
+/**
+ * The shown group `items` land in at `place` when they keep their own
+ * values: the place's group when they all belong to it, else the first
+ * shown group of a single task (none for several, or when it is hidden).
+ */
+function ownGroup(layout, place, items) {
+  if (place.depth > 0) return place.group;
+  const keys = items.map((item) => layout.keysOf(item));
+  if (keys.every((own) => own.includes(place.group?.key))) return place.group;
+  if (keys.length !== 1) return null;
+  const shown = keys[0].find((own) => layout.groups.has(own));
+  return layout.groups.get(shown) ?? null;
 }
 
 /** Whether `moves` leave everything as it is. */
@@ -269,13 +288,18 @@ function refusal(layout, { items, ids, place }) {
  * indicator, place }`: `moves` are the requests (empty unless `ok`),
  * `indicator` `{ type: "line", rowKey, edge, level } | { type: "inside",
  * rowKey, expand } | { type: "end", groupKey } | null` and `place` the
- * landing `{ group, parentId, depth, anchor? }`.
+ * landing `{ group, parentId, depth, anchor?, keepValues? }` (`group`:
+ * where the tasks show, null when that is not a shown group).
  */
 export function resolveDrop(layout, { ids, target }) {
   const items = ids.map((id) => layout.byId.get(id));
   if (items.length === 0 || items.some((item) => !item)) return null;
   const place = target ? landing(layout, target) : null;
   if (!place) return null;
+  if (target.keepValues) {
+    place.keepValues = true;
+    place.group = ownGroup(layout, place, items);
+  }
   const { indicator } = place;
   const reason = refusal(layout, { items, ids, place });
   if (reason) return { ok: false, reason, moves: [], indicator, place };
@@ -295,7 +319,9 @@ export function resolveDrop(layout, { ids, target }) {
  * The target of a keyboard move of row `rowKey` (SPEC-6 §1.4): Alt+Up /
  * Alt+Down move it among its siblings, Alt+Right makes it a subtask of
  * the previous sibling, Alt+Left moves it out of its parent, right after
- * it. `key` is the arrow key's name; null when there is nowhere to go.
+ * it. Keyboard moves keep the task's own values (`keepValues`), so moving
+ * out of a parent changes no status, priority, assignees or board group.
+ * `key` is the arrow key's name; null when there is nowhere to go.
  */
 export function keyboardTarget(layout, { rowKey, key }) {
   const row = layout.byKey.get(rowKey);
@@ -303,7 +329,9 @@ export function keyboardTarget(layout, { rowKey, key }) {
   const siblings = siblingRows(layout, row);
   const at = siblings.indexOf(row);
   const rowTarget = (other, zone) =>
-    other ? { type: "row", rowKey: other.key, zone, strict: true } : null;
+    other
+      ? { type: "row", rowKey: other.key, zone, strict: true, keepValues: true }
+      : null;
   if (key === "ArrowUp") return rowTarget(siblings[at - 1], "before");
   if (key === "ArrowDown") return rowTarget(siblings[at + 1], "after");
   if (key === "ArrowRight") return rowTarget(siblings[at - 1], "inside");

@@ -2,8 +2,10 @@
  * Dragging kanban cards (SPEC-6 §1.5) with HTML5 drag and drop. While a
  * card is over a lane, the place it would take is painted as the List
  * view's 2 px accent line: before the card under the pointer's upper
- * half, after the last card, or at the top of an empty lane; a drop that
- * changes nothing paints red. Dropping runs one `move_item` through
+ * half, after the last card, or at the top of an empty lane. A drop that
+ * changes nothing, or at a place no `move_item` can name (next to the
+ * card's own subtasks, `laneMove`), paints red and does nothing: no call
+ * and no toast. Dropping runs one `move_item` through
  * `actions.moveItems` (`laneMove`): the card's new neighbors in the lane
  * and, from another lane, that lane's status (or none for "No status"),
  * with the undo toast every move has.
