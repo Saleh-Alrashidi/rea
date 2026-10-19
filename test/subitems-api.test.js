@@ -189,6 +189,42 @@ test("create_board_view adds each list, table or kanban view once", async (t) =>
   ]);
 });
 
+test("delete_group streams item_deleted for subitems in other groups", async (t) => {
+  const { as, users, roadmap, store, hostUrl, sessionFor } = await setup(t);
+  const sam = as(users.sam);
+  const parent = store.listItems({ boardId: roadmap, groupId: "next_up" })
+    .items[0];
+  const child = (await sam.data(CREATE, { p: parent.id, n: "Child" }))
+    .create_subitem;
+  store.moveItem(child.id, "done");
+  const url = new URL(`/v2/events?board_id=${roadmap}`, hostUrl);
+  const stream = await openStream(url, sessionFor(users.sam));
+  t.after(() => stream.close());
+  await stream.next(/^: connected\n\n/);
+  const remove = `mutation G($b: ID!, $g: String!) {
+    delete_group(board_id: $b, group_id: $g) { id } }`;
+  await sam.data(remove, { b: roadmap, g: "next_up" });
+  const seen = [];
+  for (let n = 0; n < 2; n += 1) {
+    const [, data] = await stream.next(/event: change\ndata: (.*)\n\n/);
+    seen.push(JSON.parse(data));
+  }
+  assert.deepEqual(
+    seen.map((event) => [event.type, event.item_id ?? null, event.group_id]),
+    [
+      ["group_deleted", null, "next_up"],
+      ["item_deleted", child.id, "done"],
+    ],
+  );
+  const { boards } = await sam.data(
+    "query L($b: ID!) { boards(ids: [$b]) { activity_logs(limit: 1) { kind subitems_deleted } } }",
+    { b: roadmap },
+  );
+  assert.deepEqual(boards[0].activity_logs, [
+    { kind: "group_deleted", subitems_deleted: 1 },
+  ]);
+});
+
 test("delete_item streams one item_deleted per removed item", async (t) => {
   const { as, users, roadmap, store, hostUrl, sessionFor } = await setup(t);
   const sam = as(users.sam);

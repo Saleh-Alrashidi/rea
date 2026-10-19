@@ -3,10 +3,11 @@
  * ClickUp meetings list (department statuses plus Closed, every role
  * column, a long-text "Minuts" field, a second unroled "Status" and
  * "Priority"), tasks on it, and `installTaskDom(t)`: `fake-dom.js`'s
- * document plus the few DOM APIs the task view uses (`firstChild`,
- * `closest`, `querySelectorAll("[data-focus-key]")`, document click
- * listeners) and text
- * inputs that drop line breaks from their value, as browsers do.
+ * document plus the few DOM APIs the task view and popovers use
+ * (`firstChild`, `closest` and `querySelector` with `[attr]` selectors,
+ * `querySelectorAll("[data-focus-key]")`, document click listeners, a
+ * layout that places popovers at 0, 0) and text inputs that drop line
+ * breaks from their value, as browsers do.
  */
 
 import { prepareColumns } from "../web/ui/board/values.js";
@@ -130,6 +131,15 @@ function patchElements() {
       if (selector !== "[data-focus-key]") throw new Error(selector);
       return findAll(this, (node) => node.dataset.focusKey !== undefined);
     },
+    /** `[attr]` selectors only (a popover's `[data-autofocus]`). */
+    querySelector(selector) {
+      const name = /^\[([\w-]+)\]$/.exec(selector)?.[1];
+      if (!name) throw new Error(selector);
+      return findAll(this, (node) => node.hasAttribute(name))[0] ?? null;
+    },
+    getBoundingClientRect() {
+      return { top: 0, right: 0, bottom: 0, left: 0, width: 0, height: 0 };
+    },
   });
   Object.defineProperty(FakeElement.prototype, "firstChild", {
     get() {
@@ -140,20 +150,42 @@ function patchElements() {
 
 /**
  * Installs the fake document for test `t` (see the module comment);
- * `document.clicks()` runs the document's click listeners.
+ * `document.clicks()` runs the document's click listeners and
+ * `document.keydown(init)` its keydown listeners (a popover's Escape).
  */
 export function installTaskDom(t) {
   patchElements();
   const doc = installFakeDom(t);
-  const listeners = new Set();
+  const listeners = { click: new Set(), keydown: new Set() };
   doc.createElement = (tag) =>
     tag === "input" ? new FakeTextInput() : new FakeElement(tag);
-  doc.addEventListener = (type, listener) => {
-    if (type === "click") listeners.add(listener);
-  };
-  doc.removeEventListener = (_type, listener) => listeners.delete(listener);
+  doc.addEventListener = (type, listener) => listeners[type]?.add(listener);
+  doc.removeEventListener = (type, listener) =>
+    listeners[type]?.delete(listener);
   doc.clicks = () => {
-    for (const listener of listeners) listener({ type: "click" });
+    for (const listener of listeners.click) listener({ type: "click" });
   };
+  doc.keydown = (init) => {
+    const event = {
+      type: "keydown",
+      target: doc.activeElement,
+      defaultPrevented: false,
+      preventDefault: () => (event.defaultPrevented = true),
+      stopPropagation() {},
+      ...init,
+    };
+    for (const listener of listeners.keydown) listener(event);
+    return event;
+  };
+  doc.documentElement = { clientWidth: 1280, clientHeight: 800 };
+  // Popovers listen for window resizes, which Node has no window for.
+  if (!globalThis.addEventListener) {
+    globalThis.addEventListener = () => {};
+    globalThis.removeEventListener = () => {};
+    t.after(() => {
+      delete globalThis.addEventListener;
+      delete globalThis.removeEventListener;
+    });
+  }
   return doc;
 }

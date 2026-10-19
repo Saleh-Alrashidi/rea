@@ -9,7 +9,6 @@ import {
   tagList,
   taskLayout,
   taskParent,
-  textCommit,
   updateAuthor,
 } from "../web/ui/board/task-model.js";
 import { prepareColumns } from "../web/ui/board/values.js";
@@ -92,19 +91,6 @@ test("tags split on commas, trimmed, once each", () => {
     "QA",
   ]);
   assert.deepEqual(tagList(null), []);
-});
-
-test("an edited text saves only when it changed", () => {
-  assert.deepEqual(textCommit("a\nb", "a\nb"), {
-    changed: false,
-    value: "a\nb",
-  });
-  assert.deepEqual(textCommit("a", "a\n\nb"), {
-    changed: true,
-    value: "a\n\nb",
-  });
-  // Clearing (or only blanks) stores no value.
-  assert.deepEqual(textCommit("a", "  \n"), { changed: true, value: null });
 });
 
 test("subtasks come from the board, with progress and the unloaded ones", () => {

@@ -3,7 +3,7 @@
  * columns (the fields grid by role, the description, every other column
  * as a custom field), a task's parent, subtasks and their progress, its
  * activity stream (oldest first), who wrote an update, the links in a
- * comment, the chips of a tags value and when an edited text is saved.
+ * comment and the chips of a tags value.
  *
  * Columns are found by role (`column-roles.js`), never by title, and
  * finished work by label type (`isDoneOption`). Subtasks are the loaded
@@ -94,18 +94,6 @@ export function tagList(text) {
     .map((name) => name.trim())
     .filter(Boolean);
   return [...new Set(names)];
-}
-
-/**
- * What saving an edited text gives: `changed` only when the text differs
- * from `initial` as the editor first showed it (so leaving an editor
- * unchanged saves nothing), and the `value` to store (null when blank).
- */
-export function textCommit(initial, next) {
-  return {
-    changed: next !== initial,
-    value: next.trim() === "" ? null : next,
-  };
 }
 
 // --------------------------------------------------- parent, subtasks

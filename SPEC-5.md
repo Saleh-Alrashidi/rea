@@ -60,6 +60,10 @@ An item may have a parent item on the same board.
   - `deleteItem` logs one `item_deleted` activity entry for the item the
     caller deleted, with `subitems_deleted: n` in its payload when n > 0.
   - It emits one `item_deleted` SSE event per removed item.
+  - `deleteGroup` logs `group_deleted` with `subitems_deleted: n` when n
+    subitems in other groups went with the group's items, and emits one
+    `item_deleted` SSE event for each of them after `group_deleted`. Its
+    confirmation counts them too.
 - Ordering stays `group position → item position → id`. Nesting is by
   `parent_id`, never by position.
 

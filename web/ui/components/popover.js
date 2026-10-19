@@ -7,7 +7,8 @@
  * In the tab order it sits right after its anchor. `update()` keeps focus
  * on the control with the same `data-focus-key`, else the first control.
  * `reposition()` places it again after its content changed size (it stays
- * on the same side of the anchor while that side fits).
+ * on the same side of the anchor while that side fits). `onClose(reason)`
+ * hears "escape" when Escape closed it, else "close".
  *
  * ```js
  * const popover = openPopover({ anchor, label: "Choose status",
@@ -137,7 +138,8 @@ function restoreFocus(anchor, focusKey) {
  *
  * @param {{ anchor: HTMLElement, content: Node | (() => Node), label: string,
  *   role?: string, placement?: "bottom-start" | "bottom-end",
- *   className?: string, onClose?: () => void }} options
+ *   className?: string, onClose?: (reason: "escape" | "close") => void
+ *   }} options
  * @returns {{ element: HTMLElement, anchor: HTMLElement, close(): void,
  *   update(): void, reposition(): void } | null}
  */
@@ -184,7 +186,7 @@ export function openPopover(options) {
     if (event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
-    handle.close();
+    handle.close("escape");
   }
   function onPointerDown(event) {
     if (!element.contains(event.target) && !anchor.contains(event.target)) {
@@ -206,7 +208,7 @@ export function openPopover(options) {
       if (current === handle)
         side = position(element, anchor, { placement, side });
     },
-    close() {
+    close(reason = "close") {
       if (current !== handle) return;
       current = null;
       element.remove();
@@ -221,7 +223,7 @@ export function openPopover(options) {
       ) {
         restoreFocus(anchor, focusKey);
       }
-      onClose?.();
+      onClose?.(reason);
       for (const listener of closeListeners) listener();
     },
   };

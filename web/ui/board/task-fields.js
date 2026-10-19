@@ -6,34 +6,25 @@
  *
  * Values render and edit as in the List view (`listCell`: pickers, label
  * menus, the date popover); an empty one reads "Empty" (task-view.css).
- * Text is multi-line: it shows pre-wrap and edits in an auto-growing
- * textarea that saves on blur or Ctrl/⌘+Enter, cancels on Escape and
- * saves only a changed text (`textCommit`). Tags show as chips and edit
- * as their comma text. View-only users see the same values, static.
+ * Text is multi-line: it shows pre-wrap and edits in the shared textarea
+ * editor (`textEditor`), which saves on blur or Ctrl/⌘+Enter, cancels on
+ * Escape and saves only a changed text. Tags show as chips and edit as
+ * their comma text on one line (in a textarea when the text has a line
+ * break). View-only users see the same values, static.
  */
 
 import { h } from "../../dom.js";
 import { iconButton } from "../components/button.js";
-import { isRebuilding } from "../components/focus.js";
 import { plural } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
+import { textEditor } from "../components/text-editor.js";
 import { openStatusMenu } from "./cells.js";
 import { listCell } from "./list-cells.js";
 import { afterClick } from "./list-view.js";
-import {
-  completeOption,
-  customFields,
-  tagList,
-  textCommit,
-} from "./task-model.js";
+import { completeOption, customFields, tagList } from "./task-model.js";
 import { isDoneOption, statusOption, textColorOn } from "./values.js";
 
-/** The server's limit on text values. */
-const MAX_TEXT = 2000;
-/** Rows a text editor starts with (it grows with its text). */
-const MIN_ROWS = 3;
-const MAX_ROWS = 16;
 const GRID_ICONS = Object.freeze({
   status: "myWork",
   assignees: "users",
@@ -85,59 +76,34 @@ const emptyText = (text = EMPTY.viewer) =>
 /** Whether the user is selecting text (a click then edits nothing). */
 const selecting = () => String(globalThis.getSelection?.() ?? "") !== "";
 
-function rowsFor(value) {
-  const lines = String(value).split("\n").length + 1;
-  return Math.min(MAX_ROWS, Math.max(MIN_ROWS, lines));
-}
-
 /**
- * The editor of text field `key`: a textarea (`multiline`) or an input.
- * Ctrl/⌘+Enter (Enter on one line) saves and Escape cancels, both
- * returning focus to the field; leaving it saves once the click that
- * moved focus is done. Only a changed text is saved.
+ * The editor of text field `key` (`textEditor`): Ctrl/⌘+Enter (Enter on
+ * one line) saves and Escape cancels, both returning focus to the field;
+ * leaving it saves once the click that moved focus is done. Only a
+ * changed text is saved.
  */
-function textEditor(props, { key, column, value, multiline }) {
-  const editor = h(multiline ? "textarea" : "input", {
-    class: ["input", multiline ? "task-textarea" : "task-line-input"],
-    type: multiline ? null : "text",
-    rows: multiline ? rowsFor(value) : null,
-    maxlength: MAX_TEXT,
-    dir: "auto",
-    spellcheck: "true",
-    autocomplete: "off",
-    "aria-label": labelOf(column, props.item),
-    dataset: { focusKey: `task-edit:${key}` },
-    value,
-  });
-  // The text as the editor shows it (a textarea reads "\r\n" as "\n").
-  const initial = editor.value;
+function fieldEditor(props, { key, column, value, multiline }) {
   let done = false;
-  const finish = ({ save, refocus }) => {
-    if (done) return;
-    done = true;
-    const next = textCommit(initial, editor.value);
-    const changed = save && next.changed;
-    props.endEdit(key, {
-      refocus,
-      save: changed
-        ? () => props.actions.setValue(props.item, column, next.value)
-        : null,
-    });
-  };
-  editor.addEventListener("keydown", (event) => {
-    const modified = event.ctrlKey || event.metaKey;
-    const submit = event.key === "Enter" && (modified || !multiline);
-    if (event.key !== "Escape" && !submit) return;
-    event.preventDefault();
-    // Escape must not close the task view.
-    event.stopPropagation();
-    finish({ save: submit, refocus: true });
+  return textEditor({
+    value,
+    label: labelOf(column, props.item),
+    multiline,
+    focusKey: `task-edit:${key}`,
+    onEnd({ save, leaving, text }) {
+      if (done) return;
+      done = true;
+      const finish = () =>
+        props.endEdit(key, {
+          refocus: !leaving,
+          save:
+            save && text.changed
+              ? () => props.actions.setValue(props.item, column, text.value)
+              : null,
+        });
+      if (leaving) afterClick(finish);
+      else finish();
+    },
   });
-  editor.addEventListener("blur", () => {
-    if (isRebuilding(editor)) return;
-    afterClick(() => finish({ save: true, refocus: false }));
-  });
-  return editor;
 }
 
 /**
@@ -189,7 +155,7 @@ function textValue(props, { key, column, value, empty }) {
 function textField(props, column, { key, empty = EMPTY }) {
   const value = props.item.values[column.id] ?? "";
   if (props.ui.editing === key) {
-    return textEditor(props, { key, column, value, multiline: true });
+    return fieldEditor(props, { key, column, value, multiline: true });
   }
   return textValue(props, { key, column, value, empty });
 }
@@ -292,7 +258,7 @@ function tagsValue(props, column) {
   const key = `field:${column.id}`;
   const value = props.item.values[column.id] ?? "";
   if (props.ui.editing === key) {
-    return textEditor(props, { key, column, value, multiline: false });
+    return fieldEditor(props, { key, column, value, multiline: false });
   }
   const tags = tagList(value);
   const chips =

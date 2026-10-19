@@ -104,7 +104,8 @@ function trim(list, keep, max) {
  * Appends an activity entry for `boardId`. `actorId` null with an
  * `actorLabel` marks non-user actors (form submissions); both name a user
  * acting through a tool (imports). `fromText` and `toText` are rich text.
- * `subitemsDeleted` (item deletions, SPEC-5 §1.1) is kept when above 0.
+ * `subitemsDeleted` (item and group deletions, SPEC-5 §1.1) is kept when
+ * above 0.
  */
 export function recordActivity(ctx, entry) {
   const { state } = ctx;

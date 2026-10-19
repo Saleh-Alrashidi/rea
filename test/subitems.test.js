@@ -111,15 +111,40 @@ test("deleting an item deletes its subitems across groups, once each", async () 
 });
 
 test("deleting a group or a board takes subitems in other groups along", async () => {
-  const { store, board, add } = await setup();
+  const { store, board, events, add } = await setup();
   const parent = add("Parent", { groupId: "next_up" });
   const child = add("Child", { parentId: parent.id, groupId: "done" });
   const grandchild = add("Grandchild", { parentId: child.id });
+  const inside = add("Inside", { parentId: parent.id });
   const kept = add("Kept", { groupId: "done" });
-  store.deleteGroup(board.id, "next_up");
+  events.length = 0;
+  store.deleteGroup(board.id, "next_up", { actorId: "1" });
   assert.equal(store.getItem(child.id), null);
   assert.equal(store.getItem(grandchild.id), null);
+  assert.equal(store.getItem(inside.id), null);
   assert.ok(store.getItem(kept.id));
+  // Clients drop the group, then each subitem it took from another group.
+  assert.deepEqual(
+    events.map((e) => [e.type, e.item_id ?? null, e.group_id]),
+    [
+      ["group_deleted", null, "next_up"],
+      ["item_deleted", child.id, "done"],
+      ["item_deleted", grandchild.id, "done"],
+    ],
+  );
+  const [entry] = store.listActivity(board.id);
+  assert.deepEqual(
+    [entry.kind, entry.from_text, entry.subitems_deleted],
+    ["group_deleted", "Next up", 2],
+  );
+  // A group whose items have no subitems elsewhere logs no count.
+  events.length = 0;
+  store.deleteGroup(board.id, "done");
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ["group_deleted"],
+  );
+  assert.equal("subitems_deleted" in store.listActivity(board.id)[0], false);
   const again = add("Again");
   const below = add("Below", { parentId: again.id });
   store.deleteBoard(board.id);

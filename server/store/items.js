@@ -29,6 +29,7 @@ import {
   commit,
   forBoard,
   invalid,
+  itemEvent,
   nextId,
   nextPosition,
   onBoard,
@@ -87,11 +88,6 @@ export function insertUpdate(ctx, fields) {
   const meta = { creator_id: creatorId, created_at: ctx.now() };
   const author = authorName === null ? {} : { author_name: authorName };
   return push(ctx.state.updates, { ...update, ...meta, ...author });
-}
-
-function itemEvent(type, item, extra = {}) {
-  const { board_id, id: item_id, group_id } = item;
-  return { type, board_id, item_id, group_id, ...extra };
 }
 
 /** Items ordered by group position, then item position. */

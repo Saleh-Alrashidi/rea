@@ -115,18 +115,6 @@ export function listColumns(board, prefs) {
   return { roles, cells };
 }
 
-/**
- * The first line of a text value: `more` when other non-blank lines
- * follow (shown as "…"), `multiline` when it has any line break (edited
- * in the task view, not inline).
- */
-export function firstLine(text) {
-  const value = String(text ?? "");
-  const lines = value.split(/\r\n|\r|\n/);
-  const more = lines.slice(1).some((line) => line.trim() !== "");
-  return { text: lines[0], more, multiline: lines.length > 1 };
-}
-
 // ----------------------------------------------------------- the tree
 
 /**
@@ -147,18 +135,46 @@ export function buildTree(items) {
   return { roots, children };
 }
 
-/** IDs of every descendant of item `id` among `items`. */
-export function descendantIds(items, id) {
+/**
+ * IDs of every descendant among `items` of the items in `ids` (an ID or
+ * a list of them), those items themselves excluded.
+ */
+export function descendantIds(items, ids) {
+  const roots = new Set([ids].flat());
   const { children } = buildTree(items);
   const found = new Set();
-  const stack = [...(children.get(id) ?? [])];
+  const stack = [...roots].flatMap((id) => children.get(id) ?? []);
   while (stack.length > 0) {
     const item = stack.pop();
-    if (found.has(item.id) || item.id === id) continue;
+    if (found.has(item.id) || roots.has(item.id)) continue;
     found.add(item.id);
     stack.push(...(children.get(item.id) ?? []));
   }
   return found;
+}
+
+/**
+ * What deleting group `groupId` removes among `items`: its items and
+ * every descendant of them, wherever it sits (the server cascades,
+ * SPEC-5 §1.1). `ids` holds them all, `inGroup` counts the group's own
+ * items and `elsewhere` the descendants in `otherGroups` other groups.
+ */
+export function groupDeletion(items, groupId) {
+  const own = items.filter((item) => item.groupId === groupId);
+  const ids = descendantIds(
+    items,
+    own.map((item) => item.id),
+  );
+  for (const item of own) ids.add(item.id);
+  const away = items.filter(
+    (item) => ids.has(item.id) && item.groupId !== groupId,
+  );
+  return {
+    ids,
+    inGroup: own.length,
+    elsewhere: away.length,
+    otherGroups: new Set(away.map((item) => item.groupId)).size,
+  };
 }
 
 /** Name parts for highlighting `term`: `[{ text, match }]`. */

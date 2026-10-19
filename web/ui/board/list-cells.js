@@ -16,11 +16,9 @@ import { formatDay, todayString } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { openPopover } from "../components/popover.js";
+import { MAX_TEXT, firstLine } from "../components/text-editor.js";
 import { cellEditor, openStatusMenu } from "./cells.js";
-import { firstLine } from "./list-model.js";
 import { statusOption, textColorOn } from "./values.js";
-
-const MAX_TEXT = 2000;
 
 /** The cell's accessible label: "<column> for <task>". */
 const labelOf = (column, item) => `${column.title} for ${item.name}`;

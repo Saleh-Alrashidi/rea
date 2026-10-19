@@ -6,7 +6,6 @@ import {
   defaultListPrefs,
   effectiveGroupBy,
   emptyColumnIds,
-  firstLine,
   highlightParts,
   listColumns,
   listGroups,
@@ -365,24 +364,6 @@ test("done labels: closed/done types, else the Done label", () => {
   assert.equal(state.status.options[1].type, undefined);
   assert.equal(isDoneStatus(state, 1), true);
   assert.equal(isDoneStatus(state, null), false);
-});
-
-test("text cells show their first line", () => {
-  assert.deepEqual(firstLine("One\ntwo"), {
-    text: "One",
-    more: true,
-    multiline: true,
-  });
-  assert.deepEqual(firstLine("One\n\n"), {
-    text: "One",
-    more: false,
-    multiline: true,
-  });
-  assert.deepEqual(firstLine(null), {
-    text: "",
-    more: false,
-    multiline: false,
-  });
 });
 
 // ------------------------------------------------------------ the view

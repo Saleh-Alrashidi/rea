@@ -2,10 +2,12 @@
  * Inline-editable text: an input styled as plain text that commits on Enter
  * or blur and reverts on Escape.
  *
- * It commits only after a real edit: what the input shows is not always
- * its value (an `<input>` drops line breaks, SPEC-5 §6), so focusing and
+ * An `<input>` drops line breaks (SPEC-5 §6), so a text input never
+ * saves over a value that has one (`hasLineBreak`): an edit of it is
+ * reverted with a toast. Multi-line values are edited in a textarea
+ * (`text-editor.js`). It commits only after a real edit: focusing and
  * leaving it compares the text with what it first showed, not with the
- * value. Multi-line values belong in a textarea.
+ * value.
  *
  * A number input whose text is not a number (`validity.badInput`, e.g. "3e")
  * reports its value as "", which must not be taken for a deliberate clear:
@@ -17,6 +19,13 @@
 import { h } from "../../dom.js";
 import { isRebuilding } from "./focus.js";
 import { showToast } from "./toast.js";
+
+const LINE_BREAK = /[\r\n]/;
+
+/** Whether `text` has a line break, which an `<input>` would drop. */
+export function hasLineBreak(text) {
+  return LINE_BREAK.test(String(text ?? ""));
+}
 
 /**
  * Builds an inline editor. `onCommit(next)` runs once per edit that
@@ -101,9 +110,20 @@ export function inlineInput(options) {
     showToast({ message, type: "error" });
   }
 
+  // Saving would flatten a multi-line value: the edit is undone instead.
+  function rejectLineLoss() {
+    restore();
+    const message = `${label} has line breaks this field can’t keep, so it wasn’t changed`;
+    showToast({ message, type: "error" });
+  }
+
   function commit({ leaving }) {
     if (badInput()) {
       rejectBadInput(leaving);
+      return;
+    }
+    if (type === "text" && hasLineBreak(committed) && changed()) {
+      rejectLineLoss();
       return;
     }
     const next = trim ? input.value.trim() : input.value;
