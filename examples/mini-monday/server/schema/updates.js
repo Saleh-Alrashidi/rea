@@ -11,17 +11,26 @@
  * (`updateVerdicts`, also `Update.can_edit` and `can_delete`). An update
  * the caller cannot read is NOT_FOUND, worded like an unknown ID.
  *
- * `Item.updates` lists top-level updates, pinned first, then newest first;
- * `Update.replies` the replies, oldest first; `Item.updates_count` counts
- * both. Updates, replies, likes and the counts are indexed once per
- * request (`perRequest`), so a page of items costs one pass over each.
+ * `Item.updates` lists top-level updates, pinned first, then newest first,
+ * and `Item.updates_page(limit, cursor)` pages through that order (the
+ * cursor is a position, so posts and deletions never shift a page);
+ * `Update.replies(limit, before_id)` gives the newest `limit` replies
+ * (older than `before_id`; all without `limit`), oldest first, and
+ * `Update.replies_count` how many there are, so a client can show the
+ * newest few and load a whole thread in pages; `Item.updates_count`
+ * counts updates and replies. `Query.updates(ids)` finds updates and
+ * replies by ID (a link to an old one). Updates, replies, likes and the
+ * counts are indexed once per request (`perRequest`), so a page of items
+ * costs one pass over each.
  *
  * Bodies are rendered for the caller: `body_parts` gives text, links and
  * mentions with the current name of what the caller may see (users in
  * their directory, teams they may see, items on boards they can open)
  * and the token's snapshot otherwise; an item mention the caller cannot
- * open has a null name and board, and `body` carries it as "Private task"
- * (`mentions.redactItems`), so no task name leaks through either field.
+ * open has a null name and board. `body` (`mentions.redactBody`) carries
+ * a user or team the caller cannot see as the plain text "@<snapshot>"
+ * and such an item as "Private task", so neither a task name nor a
+ * hidden user's or team's ID leaks through either field.
  */
 import {
   accessOutcome,
@@ -31,19 +40,30 @@ import {
   teamVisible,
   updateVerdicts,
 } from "../access.js";
-import { bodyParts, redactItems } from "../mentions.js";
+import { ID_PATTERN, isPlainObject } from "../input.js";
+import { bodyParts, redactBody } from "../mentions.js";
+import {
+  newestReplies,
+  updatePosition,
+  updatesAfter,
+} from "../store/updates.js";
 import {
   accessibleBoards,
+  badInput,
   fail,
   lookupUser,
   notFound,
   perRequest,
+  read,
+  readIds,
   readLimit,
   storeResult,
   viewerOf,
   wrapAll,
   write,
 } from "./common.js";
+
+const CURSOR_PATTERN = /^[\w-]{1,512}$/;
 
 const actor = (ctx) => ({ actorId: viewerOf(ctx).id });
 const indexOf = (ctx) =>
@@ -89,22 +109,106 @@ function verdictsOf(ctx, update) {
   return updateVerdicts(role, viewerOf(ctx), update);
 }
 
+/**
+ * What a mention names when the caller may see it (a user in their
+ * directory, a team they may see, an item on a board they can open),
+ * else null; once per request and mention (`body` and `body_parts`
+ * both ask).
+ */
+const visibleMention = (ctx, kind, id) =>
+  perRequest(ctx, `mention\u0000${kind}\u0000${id}`, () => {
+    if (kind === "user") return lookupUser(ctx, id);
+    if (kind === "item") return openItem(ctx, id);
+    const team = ctx.store.getTeam(id);
+    return teamVisible(viewerOf(ctx), team) ? team : null;
+  });
+
 /** A mention as the caller sees it (see the module comment). */
 function mentionPart(ctx, { kind, id, display }) {
+  const found = visibleMention(ctx, kind, id);
   if (kind === "user") {
-    const user = lookupUser(ctx, id);
-    return { type: "user", user, text: user?.name ?? display };
+    return { type: "user", user: found, text: found?.name ?? display };
   }
   if (kind === "team") {
-    const found = ctx.store.getTeam(id);
-    const team = teamVisible(viewerOf(ctx), found) ? found : null;
-    return { type: "team", team, text: team?.name ?? display };
+    return { type: "team", team: found, text: found?.name ?? display };
   }
-  const item = openItem(ctx, id);
-  const name = item?.name ?? null;
-  const board_id = item?.board_id ?? null;
+  const name = found?.name ?? null;
+  const board_id = found?.board_id ?? null;
   return { type: "item", item_id: id, name, board_id, text: name };
 }
+
+// ------------------------------------------------------------- pagination
+
+const encodeCursor = (itemId, { pinned, id }) =>
+  Buffer.from(
+    JSON.stringify({ i: itemId, p: pinned ? 1 : 0, u: id }),
+    "utf8",
+  ).toString("base64url");
+
+/** The position (`updatePosition`) of a cursor made for item `itemId`. */
+function decodeCursor(cursor, itemId) {
+  let data = null;
+  try {
+    const text = Buffer.from(cursor, "base64url").toString("utf8");
+    data = CURSOR_PATTERN.test(cursor) ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  const valid =
+    isPlainObject(data) &&
+    data.i === itemId &&
+    (data.p === 0 || data.p === 1) &&
+    typeof data.u === "string" &&
+    ID_PATTERN.test(data.u);
+  if (!valid) badInput("Invalid cursor for this item");
+  return { pinned: data.p === 1, id: data.u };
+}
+
+/** One `Item.updates_page`: `{ cursor, updates }` (cursor null at the end). */
+function updatesPage(item, args, ctx) {
+  const limit = readLimit(args.limit);
+  const all = indexOf(ctx).updates.get(item.id) ?? [];
+  const cursor = args.cursor ?? null;
+  const rest =
+    cursor === null ? all : updatesAfter(all, decodeCursor(cursor, item.id));
+  const updates = rest.slice(0, limit);
+  const more = rest.length > limit;
+  const next = more
+    ? encodeCursor(item.id, updatePosition(updates.at(-1)))
+    : null;
+  return { cursor: next, updates };
+}
+
+/** `Update.replies`: the newest `limit` (older than `before_id`). */
+function repliesOf(update, args, ctx) {
+  const limit = args.limit ?? null;
+  const beforeId = args.before_id ?? null;
+  if (beforeId !== null && !ID_PATTERN.test(beforeId)) {
+    badInput("before_id must be an update ID");
+  }
+  const thread = indexOf(ctx).replies.get(update.id) ?? [];
+  const size = limit === null ? null : readLimit(limit);
+  return newestReplies(thread, { limit: size, beforeId });
+}
+
+/** Every update and reply by ID (once per request). */
+const updatesById = (ctx) =>
+  perRequest(ctx, "update_ids", () => {
+    const { updates, replies } = indexOf(ctx);
+    const lists = [...updates.values(), ...replies.values()];
+    return new Map(lists.flat().map((update) => [update.id, update]));
+  });
+
+const Query = wrapAll(read, {
+  /** The updates of `ids` the caller can read, in the order asked. */
+  updates(_p, { ids }, ctx) {
+    const known = updatesById(ctx);
+    return readIds(ids).flatMap((id) => {
+      const update = known.get(id);
+      return update && openItem(ctx, update.item_id) ? [update] : [];
+    });
+  },
+});
 
 const result = (ctx, id, value) =>
   storeResult(value, () => notFound("Update", id));
@@ -157,9 +261,14 @@ const Mutation = wrapAll(write, {
 const Update = {
   creator: (update, _a, ctx) => lookupUser(ctx, update.creator_id),
   body: (update, _a, ctx) =>
-    redactItems(update.body, (id) => openItem(ctx, id) !== null),
+    redactBody(
+      update.body,
+      (kind, id) => visibleMention(ctx, kind, id) !== null,
+    ),
   parent_update_id: (update) => update.parent_update_id ?? null,
-  replies: (update, _a, ctx) => indexOf(ctx).replies.get(update.id) ?? [],
+  replies: repliesOf,
+  replies_count: (update, _a, ctx) =>
+    indexOf(ctx).replies.get(update.id)?.length ?? 0,
   edited_at: (update) => update.edited_at ?? null,
   pinned: (update) => update.pinned_at !== undefined,
   likes_count: (update, _a, ctx) => likesOf(ctx, update).length,
@@ -183,6 +292,7 @@ const Update = {
 const Item = {
   updates: (item, { limit }, ctx) =>
     (indexOf(ctx).updates.get(item.id) ?? []).slice(0, readLimit(limit)),
+  updates_page: updatesPage,
   updates_count: (item, _a, ctx) => {
     const counts = perRequest(ctx, "update_counts", () =>
       ctx.store.countUpdatesByItem(),
@@ -194,9 +304,13 @@ const Item = {
 export const definition = {
   enums: { BodyPartType: ["text", "user", "team", "item", "link"] },
   types: {
-    Item: "updates(limit:Int=25):[Update!]! updates_count:Int!",
+    Query: "updates(ids:[ID!]!):[Update!]!",
+    Item: `updates(limit:Int=25):[Update!]! updates_count:Int!
+      updates_page(limit:Int=25,cursor:String):UpdatesPage!`,
+    UpdatesPage: "cursor:String updates:[Update!]!",
     Update: `id:ID! body:String! author_name:String created_at:String!
-      creator:User parent_update_id:ID replies:[Update!]! edited_at:String
+      creator:User parent_update_id:ID replies(limit:Int,before_id:ID):[Update!]!
+      replies_count:Int! edited_at:String
       pinned:Boolean! likes_count:Int! liked_by_me:Boolean!
       likers(limit:Int=20):[User!]! body_parts:[BodyPart!]!
       can_edit:Boolean! can_delete:Boolean!`,
@@ -210,11 +324,19 @@ export const definition = {
       pin_to_top(id:ID!,item_id:ID!):Update!
       unpin_from_top(id:ID!,item_id:ID!):Update!`,
   },
-  resolvers: { Mutation, Update, Item },
+  resolvers: { Query, Mutation, Update, Item },
   extras: {
+    "Query.updates": {
+      description:
+        "Updates and replies by ID: those you can read, in the order asked.",
+    },
     "Item.updates": {
       description:
         "Top-level updates: pinned first, then newest first (replies are Update.replies).",
+    },
+    "Item.updates_page": {
+      description:
+        "Top-level updates in the order of Item.updates, by cursor (a position: posts and deletions never shift a page).",
     },
     "Item.updates_count": {
       description: "How many updates the item has, replies included.",
@@ -225,9 +347,13 @@ export const definition = {
     },
     "Update.body": {
       description:
-        "The body with its mention tokens @[Name](user:12), @[Team](team:3) and @[Task](item:345); a task you cannot open reads Private task. Render body_parts instead.",
+        "The body with its mention tokens @[Name](user:12), @[Team](team:3) and @[Task](item:345); a task you cannot open reads Private task, a person or team you cannot see plain @Name text. Render body_parts instead.",
     },
-    "Update.replies": { description: "Replies, oldest first." },
+    "Update.replies": {
+      description:
+        "Replies, oldest first: the newest limit of them (all without limit), older than before_id when given.",
+    },
+    "Update.replies_count": { description: "How many replies it has." },
     "Update.body_parts": {
       description:
         "The body as text, link and mention parts, with the names you may see.",

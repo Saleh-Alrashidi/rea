@@ -4,10 +4,12 @@
  * toggled row, Ctrl/⌘-click on a row's name toggles it too), keyboard
  * moves of the focused row (Alt+↑ / Alt+↓ among its siblings, Alt+→ into
  * the previous sibling, Alt+← out of its parent), the row's "…" menu
- * (Move up, Move down, Make subtask of…, Move out of parent, Move to…)
- * and running a resolved drop (`moveRows`): the new parent is expanded
- * so the moved rows stay in sight, the move is announced and, after a
- * keyboard move, focus follows the row.
+ * (Move up, Move down, Make subtask of…, Move out of parent, and Move
+ * to… another board, `board-transfer.js`), running a resolved drop
+ * (`moveRows`: the new parent is expanded so the moved rows stay in
+ * sight, the move is announced and, after a keyboard move, focus follows
+ * the row) and moving rows to another board (`moveToBoard`, a drop on a
+ * List in the sidebar).
  *
  * `moveTools(view)` returns these for the view context; `view` holds the
  * list context (`prefs`, `change`, `actions`, `focusAfterRender`) and
@@ -24,8 +26,6 @@ import {
   rowRange,
 } from "./list-dnd-model.js";
 
-/** "Move to…" another board arrives with Phase 3 (SPEC-6 §3.2). */
-export const MOVE_TO_BOARD_SOON = "Coming soon: moving tasks to another board";
 const KEY_WORDS = Object.freeze({
   ArrowUp: "up",
   ArrowDown: "down",
@@ -130,7 +130,8 @@ function rowMenu(view, rowKey) {
     {
       label: "Move to…",
       icon: "arrowRight",
-      disabledReason: MOVE_TO_BOARD_SOON,
+      hint: "Another board",
+      onSelect: () => view.actions.moveItemsToBoard([row.item.id]),
     },
   ];
 }
@@ -158,6 +159,9 @@ function select(view, rowKey, { range = false } = {}) {
 export function moveTools(view) {
   return {
     moveRows: (resolution) => moveRows(view, resolution),
+    /** Moves tasks `ids` (display order) to board `boardId`. */
+    moveToBoard: (ids, boardId) =>
+      view.actions.moveItemsToBoard(ids, { boardId }),
     keyMove: (rowKey, key) => keyMove(view, rowKey, key),
     rowMenu: (rowKey) => rowMenu(view, rowKey),
     select: (rowKey, options) => select(view, rowKey, options),

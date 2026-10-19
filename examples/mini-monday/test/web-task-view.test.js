@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parse } from "../server/graphql/parse.js";
-import { loadBoard, loadItem } from "../web/ui/board/board-data.js";
 import { createTaskView } from "../web/ui/board/task-view.js";
 import { findAll, fire, hasClass } from "./fake-dom.js";
 import { installTaskDom, meetingsBoard, task } from "./web-task-fixtures.js";
@@ -36,22 +34,7 @@ const DETAIL = {
   creator: { id: "2", name: "Sam Lee", initials: "SL" },
   parent: null,
   subitemsCount: 2,
-  updatesCount: 2,
-  updates: [
-    {
-      id: "21",
-      body: "Minutes: https://example.com/notes.\nتم",
-      author_name: "Fox Mulder",
-      creator: null,
-      created_at: "2026-10-03T09:00:00.000Z",
-    },
-    {
-      id: "20",
-      body: "First",
-      creator: { id: "2", name: "Sam Lee", initials: "SL" },
-      created_at: "2026-10-02T09:00:00.000Z",
-    },
-  ],
+  updatesCount: 0,
 };
 
 /** Records action calls; `setValue` and friends resolve like the real ones. */
@@ -87,8 +70,10 @@ function renderTask(t, { edit = true, itemId = "1", detail = DETAIL } = {}) {
     users: new Map([["2", { id: "2", name: "Sam Lee", color: "#d6409f" }]]),
     actions,
     caps: { edit, viewOnly: !edit },
-    draft: "",
-    onDraft: (text) => calls.push(["draft", text]),
+    me: { id: "1", name: "Alex Rivera" },
+    people: { users: [], teams: [] },
+    updates: { status: "ready", list: [], hasMore: false, limit: 25 },
+    target: null,
     repaint: () => view.render(props),
   };
   view.render(props);
@@ -152,39 +137,6 @@ test("the task view lays out the top bar, title, fields and activity", (t) => {
     "createSubitem",
     { parentId: "1", name: "Order snacks" },
   ]);
-});
-
-test("the activity runs oldest first with source authors and safe links", (t) => {
-  const { root, calls } = renderTask(t);
-  const stream = oneOf(root, "task-stream");
-  assert.equal(stream.getAttribute("tabindex"), "0");
-  const [created] = byClass(stream, "task-event");
-  assert.match(created.textContent, /^Sam Lee created this task · /);
-  assert.deepEqual(textsOf(stream, "task-comment-author"), [
-    "Sam Lee",
-    "Fox Mulder",
-  ]);
-  assert.deepEqual(textsOf(stream, "task-comment-tag"), ["ClickUp"]);
-  assert.equal(oneOf(root, "task-activity-count").textContent, "2 comments");
-  const body = byClass(stream, "task-comment-body")[1];
-  assert.equal(body.getAttribute("dir"), "auto");
-  assert.equal(body.textContent, "Minutes: https://example.com/notes.\nتم");
-  const [link] = findAll(body, (node) => node.tagName === "A");
-  assert.equal(link.getAttribute("href"), "https://example.com/notes");
-  assert.equal(link.getAttribute("rel"), "noopener noreferrer");
-  assert.equal(link.getAttribute("target"), "_blank");
-  // A full date in the title of every relative time.
-  for (const time of byClass(stream, "task-time")) {
-    assert.ok(time.getAttribute("title"), time.textContent);
-  }
-
-  const input = oneOf(root, "composer-input");
-  assert.equal(input.getAttribute("placeholder"), "Write a comment…");
-  input.value = "  Agreed  ";
-  fire(oneOf(root, "composer"), "submit");
-  assert.deepEqual(calls.at(-2), ["draft", ""]);
-  assert.equal(calls.at(-1)[0], "addUpdate");
-  assert.equal(calls.at(-1)[2], "Agreed");
 });
 
 test("text fields save on blur only when the text changed", (t) => {
@@ -274,7 +226,6 @@ test("a subtask links to its parent; view-only users get no editors", (t) => {
       parent: { id: "1", name: "Agenda" },
       subitemsCount: 0,
       updatesCount: 0,
-      updates: [],
     },
   });
   const parent = oneOf(root, "task-parent");
@@ -287,7 +238,7 @@ test("a subtask links to its parent; view-only users get no editors", (t) => {
     "task-complete",
     "task-edit",
     "task-subtask-add",
-    "composer",
+    "update-composer",
   ]) {
     assert.equal(byClass(root, name).length, 0, name);
   }
@@ -308,113 +259,4 @@ test("loading and missing tasks show the shared messages", (t) => {
     "This task isn’t available",
   );
   assert.equal(byKey(view.element, "task-close").tagName, "BUTTON");
-});
-
-// ------------------------------------------------------ against the server
-
-function jsonResponse(status, body) {
-  const text = JSON.stringify(body);
-  return { ok: status >= 200 && status < 300, status, text: async () => text };
-}
-
-/** Routes the UI's requests through the real schema and store as user 1. */
-async function realServer(t) {
-  const { createSchema } = await import("../server/schema.js");
-  const { execute } = await import("../server/graphql/execute.js");
-  const { createStore } = await import("../server/store.js");
-  const store = await createStore({ file: null });
-  const schema = createSchema();
-  const original = globalThis.fetch;
-  globalThis.fetch = async (_url, init) => {
-    const body = JSON.parse(init.body);
-    const result = await execute({
-      schema,
-      document: parse(body.query),
-      variables: body.variables ?? {},
-      apiVersion: "2026-01",
-      context: {
-        store,
-        principal: {
-          kind: "session",
-          userId: "1",
-          scopes: new Set(["boards:read", "boards:write"]),
-        },
-        hostOrigin: "http://localhost:4100",
-        apiVersion: "2026-01",
-        log: { error() {} },
-        requireScope() {},
-      },
-    });
-    return jsonResponse("data" in result ? 200 : 400, result);
-  };
-  t.after(() => {
-    globalThis.fetch = original;
-  });
-  return store;
-}
-
-/** Imports a board of `columns` text columns whose task has `updates`. */
-function importWide(store, { columns, updates }) {
-  const workspaceId = store.listWorkspaces()[0].id;
-  const extra = Array.from({ length: columns }, (_, index) => ({
-    key: `c${index}`,
-    title: `Field ${index}`,
-    type: "text",
-  }));
-  const at = (index) =>
-    new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString();
-  const { board } = store.importBoard({
-    workspaceId,
-    importerId: "1",
-    name: "Wide",
-    description: null,
-    boardKind: "public",
-    meta: { source: "clickup", sourceId: "list-1", sourceUrl: null },
-    label: "Import from ClickUp",
-    summary: null,
-    members: [],
-    groups: [{ key: "open", title: "Open", color: "#579bfc" }],
-    columns: extra,
-    items: [
-      { key: "p", groupKey: "open", name: "Parent", values: {}, updates: [] },
-      {
-        key: "t",
-        parentKey: "p",
-        groupKey: "open",
-        name: "Task",
-        values: {},
-        updates: Array.from({ length: updates }, (_, index) => ({
-          body: `Comment ${index}`,
-          creatorId: null,
-          createdAt: at(index),
-          authorName: "Fox Mulder",
-        })),
-      },
-    ],
-  });
-  return board.id;
-}
-
-test("loadItem() fits 500 comments in the field budget, fewer on wide boards", async (t) => {
-  const store = await realServer(t);
-  for (const [columns, loaded] of [
-    [12, 500],
-    [400, 409],
-  ]) {
-    const boardId = importWide(store, { columns, updates: 505 });
-    const board = await loadBoard(boardId);
-    const child = board.items.find((item) => item.name === "Task");
-    const detail = await loadItem(child.id, board.columns);
-    assert.equal(detail.updates.length, loaded, `${columns} columns`);
-    assert.equal(detail.updatesCount, 505);
-    assert.equal(detail.updates[0].body, "Comment 504");
-    assert.equal(detail.updates[0].author_name, "Fox Mulder");
-    assert.equal(detail.updates[0].creator, null);
-    assert.deepEqual(detail.parent, {
-      id: board.items.find((item) => item.name === "Parent").id,
-      name: "Parent",
-    });
-    assert.equal(detail.parentId, detail.parent.id);
-    assert.equal(detail.subitemsCount, 0);
-  }
 });

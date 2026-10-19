@@ -1,7 +1,8 @@
 /**
  * GraphQL documents and loaders for the board page. This module owns the
- * shape of every board, item, column, activity and board-forms request;
- * views receive decoded data only. The shell creates boards through
+ * shape of every board, item, column, activity and board-forms request
+ * and of every board mutation (updates included; `updates-data.js` loads
+ * updates); views receive decoded data only. The shell creates boards through
  * `mutate("createBoard")`. Changing the board kind reuses the share
  * dialog's `set_board_kind` document (`share-model.js`).
  *
@@ -63,45 +64,22 @@ const BOARD_ITEMS_QUERY = `query HostBoardItems($ids: [ID!], $limit: Int, $curso
 }
 ${ITEM_FIELDS}`;
 
-// The task view (SPEC-5 §4) names the parent, counts the subtasks the
-// server has (the board's rows hold their values) and shows up to
-// MAX_UPDATES comments; `updates_count` says how many exist.
-const ITEM_QUERY = `query HostItem($ids: [ID!]!, $updates: Int) {
+// The task view (SPEC-5 §4) names the parent and counts the subtasks the
+// server has (the board's rows hold their values) and the updates
+// (`updates-data.js` loads those).
+const ITEM_QUERY = `query HostItem($ids: [ID!]!) {
   items(ids: $ids) {
     id name created_at
     board { id }
     group { id title color }
-    creator { id name initials }
+    creator { id name initials color }
     parent_item_id
     parent_item { name }
     subitems_count
     updates_count
     column_values { id text value }
-    updates(limit: $updates) {
-      id body author_name created_at
-      creator { id name initials }
-    }
   }
 }`;
-/** Fields ITEM_QUERY resolves besides its column values and updates. */
-const ITEM_QUERY_FIELDS = 21;
-/** Fields of one update (id … creator { id name initials }). */
-const UPDATE_FIELDS = 8;
-/**
- * The item query is one request of known size, so it may use more of the
- * server's 5,000-field budget than a page of items: MAX_UPDATES (the
- * task view's 500 comments, SPEC-5 §4.2) fit beside 150 columns, and
- * wider boards load fewer.
- */
-const ITEM_FIELD_BUDGET = 4500;
-const MAX_UPDATES = 500;
-
-/** Updates the item query loads for `columnCount` columns. */
-function updatesLimit(columnCount) {
-  const columns = 3 * Math.max(columnCount, 1);
-  const room = ITEM_FIELD_BUDGET - ITEM_QUERY_FIELDS - columns;
-  return Math.max(1, Math.min(MAX_UPDATES, Math.floor(room / UPDATE_FIELDS)));
-}
 
 /** Items per page for `columnCount` columns, within FIELD_BUDGET. */
 function itemsPageLimit(columnCount) {
@@ -169,24 +147,13 @@ export async function loadBoard(boardId) {
   };
 }
 
-function newestFirst(a, b) {
-  if (a.created_at !== b.created_at) {
-    return a.created_at < b.created_at ? 1 : -1;
-  }
-  return Number(b.id) - Number(a.id);
-}
-
 /**
  * Loads one item with its group, creator, parent (`{ id, name }` or
- * null), subtask and update counts and its newest updates (newest
- * first, as many as `updatesLimit` allows), decoding its values with
+ * null) and its subtask and update counts, decoding its values with
  * `columns`. Returns null for unknown items.
  */
 export async function loadItem(itemId, columns) {
-  const data = await request(ITEM_QUERY, {
-    ids: [itemId],
-    updates: updatesLimit(columns.length),
-  });
+  const data = await request(ITEM_QUERY, { ids: [itemId] });
   const raw = data.items[0];
   if (!raw) return null;
   const item = decodeItem(raw, columns);
@@ -202,7 +169,6 @@ export async function loadItem(itemId, columns) {
     subitemsCount: Number.isSafeInteger(raw.subitems_count)
       ? raw.subitems_count
       : 0,
-    updates: [...raw.updates].sort(newestFirst),
   };
 }
 
@@ -295,8 +261,27 @@ const MUTATIONS = Object.freeze({
   deleteItem: `mutation HostDeleteItem($itemId: ID!) {
   delete_item(item_id: $itemId) { id }
 }`,
-  createUpdate: `mutation HostCreateUpdate($itemId: ID!, $body: String!) {
-  create_update(item_id: $itemId, body: $body) { id }
+  // SPEC-6 §2.1: monday-style updates (posts, replies, edits, likes, pins).
+  createUpdate: `mutation HostCreateUpdate($itemId: ID!, $body: String!, $parentId: ID) {
+  create_update(item_id: $itemId, body: $body, parent_id: $parentId) { id }
+}`,
+  editUpdate: `mutation HostEditUpdate($id: ID!, $body: String!) {
+  edit_update(id: $id, body: $body) { id }
+}`,
+  deleteUpdate: `mutation HostDeleteUpdate($id: ID!) {
+  delete_update(id: $id) { id }
+}`,
+  likeUpdate: `mutation HostLikeUpdate($id: ID!) {
+  like_update(update_id: $id) { id }
+}`,
+  unlikeUpdate: `mutation HostUnlikeUpdate($id: ID!) {
+  unlike_update(update_id: $id) { id }
+}`,
+  pinUpdate: `mutation HostPinUpdate($id: ID!, $itemId: ID!) {
+  pin_to_top(id: $id, item_id: $itemId) { id }
+}`,
+  unpinUpdate: `mutation HostUnpinUpdate($id: ID!, $itemId: ID!) {
+  unpin_from_top(id: $id, item_id: $itemId) { id }
 }`,
   // Variables `{ id, kind }`.
   setBoardKind: SHARE_MUTATIONS.boardKind,
@@ -318,6 +303,12 @@ const MUTATION_FIELDS = Object.freeze({
   moveItem: "move_item",
   deleteItem: "delete_item",
   createUpdate: "create_update",
+  editUpdate: "edit_update",
+  deleteUpdate: "delete_update",
+  likeUpdate: "like_update",
+  unlikeUpdate: "unlike_update",
+  pinUpdate: "pin_to_top",
+  unpinUpdate: "unpin_from_top",
   setBoardKind: "set_board_kind",
 });
 
@@ -335,6 +326,13 @@ export const BOARD_QUERIES = Object.freeze({
   CREATE_SUBITEM: MUTATIONS.createSubitem,
   CREATE_BOARD_VIEW: MUTATIONS.createBoardView,
   MOVE_ITEM: MUTATIONS.moveItem,
+  CREATE_UPDATE: MUTATIONS.createUpdate,
+  EDIT_UPDATE: MUTATIONS.editUpdate,
+  DELETE_UPDATE: MUTATIONS.deleteUpdate,
+  LIKE_UPDATE: MUTATIONS.likeUpdate,
+  UNLIKE_UPDATE: MUTATIONS.unlikeUpdate,
+  PIN_UPDATE: MUTATIONS.pinUpdate,
+  UNPIN_UPDATE: MUTATIONS.unpinUpdate,
 });
 
 /**

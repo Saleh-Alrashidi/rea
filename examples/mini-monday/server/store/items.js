@@ -39,6 +39,7 @@ import {
   replace,
   requireCount,
   requireText,
+  sortedGroups,
 } from "../store-state.js";
 import {
   byActor,
@@ -48,7 +49,7 @@ import {
   recordActivity,
   resourceUrl,
 } from "./activity.js";
-import { removeItems, sortedGroups } from "./boards.js";
+import { removeItems } from "./boards.js";
 import { boardOrder, nextItemPosition } from "./positions.js";
 import { newItemParent } from "./subitems.js";
 

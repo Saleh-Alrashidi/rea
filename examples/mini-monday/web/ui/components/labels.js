@@ -16,7 +16,7 @@ export const BOARD_KINDS = Object.freeze({
   public: {
     label: "Main",
     icon: "grid",
-    description: "Everyone with access to the workspace can see it.",
+    description: "Everyone with access to the Space can see it.",
   },
   private: {
     label: "Private",
@@ -32,9 +32,9 @@ export const BOARD_KINDS = Object.freeze({
 
 export const DOC_VISIBILITIES = Object.freeze({
   workspace: {
-    label: "Workspace",
+    label: "Space",
     icon: "globe",
-    description: "Everyone with access to the workspace can read it.",
+    description: "Everyone with access to the Space can read it.",
   },
   private: {
     label: "Private",
@@ -52,7 +52,7 @@ export const WORKSPACE_KINDS = Object.freeze({
   closed: {
     label: "Closed",
     icon: "lock",
-    description: "Only invited members can see the workspace.",
+    description: "Only invited members can see the Space.",
   },
 });
 
@@ -67,8 +67,7 @@ export const ACCOUNT_ROLES = Object.freeze({
   member: {
     label: "Member",
     tone: "neutral",
-    description:
-      "Creates workspaces, boards, docs and forms where they can edit.",
+    description: "Creates Spaces, boards, docs and forms where they can edit.",
   },
   viewer: {
     label: "Viewer",
@@ -95,7 +94,7 @@ export const ACCESS_ROLES = Object.freeze({
 });
 
 export const RESOURCE_KINDS = Object.freeze({
-  workspace: { label: "Workspace", icon: "workspace" },
+  workspace: { label: "Space", icon: "workspace" },
   board: { label: "Board", icon: "grid" },
   doc: { label: "Doc", icon: "docs" },
   note: { label: "Note", icon: "notes" },
@@ -134,9 +133,9 @@ export const NOTIFICATION_KINDS = Object.freeze({
   form_response: { label: "Form response", icon: "forms" },
   role: { label: "Role changed", icon: "admin", changesAccess: true },
   import_finished: { label: "Import finished", icon: "inbox" },
-  mention: { label: "Mentioned you", icon: "person" },
-  reply: { label: "New reply", icon: "chat" },
-  like: { label: "Liked your update", icon: "check" },
+  mention: { label: "Mentioned you", icon: "at" },
+  reply: { label: "New reply", icon: "reply" },
+  like: { label: "Liked your update", icon: "like" },
 });
 
 /**

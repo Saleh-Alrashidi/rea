@@ -10,6 +10,8 @@
  * and its boards/docs lists hold only what the caller can open anyway.
  * `can_delete` is true only for owners of an empty workspace: content the
  * caller cannot see blocks deletion too, as the store's rule says.
+ * `workspaces`, `Workspace.boards` and `Workspace.docs` come in sidebar
+ * order (SPEC-6 §3.1: position, then ID); folders are `folders.js`.
  */
 import {
   docAccess,
@@ -17,6 +19,7 @@ import {
   requireWorkspace,
   workspaceAccess,
 } from "../access.js";
+import { inSidebarOrder } from "../store/positions.js";
 import {
   accessibleBoards,
   memberRecords,
@@ -45,9 +48,11 @@ export function requireTargetWorkspace(ctx, workspaceId) {
 
 const Query = wrapAll(read, {
   workspaces: (_p, _a, ctx) =>
-    ctx.store
-      .listWorkspaces()
-      .filter((workspace) => accessOf(ctx, workspace) !== null),
+    inSidebarOrder(
+      ctx.store
+        .listWorkspaces()
+        .filter((workspace) => accessOf(ctx, workspace) !== null),
+    ),
 });
 
 const Workspace = {
@@ -64,14 +69,17 @@ const Workspace = {
     accessOf(ctx, workspace) === "owner" &&
     ctx.store.isWorkspaceEmpty(workspace.id),
   boards: (workspace, _a, ctx) =>
-    accessibleBoards(ctx).filter(
-      (board) => board.workspace_id === workspace.id,
+    inSidebarOrder(
+      accessibleBoards(ctx).filter(
+        (board) => board.workspace_id === workspace.id,
+      ),
     ),
   docs: (workspace, _a, ctx) => {
     const viewer = viewerOf(ctx);
-    return ctx.store
+    const docs = ctx.store
       .listDocs({ workspaceId: workspace.id })
       .filter((doc) => docAccess(ctx.store, viewer, doc) !== null);
+    return inSidebarOrder(docs);
   },
 };
 

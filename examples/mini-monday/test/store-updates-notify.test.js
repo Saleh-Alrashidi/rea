@@ -3,12 +3,14 @@
  * `mention` (users and team members who can open the board, never the
  * actor, deactivated users or anyone without access), `reply` (the
  * parent's author and earlier repliers), `like` (the author, once per
- * update and liker), the assignees' `update` for top-level posts, and at
- * most one notification per user and post.
+ * update and liker), the assignees' `update` for top-level posts, at
+ * most one notification per user and post, and team fan-out into full
+ * inboxes in time linear in what is notified.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createStore } from "../server/store.js";
+import { MAX_NOTIFICATIONS } from "../server/store/activity.js";
 import { plainText, seedIds } from "./helpers.js";
 
 async function seeded() {
@@ -189,4 +191,48 @@ test("likes notify the author once per update and liker", async () => {
   fresh();
   store.likeUpdate(anonymous.id, users.noa);
   assert.deepEqual(fresh(), [], "an update without an author tells nobody");
+});
+
+test("team mentions fan out to full inboxes fast, keeping each one's newest", async () => {
+  const store = await createStore({ file: null });
+  const { users, boards } = seedIds(store);
+  const [item] = store.listItems({ boardId: boards.roadmap }).items;
+  const members = Array.from({ length: 300 }, (_, n) =>
+    store.createUser({ name: `Member ${n}`, email: `m${n}@fanout.test` }),
+  ).map((user) => user.id);
+  const team = store.createTeam({
+    name: "Everyone",
+    ownerId: users.alex,
+    creatorId: users.alex,
+  });
+  store.addTeamMembers(team.id, members);
+  const actorUnread = store.countUnreadNotifications(users.alex);
+  const post = (body) =>
+    store.createUpdate({ itemId: item.id, body, creatorId: users.alex });
+  // Each post notifies all 300 (the old per-recipient trim took ~16 s
+  // for these 200 posts and ~0.5 s for the last one; now ~0.3 s and ~8 ms).
+  let started = performance.now();
+  const posts = Array.from({ length: MAX_NOTIFICATIONS }, (_, n) =>
+    post(`${token("team", team.id)} ${n}`),
+  );
+  const filling = performance.now() - started;
+  assert.ok(filling < 4000, `${MAX_NOTIFICATIONS} posts took ${filling} ms`);
+  started = performance.now();
+  const many = Array.from({ length: 50 }, () => token("team", team.id));
+  const last = post(many.join(" "));
+  const took = performance.now() - started;
+  assert.ok(took < 200, `one post into full inboxes took ${took} ms`);
+  const urlOf = (update) => `/updates/${update.id}`;
+  for (const id of [members[0], members.at(-1)]) {
+    const inbox = store.listNotifications(id, { limit: 500 });
+    assert.equal(inbox.length, MAX_NOTIFICATIONS, "capped");
+    assert.ok(inbox[0].url.endsWith(urlOf(last)), "newest first");
+    assert.ok(inbox.at(-1).url.endsWith(urlOf(posts[1])), "oldest dropped");
+    assert.equal(inbox.filter((n) => n.url.endsWith(urlOf(last))).length, 1);
+  }
+  assert.equal(
+    store.countUnreadNotifications(users.alex),
+    actorUnread,
+    "never the actor",
+  );
 });

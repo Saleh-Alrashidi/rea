@@ -23,7 +23,7 @@ export const LEGEND_ROWS = Object.freeze([
     label: "See the content directory (titles and owners only)",
     cells: yes("admin"),
   },
-  { label: "Create workspaces and teams", cells: yes("admin", "member") },
+  { label: "Create Spaces and teams", cells: yes("admin", "member") },
   {
     label: "Create boards, docs and forms where they can edit",
     cells: yes("admin", "member"),
@@ -33,7 +33,7 @@ export const LEGEND_ROWS = Object.freeze([
     cells: yes("admin", "member", "viewer", "guest"),
   },
   {
-    label: "Main boards and workspace docs in their workspaces",
+    label: "Main boards and Space docs in their Spaces",
     cells: { admin: "Edit", member: "Edit", viewer: "View", guest: false },
   },
   {

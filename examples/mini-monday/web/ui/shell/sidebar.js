@@ -1,48 +1,69 @@
 /**
- * Sidebar: primary navigation (Home, My work, Shared with me, Notes), the
- * workspace switcher, the current workspace's boards (each with the icon
- * of its default view, the list icon for List: SPEC-6 §1.1), docs
- * and forms, the "+ Add" menu (Board / Doc / Form, only when the user can
- * create there, plus "Import from monday.com / ClickUp" for users who may
- * import) and, at the bottom, Teams and Admin (admins only; it stays
- * selected on the importer page). Under 900 px it is an off-canvas drawer.
+ * Sidebar (SPEC-6 §3.3, ClickUp style), top to bottom: Home, Inbox (the
+ * notifications, with the bell's unread count), My Work, Shared with me,
+ * Docs and Notes; Favorites (hidden while empty); the Spaces tree of
+ * every Space the user can open (`sidebar-tree.js`, with its "+" and
+ * "…" menus, `sidebar-menus.js`, and drag and drop, `sidebar-dnd.js`)
+ * and "+ New Space" for those who may create one; Teams and Admin at the
+ * bottom (Admin for admins; it stays selected on the importer page).
+ * Under 900 px it is the shell's off-canvas drawer.
+ *
+ * `createSidebar(options)` returns `{ update({ data, route }), reveal(
+ * spaceId) }`: the shell hands it fresh shell data and every route. The
+ * current item is highlighted, and the Space and folder holding it are
+ * expanded once when it is opened. Expanded nodes and Favorites are
+ * per-user browser conveniences (`sidebar-prefs.js`). A redraw waits
+ * while a node is being renamed or dragged, so neither is cut short.
  */
 
 import { clear, h } from "../../dom.js";
 import {
   adminHash,
-  boardHash,
-  docHash,
   docsHash,
-  formHash,
   homeHash,
-  importHash,
   myWorkHash,
   notesHash,
   sharedHash,
   teamsHash,
 } from "../../router.js";
-import { brandMark, icon } from "../components/icon.js";
-import { ITEM_VIEWS } from "../board/board-views.js";
 import { iconButton } from "../components/button.js";
-import { boardKind } from "../components/labels.js";
-import { openMenu } from "../components/menu.js";
-import { can, canCreateIn } from "../components/permissions.js";
-import { workspaceSwitcher } from "./workspace-switcher.js";
+import { brandMark, icon } from "../components/icon.js";
+import { can } from "../components/permissions.js";
+import { attachTreeDrag } from "./sidebar-dnd.js";
+import {
+  allNodes,
+  ancestorKeys,
+  buildSpaces,
+  isExpanded,
+  routeKey,
+  visibleRows,
+} from "./sidebar-model.js";
+import {
+  favoriteNodes,
+  sidebarPrefs,
+  toggleFavorite,
+} from "./sidebar-prefs.js";
+import { focusTreeItem, nodeLink, spaceTree } from "./sidebar-tree.js";
 
 const PRIMARY = [
   { label: "Home", icon: "home", hash: homeHash(), routes: ["home"] },
-  { label: "My work", icon: "myWork", hash: myWorkHash(), routes: ["my-work"] },
+  { label: "Inbox", icon: "inbox", inbox: true },
+  { label: "My Work", icon: "myWork", hash: myWorkHash(), routes: ["my-work"] },
   {
     label: "Shared with me",
     icon: "shared",
     hash: sharedHash(),
     routes: ["shared"],
   },
+  { label: "Docs", icon: "docs", hash: docsHash(), routes: ["docs"] },
   { label: "Notes", icon: "notes", hash: notesHash(), routes: ["notes"] },
 ];
 
-function navLink({ label, iconName, hash, active, title }) {
+function isActive(route, names) {
+  return Boolean(route && names.includes(route.name));
+}
+
+function navLink({ label, iconName, hash, active, extra = null }) {
   return h(
     "li",
     null,
@@ -52,172 +73,127 @@ function navLink({ label, iconName, hash, active, title }) {
         class: ["nav-link", active && "active"],
         href: hash,
         "aria-current": active ? "page" : null,
-        title: title ?? label,
+        title: label,
       },
       icon(iconName),
       h("span", { class: "nav-label" }, label),
+      extra,
     ),
   );
 }
 
-function isActive(route, names, param, id) {
-  if (!route || !names.includes(route.name)) return false;
-  return param ? route.params[param] === id : true;
-}
-
-function section({ title, id, items, empty, more }) {
-  const headingId = `sidebar-${id}-heading`;
+function inboxButton(s) {
   return h(
-    "section",
-    { class: "sidebar-section", "aria-labelledby": headingId },
+    "li",
+    null,
     h(
-      "div",
-      { class: "sidebar-section-header" },
-      h("h2", { class: "sidebar-heading", id: headingId }, title),
-      more ?? null,
+      "button",
+      {
+        type: "button",
+        class: "nav-link sidebar-inbox",
+        "aria-haspopup": "dialog",
+        title: "Inbox: your notifications",
+        on: { click: () => s.onInbox() },
+      },
+      icon("inbox"),
+      h("span", { class: "nav-label" }, "Inbox"),
+      s.inboxBadge,
     ),
-    items.length > 0
-      ? h("ul", { class: "nav-list" }, items)
-      : h("p", { class: "sidebar-empty" }, empty),
   );
 }
 
-function addMenu(props, workspace) {
-  const allowed = canCreateIn(props.me, workspace);
-  if (!allowed.ok) return null;
-  const trigger = iconButton({
-    icon: "plus",
-    label: "Add to workspace",
-    size: "sm",
-    className: "sidebar-add",
-    attributes: { "aria-haspopup": "menu", "aria-expanded": "false" },
-    onClick: () =>
-      openMenu({
-        anchor: trigger,
-        label: "Add to workspace",
-        items: [
-          {
-            label: "Board",
-            icon: "grid",
-            hint: "Items, columns and views",
-            onSelect: () => props.onCreate("board"),
-          },
-          {
-            label: "Doc",
-            icon: "docs",
-            hint: "Specs, briefs and notes",
-            onSelect: () => props.onCreate("doc"),
-          },
-          {
-            label: "Form",
-            icon: "forms",
-            hint: "Collect responses into a board",
-            onSelect: () => props.onCreate("form"),
-          },
-          can(props.me, "import_data") && { type: "separator" },
-          can(props.me, "import_data") && {
-            label: "Import from monday.com / ClickUp",
-            icon: "inbox",
-            hint: "Boards, people and docs, or a spreadsheet",
-            href: importHash(),
-          },
-        ],
-      }),
-  });
-  return trigger;
-}
-
-function workspaceContent(props, workspace) {
-  const { route } = props;
-  const boards = workspace.boards.map((board) =>
-    navLink({
-      label: board.name,
-      iconName: ITEM_VIEWS[board.defaultView].icon,
-      hash: boardHash(board.id),
-      active: isActive(route, ["board"], "boardId", board.id),
-      title: `${board.name} (${boardKind(board.board_kind).label})`,
-    }),
-  );
-  const docs = workspace.docs.map((doc) =>
-    navLink({
-      label: doc.title,
-      iconName: doc.visibility === "private" ? "lock" : "docs",
-      hash: docHash(doc.id),
-      active: isActive(route, ["doc-editor"], "docId", doc.id),
-    }),
-  );
-  const forms = workspace.forms.map((form) =>
-    navLink({
-      label: form.title,
-      iconName: "forms",
-      hash: formHash(form.id),
-      active: isActive(route, ["form-builder"], "formId", form.id),
-    }),
-  );
-  const allDocs = h(
-    "a",
-    { class: "sidebar-more", href: docsHash() },
-    "All docs",
-  );
+function primaryNav(s) {
   return h(
     "nav",
-    {
-      class: "sidebar-workspace-nav",
-      "aria-label": `${workspace.name} content`,
-    },
-    section({
-      title: "Boards",
-      id: "boards",
-      items: boards,
-      empty: "No boards yet",
-    }),
-    section({
-      title: "Docs",
-      id: "docs",
-      items: docs,
-      empty: "No docs yet",
-      more: allDocs,
-    }),
-    section({
-      title: "Forms",
-      id: "forms",
-      items: forms,
-      empty: "No forms yet",
-    }),
+    { class: "sidebar-primary", "aria-label": "Main" },
+    h(
+      "ul",
+      { class: "nav-list" },
+      PRIMARY.map((entry) =>
+        entry.inbox
+          ? inboxButton(s)
+          : navLink({
+              label: entry.label,
+              iconName: entry.icon,
+              hash: entry.hash,
+              active: isActive(s.route, entry.routes),
+            }),
+      ),
+    ),
   );
 }
 
-function workspaceBlock(props) {
-  const { workspaces, currentWorkspace } = props;
+function sectionHeader(id, title, extra = null) {
   return h(
     "div",
-    { class: "sidebar-workspace" },
-    h(
-      "div",
-      { class: "sidebar-workspace-header" },
-      workspaceSwitcher({
-        workspaces,
-        current: currentWorkspace,
-        canCreate: can(props.me, "create_workspace"),
-        onSelect: props.onSelectWorkspace,
-        onCreate: props.onNewWorkspace,
-      }),
-      currentWorkspace ? addMenu(props, currentWorkspace) : null,
-    ),
-    currentWorkspace
-      ? workspaceContent(props, currentWorkspace)
-      : h(
-          "p",
-          { class: "sidebar-empty" },
-          workspaces.length === 0
-            ? "You aren’t in any workspace yet."
-            : "Choose a workspace.",
-        ),
+    { class: "sidebar-section-header" },
+    h("h2", { class: "sidebar-heading", id }, title),
+    extra,
   );
 }
 
-function bottomLinks(props) {
-  const { route, me } = props;
+/** Favorites: the starred nodes the tree shows, hidden while there are none. */
+function favoritesSection(s) {
+  const nodes = favoriteNodes(s.prefs.favorites, s.byKey);
+  if (nodes.length === 0) return null;
+  return h(
+    "section",
+    {
+      class: "sidebar-section sidebar-favorites",
+      "aria-labelledby": "sidebar-favorites-heading",
+    },
+    sectionHeader("sidebar-favorites-heading", "Favorites"),
+    h(
+      "ul",
+      { class: "nav-list" },
+      nodes.map((node) =>
+        h(
+          "li",
+          { class: "favorite-row" },
+          nodeLink(s, node, { favorite: true }),
+          iconButton({
+            icon: "star",
+            label: `Remove “${node.name}” from favorites`,
+            size: "sm",
+            className: "favorite-remove",
+            onClick: () => s.toggleFavorite(node.key),
+          }),
+        ),
+      ),
+    ),
+  );
+}
+
+function newSpaceButton(s) {
+  if (!can(s.ctx.me, "create_workspace")) return null;
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "sidebar-new-space",
+      on: { click: () => s.flows.workspace() },
+    },
+    icon("plus", { size: 14 }),
+    h("span", null, "New Space"),
+  );
+}
+
+function spacesSection(s) {
+  return h(
+    "section",
+    {
+      class: "sidebar-section sidebar-spaces",
+      "aria-labelledby": "sidebar-spaces-heading",
+    },
+    sectionHeader("sidebar-spaces-heading", "Spaces"),
+    s.spaces.length > 0
+      ? spaceTree(s)
+      : h("p", { class: "sidebar-empty" }, "You aren’t in any Space yet."),
+    newSpaceButton(s),
+  );
+}
+
+function bottomLinks(s) {
   return h(
     "nav",
     { class: "sidebar-bottom", "aria-label": "Account" },
@@ -228,68 +204,157 @@ function bottomLinks(props) {
         label: "Teams",
         iconName: "team",
         hash: teamsHash(),
-        active: isActive(route, ["teams", "team"]),
+        active: isActive(s.route, ["teams", "team"]),
       }),
-      can(me, "manage_users")
+      can(s.ctx.me, "manage_users")
         ? navLink({
             label: "Admin",
             iconName: "admin",
             hash: adminHash(),
-            active: isActive(route, ["admin", "import"]),
+            active: isActive(s.route, ["admin", "import"]),
           })
         : null,
     ),
   );
 }
 
-/**
- * Renders the sidebar into `container`.
- * @param {HTMLElement} container
- * @param {{ me: object, workspaces: object[], currentWorkspace: object | null,
- *   route: object | null, onSelectWorkspace(id: string): void,
- *   onNewWorkspace(): void, onCreate(kind: "board" | "doc" | "form"): void,
- *   onClose(): void }} props
- */
-export function renderSidebar(container, props) {
-  const { route } = props;
-  clear(container).append(
+function drawerTop(s) {
+  return h(
+    "div",
+    { class: "sidebar-drawer-top" },
+    h(
+      "a",
+      { class: "brand", href: homeHash(), "aria-label": "Worklane home" },
+      brandMark({ size: 26 }),
+      h("span", { class: "brand-word" }, "Worklane"),
+    ),
+    iconButton({
+      icon: "close",
+      label: "Close navigation",
+      className: "sidebar-close",
+      onClick: s.onClose,
+    }),
+  );
+}
+
+/** Expands the Space and folder of the current item once per opening. */
+function revealCurrent(s) {
+  if (!s.currentKey || s.revealed === s.currentKey) return;
+  if (!s.byKey.has(s.currentKey)) return;
+  s.revealed = s.currentKey;
+  for (const key of ancestorKeys(s.spaces, s.currentKey)) {
+    if (!isExpanded(s.prefs.expanded, s.byKey.get(key))) {
+      s.prefs.setExpanded(key, true);
+    }
+  }
+}
+
+/** The key of the tree item holding focus, or null. */
+function focusedKey(s) {
+  const active = globalThis.document?.activeElement;
+  if (!active || !s.container.contains(active)) return null;
+  return active.closest?.("[role=treeitem]")?.dataset.key ?? null;
+}
+
+/** Draws the sidebar now (see `render` for the polite version). */
+function draw(s) {
+  s.pending = false;
+  const focus = focusedKey(s);
+  s.spaces = buildSpaces(s.data.workspaces);
+  s.byKey = new Map(allNodes(s.spaces).map((node) => [node.key, node]));
+  s.currentKey = routeKey(s.route);
+  revealCurrent(s);
+  s.rows = visibleRows(s.spaces, s.prefs.expanded);
+  clear(s.container).append(
     h(
       "div",
       { class: "sidebar-inner" },
+      drawerTop(s),
+      primaryNav(s),
       h(
         "div",
-        { class: "sidebar-drawer-top" },
-        h(
-          "a",
-          { class: "brand", href: homeHash(), "aria-label": "Worklane home" },
-          brandMark({ size: 26 }),
-          h("span", { class: "brand-word" }, "Worklane"),
-        ),
-        iconButton({
-          icon: "close",
-          label: "Close navigation",
-          className: "sidebar-close",
-          onClick: props.onClose,
-        }),
+        { class: "sidebar-scroll" },
+        favoritesSection(s),
+        spacesSection(s),
       ),
-      h(
-        "nav",
-        { class: "sidebar-primary", "aria-label": "Main" },
-        h(
-          "ul",
-          { class: "nav-list" },
-          PRIMARY.map((entry) =>
-            navLink({
-              label: entry.label,
-              iconName: entry.icon,
-              hash: entry.hash,
-              active: isActive(route, entry.routes),
-            }),
-          ),
-        ),
-      ),
-      workspaceBlock(props),
-      bottomLinks(props),
+      bottomLinks(s),
     ),
   );
+  attachTreeDrag(s);
+  const field = s.container.querySelector(".tree-rename");
+  if (field) {
+    field.focus();
+    field.select();
+  } else if (focus) focusTreeItem(s, focus);
+}
+
+/** Draws the sidebar, or once the rename or drag in progress ends. */
+function render(s) {
+  if (s.busy()) s.pending = true;
+  else draw(s);
+}
+
+/**
+ * Creates the sidebar in `container`.
+ * @param {{ container: HTMLElement, ctx: object, flows: object,
+ *   inboxBadge: HTMLElement, onInbox(): void, onClose(): void }} options
+ */
+export function createSidebar(options) {
+  const s = {
+    ...options,
+    data: { workspaces: [] },
+    route: null,
+    prefs: sidebarPrefs(options.ctx.me.id),
+    spaces: [],
+    byKey: new Map(),
+    rows: [],
+    currentKey: null,
+    revealed: null,
+    focusKey: null,
+    renaming: null,
+    dragging: false,
+    pending: false,
+  };
+  s.busy = () => Boolean(s.renaming || s.dragging);
+  s.render = () => render(s);
+  s.draw = () => draw(s);
+  s.isOpen = (node) => isExpanded(s.prefs.expanded, node);
+  /** Shows the node `key` in the tree (expanding its containers). */
+  s.revealNode = (key) => {
+    for (const each of [...ancestorKeys(s.spaces, key), key]) {
+      s.prefs.setExpanded(each, true);
+    }
+    draw(s);
+    focusTreeItem(s, key);
+  };
+  s.startRename = (key) => {
+    s.renaming = key;
+    draw(s);
+  };
+  /** Redraws now, or once the rename or drag in progress ends. */
+  s.settle = () => {
+    if (s.pending && !s.busy()) render(s);
+  };
+  s.refresh = () => s.ctx.refreshShell();
+  s.setExpanded = (key, open) => {
+    s.prefs.setExpanded(key, open);
+    render(s);
+  };
+  s.toggleFavorite = (key) => {
+    s.prefs.setFavorites(toggleFavorite(s.prefs.favorites, key));
+    render(s);
+  };
+  return {
+    update({ data, route } = {}) {
+      if (data) s.data = data;
+      if (route !== undefined) s.route = route;
+      render(s);
+    },
+    /** Expands Space `spaceId` (the page shows something of it). */
+    reveal(spaceId) {
+      const key = `space:${spaceId}`;
+      if (s.prefs.expanded[key] !== false) return;
+      s.setExpanded(key, true);
+    },
+  };
 }

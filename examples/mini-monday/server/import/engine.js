@@ -12,7 +12,9 @@
  *   → Report. Users are matched or invited first, then each included
  *   board is written as one batch (`store.importBoard`: one save, no
  *   per-item events or notifications) and each included doc is created;
- *   the importer owns everything created. `signal` stops the run between
+ *   the importer owns everything created; the store decides whether a
+ *   board with a source folder goes into a folder of its workspace
+ *   (SPEC-6 §3.1, `store/imports.js`). `signal` stops the run between
  *   boards and docs; what was created stays and is reported. At the end
  *   the importer gets one `import_finished` notification.
  *

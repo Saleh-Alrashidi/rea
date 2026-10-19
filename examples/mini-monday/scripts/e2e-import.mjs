@@ -139,7 +139,9 @@ async function memberHasNoImporter(run) {
   }, upstreams.monday.token);
   check(status === 403, `a member's scan answered ${status}`);
   await openHash(page, run, "#/home");
-  await page.locator(".sidebar-add").click();
+  // The Space's "+" in the sidebar tree (SPEC-6 §3.3).
+  await page.locator("#sidebar .tree-row-space").first().hover();
+  await page.locator("#sidebar .tree-add").first().click();
   const entries = await page.locator('[role="menuitem"]').allTextContents();
   check(!entries.join("|").includes("Import"), `member menu: ${entries}`);
   await page.keyboard.press("Escape");
@@ -323,7 +325,8 @@ async function clickupImport(run) {
   await waitStep(page, "Import finished");
   await importedOnce(run, { scanId, importId });
   await openImportedBoard(page, {
-    title: "Engineering / Sprint 12",
+    // Lists keep their own names; "Engineering" is a folder (SPEC-6 §3.1).
+    title: "Sprint 12",
     badge: "Imported from ClickUp",
     href: "https://app.clickup.com/9001/v/li/901101",
   });

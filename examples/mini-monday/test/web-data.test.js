@@ -97,10 +97,7 @@ const CANNED = {
         board: { id: "1" },
         group: { id: "now", title: "Now", color: "#579bfc" },
         creator: { id: "1", name: "Alex", initials: "A" },
-        updates: [
-          { id: "5", body: "old", created_at: "2026-10-18T10:00:00.000Z" },
-          { id: "6", body: "new", created_at: "2026-10-18T11:00:00.000Z" },
-        ],
+        updates_count: 2,
       },
     ],
   },
@@ -215,15 +212,14 @@ test("loadBoard() follows items_page cursors and orders groups", async (t) => {
   for (const call of pageCalls) assert.equal(call.body.variables.limit, 214);
 });
 
-test("loadItem() sorts updates newest first", async (t) => {
+test("loadItem() decodes the task's board, creator and counts", async (t) => {
   stubFetch(t, cannedServer);
   const board = await loadBoard("1");
   const item = await loadItem("11", board.columns);
-  assert.deepEqual(
-    item.updates.map((update) => update.body),
-    ["new", "old"],
-  );
   assert.equal(item.boardId, "1");
+  assert.equal(item.creator.name, "Alex");
+  assert.equal(item.updatesCount, 2);
+  assert.equal(item.subitemsCount, 0);
 });
 
 test("GraphQL errors from loaders and mutations become thrown Errors", async (t) => {
@@ -269,7 +265,13 @@ test("every document the UI sends parses with the server parser", async (t) => {
     renameItem: { boardId: "1", itemId: "1", value: "I" },
     moveItem: { itemId: "1", groupId: "g" },
     deleteItem: { itemId: "1" },
-    createUpdate: { itemId: "1", body: "B" },
+    createUpdate: { itemId: "1", body: "B", parentId: null },
+    editUpdate: { id: "1", body: "B" },
+    deleteUpdate: { id: "1" },
+    likeUpdate: { id: "1" },
+    unlikeUpdate: { id: "1" },
+    pinUpdate: { id: "1", itemId: "1" },
+    unpinUpdate: { id: "1", itemId: "1" },
   };
   for (const [name, args] of Object.entries(variables)) {
     assert.deepEqual(await mutate(name, args), { id: "99" }, name);
@@ -394,10 +396,7 @@ async function checkItemFlow(board) {
   assert.equal(detail.name, "Renamed");
   assert.equal(detail.group.id, "done");
   assert.deepEqual(detail.values, Object.fromEntries(changes));
-  assert.deepEqual(
-    detail.updates.map((update) => update.body),
-    ["Second", "First"],
-  );
+  assert.equal(detail.updatesCount, 2);
   await mutate("changeValue", {
     boardId,
     itemId: item.id,

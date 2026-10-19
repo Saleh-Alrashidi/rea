@@ -5,7 +5,8 @@
  * directory like every other User field. Whether the caller may import
  * at all is `me.capabilities` (`import_data`, from `access.can`).
  * `source_name` and `folder` say what the source called the board and the
- * folder it sat in, when the import knew them (absent keys read as null).
+ * folder it sat in (and whether that was private), when the import knew
+ * them (absent keys read as null).
  */
 import { lookupUser } from "./common.js";
 
@@ -22,7 +23,7 @@ export const definition = {
     Board: "import:BoardImport",
     BoardImport: `source:String! source_id:String! source_url:String
       source_name:String folder:ImportFolder imported_at:String! imported_by:User`,
-    ImportFolder: "source_id:String! name:String!",
+    ImportFolder: "source_id:String! name:String! private:Boolean",
   },
   resolvers: { Board, BoardImport },
   extras: {
@@ -40,6 +41,10 @@ export const definition = {
     "BoardImport.folder": {
       description:
         "The source folder the board was in (a ClickUp folder); null when it was in none or the source has none.",
+    },
+    "ImportFolder.private": {
+      description:
+        "Whether the source folder was private, as the source said; null when it did not say.",
     },
   },
 };

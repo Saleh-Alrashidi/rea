@@ -23,8 +23,8 @@
  * change costs work only for the streams it can concern (`streamsFor`):
  * its board's streams, the streams of the users it names, the boards of a
  * changed workspace, and every board stream only for team changes (team
- * grants can sit on any board) or events of unknown scope. Doc and note
- * changes reach no stream. Each board's audience (who of its streams'
+ * grants can sit on any board) or events of unknown scope. Doc, folder
+ * and note changes reach no stream. Each board's audience (who of its streams'
  * users can still open it) is computed once per change.
  *
  * A stream opened with a browser session (`sessionId`) ends with that
@@ -64,6 +64,8 @@ const ACCESS_REACH = Object.freeze({
   board: "none",
   form: "none",
   doc: "none",
+  // Folders have no access rules of their own (SPEC-6 §3.1).
+  folder: "none",
   note: "none",
   notification: "none",
   workspace: "workspace",

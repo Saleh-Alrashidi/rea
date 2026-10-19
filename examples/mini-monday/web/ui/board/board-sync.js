@@ -12,8 +12,16 @@
 
 import { showError } from "../components/toast.js";
 import { loadBoard, loadItem } from "./board-data.js";
+import { loadUpdates } from "./updates-data.js";
 
 const REFRESH_DELAY_MS = 250;
+/** Board events about item updates (`store/updates.js`). */
+const UPDATE_EVENTS = new Set([
+  "update_created",
+  "update_edited",
+  "update_deleted",
+  "update_liked",
+]);
 
 /** A failed reload: an error page before the first load, else one toast. */
 function refreshFailed(state, render, error) {
@@ -130,18 +138,33 @@ export function createBoardSync(options) {
     if (boardId === state.boardId) render(unchanged ? ["card"] : undefined);
   }
 
+  /**
+   * Loads the open task and its updates side by side; a failed updates
+   * load keeps the updates shown, or marks them "error" when there are
+   * none. `card.updates` (`{ status, list, hasMore, limit, cursor,
+   * threads, pageSize }`) is passed live: `loadUpdates` reloads what it
+   * shows and pages back to a route target (`card.target`) not shown.
+   */
   async function reloadCard() {
     const { card } = state;
     if (!card || !state.board) return;
-    try {
-      const detail = await loadItem(card.itemId, state.board.columns);
-      if (state.card !== card) return;
-      const belongs = detail !== null && detail.boardId === state.boardId;
-      card.detail = belongs ? detail : null;
+    const target = card.target?.id ?? null;
+    const [detail, updates] = await Promise.allSettled([
+      loadItem(card.itemId, state.board.columns),
+      loadUpdates(card.itemId, { shown: card.updates, target }),
+    ]);
+    if (state.card !== card) return;
+    if (detail.status === "rejected") {
+      if (!card.detail) card.status = "error";
+    } else {
+      const found = detail.value;
+      const belongs = found !== null && found.boardId === state.boardId;
+      card.detail = belongs ? found : null;
       card.status = belongs ? "ready" : "missing";
-    } catch {
-      if (state.card === card && !card.detail) card.status = "error";
     }
+    if (updates.status === "fulfilled" && updates.value) {
+      card.updates = { ...card.updates, ...updates.value, status: "ready" };
+    } else if (!card.updates.list) card.updates.status = "error";
   }
 
   function onBoardEvent(change) {
@@ -151,7 +174,9 @@ export function createBoardSync(options) {
     if (change.type === "board_updated" || change.type === "board_deleted") {
       refreshShell();
     }
-    scheduleRefresh();
+    // An update's change (SPEC-6 §2.4) reloads the open task; the board's
+    // views redraw only if the board changed (an update count).
+    scheduleRefresh({ ifChanged: UPDATE_EVENTS.has(change.type) });
   }
 
   function subscribe(boardId) {

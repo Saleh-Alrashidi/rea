@@ -17,6 +17,15 @@
  * a cancelled pointer ends the drag without a move; releasing over a
  * valid drop runs `view.moveRows`.
  *
+ * The sidebar's Lists are drop targets too (SPEC-6 §3.3): a row marked
+ * `data-drop-board` (the board's ID; `data-drop-allowed` "true" when the
+ * user can edit it) takes the dragged tasks to that board
+ * (`view.moveToBoard`, which confirms dropped columns first). Another
+ * board is painted as a target (`tree-drop-task`), this board or one the
+ * user cannot edit as not allowed. Holding over a collapsed Space or
+ * folder (`data-drop-expand`) for 1000 ms asks the sidebar to expand it
+ * (a bubbling `tree-expand` event).
+ *
  * One drag runs at a time, and it outlives rebuilds of the list: the
  * newest render re-attaches (`attachListDrag`), and rows are found again
  * by their `data-row-key` (`<group key>:<item ID>`).
@@ -36,6 +45,8 @@ const EDGE_PX = 48;
 const SCROLL_TICK_MS = 16;
 const MAX_STEP_PX = 18;
 const EXPAND_MS = 800;
+const SIDEBAR_EXPAND_MS = 1000;
+const BOARD_MARKS = ["tree-drop-task", "tree-drop-invalid"];
 const MARKS = [
   "drop-before",
   "drop-after",
@@ -98,10 +109,45 @@ function clearMarks(root) {
   }
 }
 
+/** A List of the sidebar under (x, y): `{ element, boardId, ok }`, or null. */
+function boardTargetAt(x, y, view) {
+  const under = doc().elementFromPoint(x, y);
+  const element = under?.closest?.("#sidebar [data-drop-board]") ?? null;
+  if (!element) return null;
+  const boardId = element.dataset.dropBoard;
+  const ok =
+    element.dataset.dropAllowed === "true" && boardId !== view.board.id;
+  return { element, boardId, ok };
+}
+
+/** Paints the sidebar List `target` (null: none) as a task drop target. */
+function paintBoard(target) {
+  for (const element of doc().querySelectorAll(".tree-drop-task")) {
+    if (element !== target?.element) element.classList.remove(...BOARD_MARKS);
+  }
+  target?.element.classList.add("tree-drop-task");
+  target?.element.classList.toggle("tree-drop-invalid", !target.ok);
+}
+
+/** Asks the sidebar to expand a collapsed container held for a while. */
+function hoverSidebar(x, y) {
+  const under = doc().elementFromPoint(x, y);
+  const element = under?.closest?.("#sidebar [data-drop-expand]") ?? null;
+  if (element === drag.sidebarHold) return;
+  globalThis.clearTimeout(drag.sidebarTimer);
+  drag.sidebarHold = element;
+  if (!element) return;
+  drag.sidebarTimer = globalThis.setTimeout(() => {
+    if (drag?.active && element.isConnected) {
+      element.dispatchEvent(new CustomEvent("tree-expand", { bubbles: true }));
+    }
+  }, SIDEBAR_EXPAND_MS);
+}
+
 /** Paints the drop `resolution` (null: none here) on `root`. */
-function paint(root, resolution) {
+function paint(root, resolution, allowed = Boolean(resolution?.ok)) {
   clearMarks(root);
-  doc().documentElement.classList.toggle("drop-not-allowed", !resolution?.ok);
+  doc().documentElement.classList.toggle("drop-not-allowed", !allowed);
   const indicator = resolution?.indicator;
   if (!indicator) return;
   const element =
@@ -151,8 +197,12 @@ function track() {
   const target = targetAt(root, drag.x, drag.y);
   const ids = drag.ids;
   drag.resolution = target ? resolveDrop(view.layout, { ids, target }) : null;
-  paint(root, drag.resolution);
+  drag.board = target ? null : boardTargetAt(drag.x, drag.y, view);
+  const allowed = drag.board ? drag.board.ok : Boolean(drag.resolution?.ok);
+  paint(root, drag.resolution, allowed);
+  paintBoard(drag.board);
   hoverExpand(drag.resolution);
+  hoverSidebar(drag.x, drag.y);
 }
 
 function autoScroll() {
@@ -161,8 +211,10 @@ function autoScroll() {
   const viewport = globalThis.innerHeight;
   const box =
     scroller === doc().scrollingElement
-      ? { top: 0, bottom: viewport }
+      ? { top: 0, bottom: viewport, left: 0, right: globalThis.innerWidth }
       : scroller.getBoundingClientRect();
+  // Beside the list (over the sidebar) the pointer aims elsewhere.
+  if (drag.x < box.left || drag.x > box.right) return;
   const top = Math.max(box.top, 0) + EDGE_PX;
   const bottom = Math.min(box.bottom, viewport) - EDGE_PX;
   let step = 0;
@@ -196,6 +248,7 @@ function stop() {
   const document = doc();
   globalThis.clearTimeout(drag.timer);
   globalThis.clearTimeout(drag.expandTimer);
+  globalThis.clearTimeout(drag.sidebarTimer);
   globalThis.clearInterval(drag.ticker);
   document.removeEventListener("pointermove", onPointerMove);
   document.removeEventListener("pointerup", onPointerUp);
@@ -207,6 +260,7 @@ function stop() {
     const html = document.documentElement;
     html.classList.remove("list-dragging", "drop-not-allowed");
     clearMarks(shown.root);
+    paintBoard(null);
     for (const row of shown.root.querySelectorAll(".list-row.dragging")) {
       row.classList.remove("dragging");
     }
@@ -263,14 +317,15 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (event.pointerId !== drag.pointerId) return;
-  const { active } = drag;
+  const { active, ids } = drag;
   let resolution = null;
+  let board = null;
   try {
     if (active) {
       drag.x = event.clientX;
       drag.y = event.clientY;
       track();
-      resolution = drag.resolution;
+      ({ resolution, board } = drag);
     }
   } finally {
     // Whatever happens, the drag ends here.
@@ -279,6 +334,7 @@ function onPointerUp(event) {
   if (!active) return;
   swallowNextClick();
   if (resolution?.ok) shown.view.moveRows(resolution);
+  else if (board?.ok) shown.view.moveToBoard(ids, board.boardId);
 }
 
 function onKeydown(event) {
@@ -310,9 +366,10 @@ function onPointerDown(event) {
 
 /**
  * Makes the rows of the rendered list `root` draggable for editors.
- * `view` is the list's context: `{ caps, prefs, layout (listLayout),
- * moveRows(resolution), toggleItem(itemId, expanded) }`. A drag in
- * progress carries on in the new rows.
+ * `view` is the list's context: `{ board, caps, prefs, layout
+ * (listLayout), moveRows(resolution), moveToBoard(ids, boardId),
+ * toggleItem(itemId, expanded) }`. A drag in progress carries on in the
+ * new rows.
  */
 export function attachListDrag(root, view) {
   shown = { root, view };

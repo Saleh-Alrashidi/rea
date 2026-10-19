@@ -6,13 +6,14 @@
  * they can still access. Activity logs need viewer access to the board,
  * which reaching `Board.activity_logs` already implies.
  *
- * Texts that name people (notification `text`, activity `actor_label`,
- * `from_text`, `to_text`) are rendered for the caller: people outside a
- * guest's directory read "Someone" (SPEC-2 §6).
+ * Texts that name people or boards (notification `text`, activity
+ * `actor_label`, `from_text`, `to_text`) are rendered for the caller:
+ * people outside a guest's directory read "Someone" (SPEC-2 §6), and a
+ * board the caller cannot open reads "another board" (`OTHER_BOARD`).
  */
-import { notificationVisible } from "../access.js";
+import { boardAccess, notificationVisible } from "../access.js";
 import { NOTIFICATION_KINDS } from "../store-state.js";
-import { actorLabel, renderText } from "../store/activity.js";
+import { OTHER_BOARD, actorLabel, renderText } from "../store/activity.js";
 import {
   lookupUser,
   namesFor,
@@ -60,9 +61,20 @@ const Mutation = wrapAll(write, {
 });
 
 const actor = (record, _a, ctx) => lookupUser(ctx, record.actor_id);
+
+/** `boardNameOf(boardId)` for the caller: a board's name if they can open it. */
+function boardNamesFor(ctx) {
+  const viewer = viewerOf(ctx);
+  return (id) => {
+    const board = ctx.store.getBoard(id);
+    const open = boardAccess(ctx.store, viewer, board) !== null;
+    return open ? board.name : OTHER_BOARD;
+  };
+}
+
 /** A resolver rendering the rich-text `field` for the caller. */
 const rendered = (field) => (record, _a, ctx) =>
-  renderText(record[field], namesFor(ctx));
+  renderText(record[field], namesFor(ctx), boardNamesFor(ctx));
 
 export const definition = {
   enums: { NotificationKind: [...NOTIFICATION_KINDS] },

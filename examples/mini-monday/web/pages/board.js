@@ -1,9 +1,11 @@
 /**
- * Board page (`#/boards/<id>` and its view and item routes): the header,
- * the list / table / kanban / app / activity / forms views and the task
- * view. The board's own link opens its default view (the List view,
- * SPEC-6 §1.1); an item route shows the item in the task view over the
- * view the user came from, whichever it is.
+ * Board page (`#/boards/<id>` and its view, item and update routes): the
+ * header, the list / table / kanban / app / activity / forms views and
+ * the task view. The board's own link opens its default view (the List
+ * view, SPEC-6 §1.1); an item route shows the item in the task view over
+ * the view the user came from, whichever it is, and an update route
+ * (`…/items/<itemId>/updates/<updateId>`) the same, scrolled to that
+ * update (SPEC-6 §2.3).
  * What the user may change follows the board's `my_access`
  * (`ui/board/capabilities.js`): view-only users get read-only cells and no
  * add or delete controls, editors cannot change board settings or columns.
@@ -49,6 +51,8 @@ import { addTaskFromToolbar, renderList } from "../ui/board/list-view.js";
 import { createRegions } from "../ui/board/regions.js";
 import { renderTable } from "../ui/board/table-view.js";
 import { createTaskView } from "../ui/board/task-view.js";
+import { UPDATES_PAGE } from "../ui/board/updates-data.js";
+import { findUpdate } from "../ui/board/updates-model.js";
 import { BUS_EVENTS } from "../ui/shell/bus.js";
 import { rememberVisit } from "../ui/shell/recent.js";
 import { currentTheme } from "../ui/shell/theme.js";
@@ -276,8 +280,10 @@ function drawCard(page) {
     users: state.users,
     actions: page.actions,
     caps: capsOf(page),
-    draft: state.draft,
-    onDraft: (text) => (state.draft = text),
+    me: page.ctx.me,
+    people: state.people,
+    updates: card.updates,
+    target: card.target,
     repaint: () => page.render(["card"]),
   });
   panel.show();
@@ -315,18 +321,41 @@ function toggleGroup(page, groupId) {
   page.render(["view"]);
 }
 
-function syncCard(page, itemId) {
+/**
+ * Opens the route's task in the task view (or closes it), and points the
+ * view at the route's update, if any (SPEC-6 §2.3): each route change
+ * makes a new target, so following a link again scrolls to it again.
+ */
+function syncCard(page, { itemId, updateId }) {
   const { state } = page;
   if (!itemId) {
     state.card = null;
     return;
   }
-  if (state.card?.itemId === itemId) return;
-  state.card = { itemId, status: "loading", detail: null };
-  state.draft = "";
-  if (state.boardStatus === "ready") {
-    page.sync.reloadCard().then(() => page.render(["card"]));
+  page.targetSeq = (page.targetSeq ?? 0) + 1;
+  const target = updateId ? { id: updateId, seq: page.targetSeq } : null;
+  const ready = state.boardStatus === "ready";
+  if (state.card?.itemId === itemId) {
+    state.card.target = target;
+    const list = state.card.updates.list;
+    if (ready && target && list && !findUpdate(list, target.id)) {
+      page.sync.reloadCard().then(() => page.render(["card"]));
+    }
+    return;
   }
+  state.card = {
+    itemId,
+    status: "loading",
+    detail: null,
+    target,
+    updates: {
+      status: "loading",
+      list: null,
+      hasMore: false,
+      limit: UPDATES_PAGE,
+    },
+  };
+  if (ready) page.sync.reloadCard().then(() => page.render(["card"]));
 }
 
 const sameView = (a, b) => a.view === b.view && a.installId === b.installId;
@@ -340,7 +369,10 @@ function applyRoute(page, params) {
     itemId: params.itemId ?? null,
   };
   if (!state.route.itemId) rememberView(state.boardId, state.route);
-  syncCard(page, state.route.itemId);
+  syncCard(page, {
+    itemId: state.route.itemId,
+    updateId: params.updateId ?? null,
+  });
   // Opening or closing a task leaves the header and the view as they
   // are: rebuilding a wide board's table would freeze the page.
   const cardOnly = page.routed && sameView(shown, currentViewSpec(page));
@@ -435,9 +467,13 @@ function createState(ctx, boardId) {
     boardStatus: "loading",
     route: { view: null, installId: null, itemId: null },
     search: "",
-    /** The open task: `{ itemId, status, detail }` or null. */
+    /**
+     * The open task: `{ itemId, status, detail, updates, target }` or
+     * null (`syncCard`).
+     */
     card: null,
-    draft: "",
+    /** Who composers may mention: the directory's `{ users, teams }`. */
+    people: { users: [], teams: [] },
     pendingMutations: 0,
     mutationSeq: 0,
     refreshFailed: false,
@@ -490,8 +526,8 @@ function wire(page) {
   });
   page.actions = createActions({
     state,
-    render: () => page.render(),
-    refresh: () => page.sync.refresh(),
+    render: (parts) => page.render(parts),
+    refresh: (options) => page.sync.refresh(options),
     refreshShell: () => ctx.refreshShell(),
     navigate: (hash) => navigate(page, hash),
     focusAfterRender: page.focusAfterRender,
@@ -531,6 +567,7 @@ export async function mount(container, ctx, params) {
   loadDirectory()
     .then((directory) => {
       page.state.users = directory.users;
+      page.state.people = { users: directory.userList, teams: directory.teams };
       page.render(["view", "card"]);
     })
     .catch((error) =>

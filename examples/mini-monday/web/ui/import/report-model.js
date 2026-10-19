@@ -13,8 +13,8 @@ import { hashFromUrl } from "../../router.js";
 const CREATED = Object.freeze([
   {
     key: "workspaces",
-    one: "Workspace",
-    label: "Workspaces",
+    one: "Space",
+    label: "Spaces",
     icon: "workspace",
   },
   { key: "boards", one: "Board", label: "Boards", icon: "grid" },
@@ -32,7 +32,7 @@ const CREATED = Object.freeze([
 ]);
 
 const LINK_KINDS = Object.freeze([
-  { kind: "workspace", title: "Workspaces", icon: "workspace" },
+  { kind: "workspace", title: "Spaces", icon: "workspace" },
   { kind: "board", title: "Boards", icon: "grid" },
   { kind: "doc", title: "Docs", icon: "docs" },
 ]);
@@ -49,7 +49,7 @@ const KIND_NAMES = Object.freeze({
   user: "Person",
   board: "Board",
   doc: "Doc",
-  workspace: "Workspace",
+  workspace: "Space",
 });
 
 const count = (value) =>

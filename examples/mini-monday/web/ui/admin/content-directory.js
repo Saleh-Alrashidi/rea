@@ -128,13 +128,12 @@ function table(d, rows) {
         h(
           "tr",
           null,
-          ["Title", "Type", "Privacy", "Owner", "Workspace"].map(
-            (label, index) =>
-              h(
-                "th",
-                { scope: "col", class: index === 0 ? "admin-sticky" : null },
-                label,
-              ),
+          ["Title", "Type", "Privacy", "Owner", "Space"].map((label, index) =>
+            h(
+              "th",
+              { scope: "col", class: index === 0 ? "admin-sticky" : null },
+              label,
+            ),
           ),
           h(
             "th",
@@ -181,7 +180,7 @@ function render(d) {
           compact: true,
           title: d.query.trim() ? "Nothing matches" : "No content yet",
           text: d.query.trim()
-            ? "Try another title, owner or workspace."
+            ? "Try another title, owner or Space."
             : "Boards and docs appear here as people create them.",
         }),
   );
@@ -207,7 +206,7 @@ export function contentDirectory(options) {
       class: "input input-small",
       type: "search",
       placeholder: "Search content",
-      "aria-label": "Search boards and docs by title, owner or workspace",
+      "aria-label": "Search boards and docs by title, owner or Space",
       on: {
         input: (event) => {
           d.query = event.currentTarget.value;

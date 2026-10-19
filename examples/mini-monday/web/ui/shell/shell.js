@@ -1,14 +1,16 @@
 /**
- * The shell controller: owns the shell data (`shell-data.js`), the current
- * workspace, the top bar and sidebar, the navigation drawer (under 900 px)
+ * The shell controller: owns the shell data (`shell-data.js`), the top
+ * bar and sidebar (`sidebar.js`), the navigation drawer (under 900 px)
  * or collapsed sidebar (wider screens) and `refreshShell()`.
  *
- * The current workspace follows what pages show (the `workspace` bus event
- * and workspace routes), falls back to the last one chosen in this browser
- * (a per-user convenience in localStorage) and then to the first accessible
- * workspace.
+ * The sidebar's Inbox mirrors the bell's unread count and opens its
+ * list. Changes to where boards, docs, folders and Spaces sit
+ * (SPEC-6 §3.3: `board_moved`, `doc_moved`, `workspace_moved`,
+ * `folder_*`) that reach a watched board stream refresh the shell
+ * (debounced); the sidebar refreshes it after its own changes too.
  */
 
+import { countBadge } from "../components/badge.js";
 import { invalidateDirectory } from "../components/directory.js";
 import { changesAccess } from "../components/labels.js";
 import { isPopoverOpen } from "../components/popover.js";
@@ -16,14 +18,25 @@ import { BUS_EVENTS } from "./bus.js";
 import { createFlows } from "./create.js";
 import { createNotifications } from "./notifications.js";
 import { loadShellData } from "./shell-data.js";
-import { renderSidebar } from "./sidebar.js";
+import { createSidebar } from "./sidebar.js";
 import { onThemeChange } from "./theme.js";
 import { createTopbar } from "./topbar.js";
 import { createUserMenu } from "./user-menu.js";
 
 const DRAWER_QUERY = "(max-width: 899px)";
 const COLLAPSED_KEY = "worklane-sidebar-collapsed";
-const WORKSPACE_ROUTES = new Set(["workspace", "workspace-settings"]);
+/** Change events that move things in the sidebar's tree. */
+const SIDEBAR_EVENTS = new Set([
+  "board_moved",
+  "doc_moved",
+  "workspace_moved",
+  "folder_created",
+  "folder_updated",
+  "folder_moved",
+  "folder_deleted",
+]);
+/** Several moves arrive together (a deleted folder's boards): one refresh. */
+const LIVE_REFRESH_MS = 150;
 
 function readStorage(key) {
   try {
@@ -44,36 +57,45 @@ function writeStorage(key, value) {
 
 const isDrawer = () => globalThis.matchMedia?.(DRAWER_QUERY).matches ?? false;
 
-const workspaceKey = (sh) => `worklane-workspace:${sh.data.me.id}`;
-
-function currentWorkspace(sh) {
-  const list = sh.data.workspaces;
-  return list.find((entry) => entry.id === sh.workspaceId) ?? list[0] ?? null;
+function drawSidebar(sh) {
+  sh.sidebar.update({ data: sh.data, route: sh.route });
 }
 
-function drawSidebar(sh) {
-  const { ctx, flows } = sh;
-  renderSidebar(sh.elements.sidebar, {
-    me: ctx.me,
-    workspaces: sh.data.workspaces,
-    currentWorkspace: currentWorkspace(sh),
-    route: sh.route,
-    onSelectWorkspace(id) {
-      selectWorkspace(sh, id);
-      ctx.router.navigate(`#/workspaces/${id}`);
-    },
-    onNewWorkspace: () => flows.workspace(),
-    onCreate: (kind) => flows[kind]({ workspaceId: currentWorkspace(sh)?.id }),
-    onClose: () => setDrawer(sh, false),
+/** Keeps `target` (the sidebar's Inbox badge) in step with the bell's. */
+function mirrorUnread(bell, target) {
+  const source = bell.querySelector(".count-badge");
+  if (!source) return;
+  const copy = () => {
+    target.textContent = source.textContent;
+    target.hidden = source.hidden;
+  };
+  copy();
+  new MutationObserver(copy).observe(source, {
+    attributes: true,
+    childList: true,
+    characterData: true,
+    subtree: true,
   });
 }
 
-function selectWorkspace(sh, id) {
-  const known = sh.data.workspaces.some((entry) => entry.id === String(id));
-  if (!known || sh.workspaceId === String(id)) return;
-  sh.workspaceId = String(id);
-  writeStorage(workspaceKey(sh), sh.workspaceId);
-  drawSidebar(sh);
+/** The sidebar's Inbox: the bell's list (the drawer closes first). */
+function openInbox(sh) {
+  if (sh.drawerOpen) setDrawer(sh, false, { focus: false });
+  sh.notifications.element.click();
+}
+
+function createSidebarOf(sh) {
+  const inboxBadge = countBadge(0);
+  inboxBadge.classList.add("sidebar-inbox-count");
+  mirrorUnread(sh.notifications.element, inboxBadge);
+  return createSidebar({
+    container: sh.elements.sidebar,
+    ctx: sh.ctx,
+    flows: sh.flows,
+    inboxBadge,
+    onInbox: () => openInbox(sh),
+    onClose: () => setDrawer(sh, false),
+  });
 }
 
 /**
@@ -134,19 +156,34 @@ async function reloadShell(sh) {
   }
 }
 
-/** Reloads the shell data (single flight); pages call it after changes. */
+/**
+ * Reloads the shell data; pages call it after changes. One reload runs
+ * at a time; a call during one runs one more after it (which may see a
+ * change the running one missed), shared by every such call.
+ */
 function refresh(sh) {
-  sh.refreshing ??= reloadShell(sh).finally(() => (sh.refreshing = null));
+  if (sh.refreshing) {
+    sh.again ??= sh.refreshing.then(() => {
+      sh.again = null;
+      return refresh(sh);
+    });
+    return sh.again;
+  }
+  sh.refreshing = reloadShell(sh).finally(() => (sh.refreshing = null));
   return sh.refreshing;
 }
 
 function onRoute(sh, route) {
   sh.route = route;
-  if (WORKSPACE_ROUTES.has(route.name)) {
-    selectWorkspace(sh, route.params.workspaceId);
-  }
   if (sh.drawerOpen) setDrawer(sh, false, { focus: false });
   drawSidebar(sh);
+}
+
+/** Refreshes the shell shortly after a change that moves sidebar nodes. */
+function onBoardChange(sh, change) {
+  if (!SIDEBAR_EVENTS.has(change?.type)) return;
+  globalThis.clearTimeout(sh.liveTimer);
+  sh.liveTimer = globalThis.setTimeout(() => refresh(sh), LIVE_REFRESH_MS);
 }
 
 function onKeydown(sh, event) {
@@ -170,7 +207,9 @@ function wireEvents(sh) {
     .matchMedia?.(DRAWER_QUERY)
     .addEventListener?.("change", () => applyLayout(sh));
   ctx.router.onChange((route) => onRoute(sh, route));
-  ctx.bus.on(BUS_EVENTS.workspace, (id) => selectWorkspace(sh, id));
+  // A page shows something of this Space: the tree opens it.
+  ctx.bus.on(BUS_EVENTS.workspace, (id) => sh.sidebar.reveal(id));
+  ctx.bus.on(BUS_EVENTS.boardChange, (change) => onBoardChange(sh, change));
   ctx.bus.on(BUS_EVENTS.notification, (event) => {
     sh.notifications.onNotification(event);
     // The sidebar, `ctx.me` and the create controls follow the new access.
@@ -184,7 +223,7 @@ function wireEvents(sh) {
 
 /**
  * Mounts the shell. Returns `refresh()` (`ctx.refreshShell`), the creation
- * `flows`, `selectWorkspace(id)` and `markNotificationRead(notification)`
+ * `flows` and `markNotificationRead(notification)`
  * (`ctx.markNotificationRead`).
  *
  * @param {{ ctx: object, data: import("./shell-data.js").ShellData,
@@ -198,11 +237,12 @@ export function createShell({ ctx, data, elements, openPalette }) {
     elements,
     openPalette,
     flows: createFlows(ctx),
-    workspaceId: null,
     route: null,
     drawerOpen: false,
     collapsed: readStorage(COLLAPSED_KEY) === "1",
     refreshing: null,
+    again: null,
+    liveTimer: null,
   };
   sh.notifications = createNotifications({
     router: ctx.router,
@@ -216,15 +256,14 @@ export function createShell({ ctx, data, elements, openPalette }) {
     userMenu: sh.userMenu,
   });
   elements.topbar.replaceChildren(sh.topbar.element);
-  sh.workspaceId = readStorage(workspaceKey(sh));
   sh.notifications.setCount(data.unread);
+  sh.sidebar = createSidebarOf(sh);
   wireEvents(sh);
   applyLayout(sh);
   drawSidebar(sh);
   return {
     refresh: () => refresh(sh),
     flows: sh.flows,
-    selectWorkspace: (id) => selectWorkspace(sh, id),
     markNotificationRead: (notification) =>
       sh.notifications.markOpened(notification),
   };

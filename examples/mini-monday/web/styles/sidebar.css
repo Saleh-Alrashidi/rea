@@ -1,0 +1,462 @@
+/* The ClickUp-style sidebar (SPEC-6 §3.3): primary links, Favorites, the
+   Spaces tree with its hover actions, drag and drop marks, and the
+   drawer under 900 px (layout.css places the sidebar itself). */
+
+/* ----------------------------------------------------------- sections */
+
+/* Favorites and Spaces scroll between the primary links and Teams/Admin;
+   the padding keeps focus rings inside the scroller. */
+.sidebar-scroll {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-4);
+  min-height: 0;
+  margin: 0 -3px;
+  padding: var(--space-3) 3px var(--space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.sidebar-primary .nav-link,
+.sidebar-favorites .nav-link,
+.sidebar-bottom .nav-link {
+  min-height: 30px;
+  padding: 4px 8px;
+}
+
+.sidebar-inbox {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-inbox:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sidebar-inbox .sidebar-inbox-count {
+  position: static;
+  margin-left: auto;
+  box-shadow: none;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  padding: 0 8px 2px;
+}
+
+/* ---------------------------------------------------------- favorites */
+
+.favorite-row {
+  position: relative;
+}
+
+.favorite-row .nav-link {
+  padding-right: 34px;
+}
+
+.favorite-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  color: var(--color-warning);
+  opacity: 0;
+}
+
+.favorite-remove .icon path {
+  fill: currentColor;
+}
+
+.favorite-row:hover .favorite-remove,
+.favorite-remove:focus-visible {
+  opacity: 1;
+}
+
+.nav-link > .space-tile,
+.nav-link > .tree-folder-icon {
+  margin: 0 1px;
+}
+
+/* --------------------------------------------------------------- tree */
+
+.space-tree,
+.tree-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree-node {
+  position: relative;
+  border-radius: var(--radius-sm);
+}
+
+.tree-node:focus {
+  outline: none;
+}
+
+.tree-node:focus-visible > .tree-row {
+  box-shadow: var(--focus-ring);
+}
+
+.tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  user-select: none;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.tree-level-2 {
+  padding-left: 20px;
+}
+
+.tree-level-3 {
+  padding-left: 36px;
+}
+
+.tree-row:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.tree-row.active {
+  background: var(--cu-accent-soft);
+  color: var(--cu-accent-text);
+}
+
+.tree-row-space {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+/* The name fills the row; "+" and "…" float over its end on hover. */
+.tree-row .tree-link {
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  min-height: 30px;
+  padding: 4px 6px;
+  background: none;
+  color: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.tree-link .nav-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.tree-row .tree-link:hover,
+.tree-row .tree-link.active {
+  background: none;
+  color: inherit;
+}
+
+.tree-row .tree-link:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.tree-row .tree-link .icon,
+.tree-row .tree-link.active .icon {
+  color: var(--color-text-muted);
+}
+
+.tree-row.active .tree-link .icon {
+  color: var(--cu-accent-text);
+}
+
+.tree-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  background: var(--color-pressed);
+}
+
+.tree-toggle-glyph,
+.tree-chevron {
+  grid-area: 1 / 1;
+}
+
+/* The tile or folder icon turns into the chevron while the row is hovered. */
+.tree-chevron {
+  opacity: 0;
+}
+
+.tree-row:hover .tree-chevron,
+.tree-row:focus-within .tree-chevron,
+.tree-node:focus-visible > .tree-row .tree-chevron {
+  opacity: 1;
+}
+
+.tree-row:hover .tree-toggle-glyph,
+.tree-row:focus-within .tree-toggle-glyph,
+.tree-node:focus-visible > .tree-row .tree-toggle-glyph {
+  opacity: 0;
+}
+
+.space-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+  line-height: 1;
+}
+
+.space-tile-md {
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+}
+
+.tree-folder-icon {
+  display: grid;
+  place-items: center;
+}
+
+.tree-folder-icon .icon path {
+  fill: currentColor;
+  fill-opacity: 0.25;
+}
+
+.tree-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: flex;
+  gap: 1px;
+  padding-left: 12px;
+  background: linear-gradient(to right, transparent, var(--color-hover) 12px);
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.tree-row.active .tree-actions {
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--cu-accent-soft) 12px
+  );
+}
+
+.tree-row:hover .tree-actions,
+.tree-row:focus-within .tree-actions,
+.tree-node:focus-visible > .tree-row .tree-actions,
+.tree-actions:has([aria-expanded="true"]) {
+  opacity: 1;
+}
+
+.tree-action.icon-btn-sm {
+  width: 24px;
+  height: 24px;
+}
+
+.tree-action:hover {
+  background: var(--color-pressed);
+  color: var(--color-text);
+}
+
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  margin: 2px 4px 2px 6px;
+  padding: 0 6px;
+  border: 1px solid var(--cu-accent);
+  border-radius: 5px;
+  background: var(--color-panel);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.tree-rename:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--cu-accent-soft);
+}
+
+.sidebar-new-space {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  margin-top: 2px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  text-align: left;
+}
+
+.sidebar-new-space:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.sidebar-new-space:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.tree-color-popover .color-swatches {
+  max-width: 220px;
+}
+
+/* ------------------------------------------------------ drag and drop */
+
+html.tree-dragging-on,
+html.tree-dragging-on * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+html.tree-dragging-on.drop-not-allowed,
+html.tree-dragging-on.drop-not-allowed * {
+  cursor: not-allowed !important;
+}
+
+.tree-node.tree-dragging > .tree-row {
+  opacity: 0.45;
+}
+
+/* A line at the top or bottom edge of the node (its open children
+   included), as in the List view. */
+.tree-node.tree-drop-before::before,
+.tree-node.tree-drop-after::after {
+  position: absolute;
+  right: 0;
+  left: 4px;
+  z-index: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--cu-accent);
+  content: "";
+  pointer-events: none;
+}
+
+/* Indented to the level the node lands at, as the rows are. */
+.tree-node[aria-level="2"]::before,
+.tree-node[aria-level="2"]::after {
+  left: 20px;
+}
+
+.tree-node[aria-level="3"]::before,
+.tree-node[aria-level="3"]::after {
+  left: 36px;
+}
+
+.tree-node.tree-drop-before::before {
+  top: -1px;
+}
+
+.tree-node.tree-drop-after::after {
+  bottom: -1px;
+}
+
+.tree-node.tree-drop-invalid::before,
+.tree-node.tree-drop-invalid::after {
+  background: var(--color-danger);
+}
+
+.tree-row.tree-drop-inside,
+.tree-row.tree-drop-task {
+  background: var(--cu-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--cu-accent);
+}
+
+.tree-row.tree-drop-inside.tree-drop-invalid,
+.tree-row.tree-drop-task.tree-drop-invalid {
+  background: var(--color-danger-soft);
+  box-shadow: inset 0 0 0 1px var(--color-danger);
+}
+
+.tree-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 5px 10px;
+  border: 1px solid var(--cu-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-raised);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  pointer-events: none;
+}
+
+.tree-drag-ghost .icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.tree-drag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- touch */
+
+/* Without hover the actions always show; the tile or folder icon stays
+   (tapping it expands). */
+@media (hover: none) {
+  .tree-row {
+    min-height: 40px;
+  }
+
+  .tree-actions,
+  .favorite-remove {
+    opacity: 1;
+  }
+
+  .tree-row .tree-link {
+    padding-right: 60px;
+  }
+}

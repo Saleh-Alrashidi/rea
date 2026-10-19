@@ -43,6 +43,43 @@ async function harness(t) {
   return { server, store, jobs, log, published, admin: ids.users.alex };
 }
 
+/**
+ * ClickUp folders became folders of the board's Space (SPEC-6 §3.1),
+ * each board keeping its source folder with ClickUp's private flag: one
+ * per source folder that holds a Main board, in the Space's color, with
+ * its private lists too ("Backlog"); the lists of the private folder
+ * "Secret projects" stay at the Space's root, so its name is nowhere in
+ * the Space. Lists keep their own names and folderless lists sit at the
+ * Space's root.
+ */
+function checkFolders(store, { board, report, admin }) {
+  assert.deepEqual(
+    [board.import.folder, board.import.source_name],
+    [
+      { source_id: "90011001", name: "Engineering", private: false },
+      "Sprint 12",
+    ],
+  );
+  const { color } = store.getWorkspace(board.workspace_id);
+  const folders = store.listFolders({ workspaceId: board.workspace_id });
+  assert.deepEqual(
+    folders.map((f) => [f.name, f.color, f.position, f.created_by]),
+    [["Engineering", color, 1024, admin]],
+  );
+  const placed = (title) => {
+    const id = report.links.find((link) => link.title === title).id;
+    const record = store.getBoard(id);
+    const folder = store.getFolder(record.folder_id ?? null);
+    return [folder?.name ?? null, record.position];
+  };
+  assert.deepEqual(["Sprint 12", "Backlog", "Plans", "Inbox"].map(placed), [
+    ["Engineering", 1024],
+    ["Engineering", 2048],
+    [null, 1024],
+    [null, 2048],
+  ]);
+}
+
 test("a ClickUp scan is previewed and imported through the jobs", async (t) => {
   const { server, store, jobs, log, published, admin } = await harness(t);
   const options = { include_comments: true };
@@ -67,22 +104,17 @@ test("a ClickUp scan is previewed and imported through the jobs", async (t) => {
   const run = jobs.startImport({ userId: admin, scanJobId: scanned.id, plan });
   const done = await settled(jobs, run.job.id, admin);
   assert.equal(done.state, "done", JSON.stringify(done.error));
-  const link = done.report.links.find(
-    (l) => l.title === "Engineering / Sprint 12",
-  );
+  const link = done.report.links.find((l) => l.title === "Sprint 12");
   const board = store.getBoard(link.id);
   assert.deepEqual(
     [board.import.source, board.import.source_id, board.import.source_url],
     ["clickup", "901101", "https://app.clickup.com/9001/v/li/901101"],
   );
-  assert.deepEqual(
-    [board.import.folder, board.import.source_name],
-    [{ source_id: "90011001", name: "Engineering" }, "Sprint 12"],
-  );
   const inboxLink = done.report.links.find((l) => l.title === "Inbox");
   const inbox = store.getBoard(inboxLink.id).import;
   assert.equal(inbox.source_name, "Inbox");
   assert.equal(Object.hasOwn(inbox, "folder"), false, "folderless: no key");
+  checkFolders(store, { board, report: done.report, admin });
   const { items, total } = store.listItems({ boardId: board.id, limit: 500 });
   assert.equal(total, 230);
   const plan1 = items.find((item) => item.name === "Plan the sprint");

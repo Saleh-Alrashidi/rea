@@ -13,8 +13,8 @@
  * | `theme`        | `{ mode, theme }`                      | the theme toggle      |
  * | `shell`        | `{ workspaces }` after a shell refresh | `refreshShell()`      |
  * | `workspace`    | a workspace ID: pages announce the     | pages (board, doc, …) |
- * |                | workspace they show; the sidebar       |                       |
- * |                | switches to it                         |                       |
+ * |                | Space they show; the sidebar's tree    |                       |
+ * |                | expands it                             |                       |
  * | `live`         | `{ key, paused }`: a stream ("me",     | `main.js`, the board  |
  * |                | "board:<id>") was refused or ended     | page                  |
  * |                | for good, or no longer matters         |                       |

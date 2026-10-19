@@ -1,6 +1,6 @@
 /**
- * The update model in the data file (SPEC-6 §2.1): format
- * `mini-monday-store/6` with replies, edits, pins and the `likes`
+ * The update model in the data file (SPEC-6 §2.1): since format
+ * `mini-monday-store/6`, replies, edits, pins and the `likes`
  * collection; a `/5` file upgrades additively (no likes yet, plain bodies
  * that would read as mention tokens escaped) with a `.v5.bak` copy; and
  * files that break the update rules are refused and left untouched.
@@ -46,9 +46,9 @@ async function threadFile(t) {
   return { file, store, item, top: store.getUpdate(top.id), reply };
 }
 
-test("replies, edits, pins and likes persist in format /6", async (t) => {
+test("replies, edits, pins and likes persist in the data file", async (t) => {
   const { file, store, item, top, reply } = await threadFile(t);
-  assert.equal(FORMAT, "mini-monday-store/6");
+  assert.equal(FORMAT, "mini-monday-store/7");
   const doc = await readDoc(file);
   assert.equal(doc.format, FORMAT);
   const saved = (id) => doc.updates.find((update) => update.id === id);
@@ -69,15 +69,18 @@ test("replies, edits, pins and likes persist in format /6", async (t) => {
   assert.deepEqual(reloaded.indexLikes(), store.indexLikes());
 });
 
-test("a /5 file upgrades to /6 with a .v5.bak copy", async (t) => {
+test("a /5 file upgrades with a .v5.bak copy", async (t) => {
   const { file, item } = await threadFile(t);
   const current = await readDoc(file);
   // What /5 could hold: no likes, replies, edits or pins, plain bodies.
   const plain = "Typed before mentions: @[Sam](user:2) stays text";
+  // 10,000 characters that escape to more, yet read as written.
+  const long = "@[x](user:1) ".repeat(769) + "zzz";
   const updates = current.updates
     .filter((update) => update.parent_update_id === undefined)
     .map(({ edited_at: _e, pinned_at: _p, ...update }) => update);
   updates[0] = { ...updates[0], body: plain };
+  updates[1] = { ...updates[1], body: long };
   const { likes: _likes, ...rest } = current;
   const legacy = { ...rest, format: "mini-monday-store/5", updates };
   await save(file, legacy);
@@ -90,14 +93,26 @@ test("a /5 file upgrades to /6 with a .v5.bak copy", async (t) => {
   const upgraded = store.getUpdate(updates[0].id);
   assert.equal(upgraded.body, plain.replace("@[", "\\@["));
   assert.deepEqual(parseBody(upgraded.body), [{ text: plain }]);
-  const others = doc.updates.filter((u) => u.id !== updates[0].id);
+  const escaped = (u) => u.id === updates[0].id || u.id === updates[1].id;
   assert.deepEqual(
-    others,
-    updates.filter((u) => u.id !== updates[0].id),
+    doc.updates.filter((u) => !escaped(u)),
+    updates.filter((u) => !escaped(u)),
     "every other body is unchanged",
   );
+  // The long one is stored longer than 10,000 characters and saves again.
+  const stored = store.getUpdate(updates[1].id).body;
+  assert.equal(stored.length, long.length + 769);
+  assert.deepEqual(parseBody(stored), [{ text: long }]);
+  const edited = store.editUpdate(updates[1].id, stored.replace(/z$/, "y"), {
+    actorId: null,
+  });
+  assert.equal(edited.body, stored.replace(/z$/, "y"));
+  const longer = store.editUpdate(updates[1].id, `${stored}y`, {
+    actorId: null,
+  });
+  assert.equal(longer.reason, "invalid", "10,001 characters as it reads");
   assert.ok(store.listUpdates(item.id).length > 0);
-  // A /6 file loads as it is: no other copy.
+  // The saved file is current and loads as it is: no other copy.
   const again = await createStore({ file, log: quietLog });
   await again.flush();
   await assert.rejects(access(`${file}.v6.bak`), { code: "ENOENT" });

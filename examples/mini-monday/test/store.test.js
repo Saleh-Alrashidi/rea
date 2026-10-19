@@ -39,6 +39,8 @@ test("createBoard adds the default columns, group and views", async () => {
   });
   // SPEC-2: boards live in a workspace (default: the first one), have a
   // kind (default "public") and members; the creator is the first owner.
+  // SPEC-6 §3.1: a new board goes last at the workspace's root (the seed
+  // has two boards there).
   const [main] = store.listWorkspaces();
   assert.deepEqual(board, {
     id: board.id,
@@ -49,6 +51,7 @@ test("createBoard adds the default columns, group and views", async () => {
     workspace_id: main.id,
     board_kind: "public",
     members: [{ kind: "user", id: "2", role: "owner" }],
+    position: 3 * 1024,
   });
   assert.deepEqual(events, [{ type: "board_created", board_id: board.id }]);
   assert.deepEqual(

@@ -21,7 +21,7 @@ import {
   setup,
 } from "./fixtures/import/clickup-scan.js";
 
-const SPRINT = "Engineering / Sprint 12";
+const SPRINT = "Sprint 12";
 const QUIET = { include_comments: false, include_docs: false };
 const def = (id, name, type, type_config = {}) => ({
   id,
@@ -222,10 +222,7 @@ test("task pages end at last_page or a short page; endless pages are capped", as
   const snapshot = await run({ options: { ...QUIET, limits: { items: 250 } } });
   const pages = (list) =>
     routed(server, "tasks").filter((r) => r.params.list === list).length;
-  assert.equal(
-    boardNamed(snapshot, `Engineering / ${backlog.name}`).items.length,
-    100,
-  );
+  assert.equal(boardNamed(snapshot, backlog.name).items.length, 100);
   assert.equal(pages("901102"), 1, "100 tasks and last_page");
   assert.equal(pages("901103"), 1, "fewer than 100 tasks without last_page");
   assert.equal(pages("901104"), 4, "ceil(250 / 100) + 1 pages at most");

@@ -268,8 +268,8 @@ nothing:
 ### 2.1 Update model (monday-style)
 
 - **Replies:** updates gain `parent_update_id~` (one level of replies only).
-- **Edits:** updates gain `edited_at:str~`. The body stays a string of at
-  most 10,000 characters.
+- **Edits:** updates gain `edited_at:str~`. The body stays a string that
+  reads as at most 10,000 characters (§2.4).
 - **Pins:** updates gain `pinned_at:str~`. Pinned updates show first;
   replies can't be pinned.
 - **Likes:** a new persisted collection `likes: "update_id:id user_id:id
@@ -281,7 +281,8 @@ nothing:
 
   ```
   Update.parent_update_id: ID
-  Update.replies: [Update!]!
+  Update.replies(limit:Int, before_id:ID): [Update!]!
+  Update.replies_count: Int!
   Update.edited_at: String
   Update.pinned: Boolean!
   Update.likes_count: Int!
@@ -300,6 +301,25 @@ nothing:
 
   `Item.updates` returns top-level updates only: pinned first, then newest
   first. `Item.updates_count` counts top-level updates and replies.
+
+- **Paging** (so no update, thread or item outgrows the API's field
+  budget):
+
+  ```
+  Item.updates_page(limit:Int=25, cursor:String): UpdatesPage!
+  UpdatesPage { cursor: String  updates: [Update!]! }
+  Query.updates(ids:[ID!]!): [Update!]!
+  ```
+
+  - `updates_page` pages through the order of `Item.updates`. Its
+    cursor is a position (pinned or not, and an ID), so posts and
+    deletions never shift a page; it is null after the last page. A
+    cursor made for another item is `BAD_USER_INPUT`.
+  - `Update.replies` lists replies oldest first: the newest `limit` of
+    them (all without `limit`), older than `before_id` when given.
+    `replies_count` says how many there are.
+  - `Query.updates` finds updates and replies by ID: those the caller
+    can read, in the order asked.
 
 - **Permissions:**
   - Posting, replying, liking and pinning need editor access, like
@@ -331,7 +351,10 @@ nothing:
   - `team{team{id name}}`
   - `item{item_id, name, board_id}`. The name is null when the reader
     can't open that item's board, rendered as "Private task".
-  - `link{url}`, for http(s) URLs found in text.
+  - `link{url}`, for http(s) URLs found in text: at most 50 per body
+    (later URLs stay text), each ending at whitespace and at control,
+    format (bidi controls U+200E, U+200F, U+202A–U+202E, U+2066–U+2069,
+    zero-width characters, soft hyphens) and filler characters.
 
   The web renders only `body_parts`; it never parses bodies.
 
@@ -406,8 +429,19 @@ nothing:
   - A "Reply" button that opens a reply composer under the card.
 - **Replies** are listed under the card, indented and smaller, with Like
   and the menu. "Show N more replies" appears when there are more than 3.
+- **Loading in pages:**
+  - The pane loads 25 top-level updates, each with its newest 3 replies
+    and its reply count.
+  - "Show older updates" appends the next 25 (by cursor).
+  - "Show N more replies" loads that thread whole, newest first in
+    pages, and later refreshes keep it whole.
+  - A page over the API's field budget is asked for again with half as
+    many updates (one update with its newest reply at last); what is
+    shown stays.
 - Copy link gives `#/boards/<id>/items/<itemId>/updates/<updateId>`. That
   route opens the task view scrolled to the update, highlighted for 2s.
+  The pane pages back to an older update (up to 500 top-level updates)
+  and shows an older reply's thread whole.
 
 **Live and empty states:**
 
@@ -440,7 +474,8 @@ nothing:
 
 ```
 Update.can_delete: Boolean!     # the author with editor access, or a board owner
-Update.body: String!            # tokens; a task the reader can't open reads "Private task"
+Update.body: String!            # tokens; a task the reader can't open reads "Private task",
+                                # a user or team the reader can't see is plain "@<snapshot>"
 BodyPart { type: BodyPartType!  # text | user | team | item | link
            text: String         # what to show (null for a private task)
            user: User  team: Team  item_id: ID  name: String  board_id: ID  url: String }
@@ -452,7 +487,8 @@ Query.notifications(unread_only, kinds:[NotificationKind!], limit)   # Mentions 
   - An unknown or hidden update, or one on another item for
     `pin_to_top`, is `NOT_FOUND` (worded like an unknown ID).
   - A reply to a reply, pinning a reply, a body outside 1–10,000
-    characters and more than 50 tokens are `BAD_USER_INPUT`.
+    characters, more than 50 tokens, an invalid cursor and a
+    `before_id` that is no ID are `BAD_USER_INPUT`.
   - A viewer, or a non-author editing, is `FORBIDDEN`.
 - `edit_update` needs the author with editor access.
 - Board events are `{ type, board_id, item_id, update_id }`:
@@ -479,12 +515,15 @@ display = 1-255 characters once unescaped, not all blank, no line break;
 - Every other character is literal, so text without a well-formed token
   reads as written. Imports store source text escaped this way.
 - Links are `https?://…` runs in text, without trailing punctuation or
-  an unbalanced `)`, at most 2,048 characters.
+  an unbalanced `)`, at most 2,048 characters and 50 per body. A run
+  ends at whitespace, `<`, `>`, `"` and at Unicode control (Cc), format
+  (Cf) and Hangul filler characters.
 
 **Validation, on create and edit:**
 
-- The body is trimmed and 1–10,000 characters as written, tokens
-  included.
+- The body is trimmed and reads as 1–10,000 characters: its text
+  unescaped, each mention as `@<display>` (what the composer shows), so
+  an upgraded `/5` body that reads as written can be saved again.
 - It may hold at most 50 tokens, counted as written.
 - A mention of something the author can't see becomes the plain text
   `@<display>`: an unknown user, team or item, a user outside a guest's
@@ -502,6 +541,9 @@ display = 1-255 characters once unescaped, not all blank, no line break;
 - An edit notifies only the people it newly mentions.
 - A like notifies the update's author once per (update, liker), for as
   long as that notification is kept (200 per user).
+- Each user keeps their newest 200 notifications. A post trims them
+  once for all its recipients, so a team mention costs about as much as
+  notifying one person.
 - Mention, reply and like notifications link to
   `#/boards/<id>/items/<itemId>/updates/<updateId>`.
 
@@ -515,23 +557,39 @@ display = 1-255 characters once unescaped, not all blank, no line break;
   The whole site is the top-level "Workspace" (the company).
 - **Folders:** a new collection
   `folders: "id:id workspace_id:id name:str color:color position:num created_by:id? created_at:str"`.
-  - Boards, docs and forms gain `folder_id:id~`. A folder belongs to one
-    Space; one level only, no subfolders.
+  - Boards and docs gain `folder_id:id~` (a form sits with its board). A
+    folder belongs to one Space; one level only, no subfolders.
   - Boards, docs and folders gain `position:num~`, a sidebar order within
     their Space or folder. Spaces gain `position:num~` too.
 - **Folder access:** folders have no access rules of their own. They inherit
   the Space's. A private board stays private inside any folder.
+- **Source folders:** a folder's name is visible to everyone with a role
+  on its Space, so a recorded source folder (`import.folder`) becomes a
+  folder only where that tells the Space nothing new: no record says the
+  source folder is private (`import.folder.private`, kept when the source
+  says, as ClickUp's folder flag does), and one of its boards in that
+  Space is a Main (public) board. Boards of other source folders stay at
+  the Space's root with their names.
 - **Upgrade `/6 → /7`, with a `.v6.bak` backup** (Phase 2 took format
   `/6`, §2.4):
-  - For every board whose `import.folder` is set, a folder is created per
-    (Space, `folder.source_id`) and the board moves into it.
-  - The board is renamed to `import.source_name` only if its current name
-    still equals the name the importer composed
-    (`"<folder.name> / <source_name>"`). This applies the importer's own
-    rule exactly, and a user rename is never overwritten.
-- **Importer:** ClickUp folders become real folders at import time. Lists
-  keep their own names; there is no more composed "<Folder> / <List>".
-  monday folders are out of scope.
+  - The boards whose `import.folder` names one source folder in one Space
+    move into one new folder per (Space, source, `folder.source_id`),
+    named like the source folder, when the source-folder rule allows.
+  - A board that moves is renamed to `import.source_name` only if its
+    current name is still one the `/6` importer composed: the raw ClickUp
+    names as `"<folder> / <list>"`, trimmed and cut to 255 characters as
+    one name, while the folder's and the list's names were trimmed and
+    cut on their own (a blank folder name became "Untitled folder" and
+    left `"/ <list>"`). This applies the importer's own rule exactly, and
+    a user rename is never overwritten; a re-import's
+    `"… (imported again)"` keeps its name.
+- **Importer:** ClickUp folders become real folders at import time, under
+  the source-folder rule: a board joins the folder of its Space that
+  already holds a board of the same source folder (later runs and
+  re-imports reuse it), else creates one. A private list imported before
+  any Main list of its folder stays at the root. Lists keep their own
+  names; there is no more composed "<Folder> / <List>". monday folders
+  are out of scope.
 
 ### 3.2 GraphQL
 
@@ -540,6 +598,7 @@ Folder { id name color workspace boards docs position }
 Workspace.folders: [Folder!]!
 Board.folder: Folder
 Doc.folder: Folder
+ImportFolder.private: Boolean   # null when the source did not say
 create_folder(workspace_id:ID!, name:String!, color:String): Folder!
 update_folder(folder_id:ID!, name:String, color:String): Folder!
 delete_folder(folder_id:ID!): Folder!
@@ -570,6 +629,9 @@ move_item_to_board(item_id:ID!, board_id:ID!, group_id:String): MoveResult!
   match. Status labels are matched by name, case-insensitively, else the
   item gets no status.
 - Unmapped columns are reported in `dropped_columns`.
+- Activity: one `item_moved` entry on each board. The other board is
+  stored as a reference and named only to readers who can open it;
+  everyone else reads "another board".
 - It needs editor access on both boards. The UI shows a confirm dialog
   listing the dropped columns before calling.
 

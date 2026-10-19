@@ -1,8 +1,11 @@
 /**
  * Boards of the ClickUp connector (SPEC-4 §3.2): one board per List,
- * named "<Folder> / <List>" (or "<List>" when folderless) and keeping its
- * `folder` (`{ source_id, name }`, null when folderless) and the list's
- * own name as `source_name` (`snapshot-board.js`), private when
+ * named like the list (SPEC-6 §3.1: its folder becomes a Worklane folder
+ * at import time) and keeping its `folder` (`{ source_id, name }` and
+ * ClickUp's `private` flag when given; null when folderless) and the
+ * list's own name as `source_name`
+ * (`snapshot-board.js`); scan messages name a list "<Folder> / <List>"
+ * (`label`) so lists of different folders stay apart. Private when
  * its space, folder or list is; two groups, Open (`#579bfc`) and Closed
  * (`#00c875`), chosen by the status type (closed and done → Closed);
  * tasks and subtasks (subtasks keep `parent_source_id`); and comments as
@@ -58,18 +61,27 @@ const textOrNull = (value) =>
  * when folderless) at snapshot `path`, without tasks, and the conversion
  * state the other functions need.
  */
+/**
+ * The snapshot `folder` of a listed ClickUp folder (null: folderless):
+ * its `private` flag only when ClickUp gave one.
+ */
+function sourceFolder(folder) {
+  if (!folder) return null;
+  const record = { source_id: pathId(folder.id), name: str(folder.name) };
+  const flag = folder.private;
+  return typeof flag === "boolean" ? { ...record, private: flag } : record;
+}
+
 export function createBoard(ctx, entry, path) {
   const { team, space, folder, list } = entry;
   const scope = scopeAt(ctx.report, path);
   const id = pathId(list.id);
-  const name = folder
-    ? `${str(folder.name)} / ${str(list.name)}`
-    : str(list.name);
+  const name = str(list.name);
   const restricted = [space, folder, list].some((x) => x?.private === true);
   const board = {
     source_id: id,
     name,
-    folder: folder && { source_id: pathId(folder.id), name: str(folder.name) },
+    folder: sourceFolder(folder),
     source_name: str(list.name),
     description: textOrNull(list.content),
     kind: restricted ? "private" : "public",
@@ -87,6 +99,7 @@ export function createBoard(ctx, entry, path) {
   const state = {
     ctx,
     board,
+    label: folder ? `${str(folder.name)} / ${name}` : name,
     path,
     scope,
     standard: [],

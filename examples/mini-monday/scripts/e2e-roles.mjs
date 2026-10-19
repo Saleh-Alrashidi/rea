@@ -267,12 +267,12 @@ async function viewerReadOnly(run) {
   await screenshot(run, page, "board-viewer-read-only.png");
   await page.locator("tr.item-row .open-item").first().click();
   await page.locator("dialog.task-view[open] .task-title-text").waitFor();
-  check((await page.locator(".task-composer").count()) === 0, "no composer");
+  check((await page.locator(".update-composer").count()) === 0, "no composer");
   check(
     await page
       .locator("dialog.task-view[open] .task-readonly-note")
       .isVisible(),
-    "the task view says comments are read-only",
+    "the task view says updates are read-only",
   );
   await page.keyboard.press("Escape");
   const code = await errorCodeAs(

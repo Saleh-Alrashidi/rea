@@ -166,5 +166,5 @@ test("the done step collapses long lists and repeats its actions on top", (t) =>
   const tiles = $$(view.element, "li.import-tile").map(
     (tile) => $(tile, "span.stat-label").textContent,
   );
-  assert.equal(tiles[0], "Workspace", "one workspace is singular");
+  assert.equal(tiles[0], "Space", "one Space is singular");
 });

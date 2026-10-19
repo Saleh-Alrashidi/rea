@@ -127,7 +127,7 @@ test("a /4 file is renumbered in display order and keeps a .v4.bak", async (t) =
   assert.equal(store.getItem(child.parent_id).name, "Parent");
   const saved = await readDoc(file);
   assert.equal(saved.format, FORMAT);
-  assert.equal(FORMAT, "mini-monday-store/6");
+  assert.equal(FORMAT, "mini-monday-store/7");
   const copy = `${file}.v4.bak`;
   assert.deepEqual(await readDoc(copy), legacy);
   assert.equal((await stat(copy)).mode & 0o777, 0o600, "the copy is private");

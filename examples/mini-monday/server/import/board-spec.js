@@ -95,7 +95,10 @@ function importMeta(board, source) {
     sourceUrl: board.source_url,
   };
   const { folder, source_name: sourceName } = board;
-  if (folder) meta.folder = { sourceId: folder.source_id, name: folder.name };
+  if (folder) {
+    meta.folder = { sourceId: folder.source_id, name: folder.name };
+    if (folder.private !== undefined) meta.folder.private = folder.private;
+  }
   if (sourceName !== undefined) meta.sourceName = sourceName;
   return meta;
 }

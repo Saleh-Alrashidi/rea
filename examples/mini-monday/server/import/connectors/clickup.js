@@ -214,7 +214,7 @@ async function listBoards(ctx, teams) {
 
 async function readTasks(ctx, state) {
   const id = state.board.source_id;
-  const what = `Tasks of list "${state.board.name}"`;
+  const what = `Tasks of list "${state.label}"`;
   const maxPages = Math.ceil(ctx.limits.items / TASK_PAGE) + 1;
   for (let page = 0; page < maxPages; page += 1) {
     if (!itemRoom(ctx, state.path)) return;
@@ -233,7 +233,7 @@ async function readTasks(ctx, state) {
     }
     const { index, total } = ctx.at;
     const read = state.board.items.length.toLocaleString("en-US");
-    const message = `Reading list "${state.board.name}": ${read} tasks so far`;
+    const message = `Reading list "${state.label}": ${read} tasks so far`;
     ctx.progress("items", index, total, message);
     if (json.last_page === true || rows.length < TASK_PAGE) return;
   }
@@ -244,7 +244,7 @@ async function readTasks(ctx, state) {
 /** Reads one list: its statuses, custom fields, tasks and comments. */
 async function readList(ctx, state) {
   const id = state.board.source_id;
-  const name = `list "${state.board.name}"`;
+  const name = `list "${state.label}"`;
   const detail = await guarded(ctx, state.path, `The ${name}`, () =>
     get(ctx, `/v2/list/${id}`),
   );
@@ -267,7 +267,7 @@ async function readBoards(ctx, found) {
     const { target } = entry;
     const path = `${target.path}.boards[${target.ws.boards.length}]`;
     const state = createBoard(ctx, entry, path);
-    const message = `Reading list "${state.board.name}"`;
+    const message = `Reading list "${state.label}"`;
     ctx.at = { index, total: found.length };
     ctx.progress("items", index, found.length, message);
     await readList(ctx, state);

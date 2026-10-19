@@ -11,9 +11,10 @@
  * closes, Enter picks), search that keeps the ancestors of matches, the
  * "Show closed" toggle, the 360 px toolbar's "View options" menu and the
  * view tabs scrolling in their strip, and the task view: description,
- * custom fields, its status menu, subtasks, the activity stream with
- * author names (the ClickUp tag on authors without an account), posting a
- * comment and closing with focus back on the task's name. Text contrast
+ * custom fields, its status menu, subtasks, the Updates pane (newest
+ * first, "Show older updates" past the first 25) with author names (the
+ * ClickUp tag on authors without an account), posting an update and
+ * closing with focus back on the task's name. Text contrast
  * is checked in light and dark. Last, the Main table and the task view
  * opened from it edit the multi-line Minutes in a textarea that keeps its
  * line breaks (SPEC-5 §6), and closing goes back to the Main table
@@ -67,6 +68,8 @@ const BUSY = MEETINGS.busy;
 const TASK = "dialog.task-view[open]";
 const MENU = ".status-menu-popover";
 const COMMENT = "Thanks, see you on Sunday.\nI will bring the numbers.";
+/** Top-level updates the task view loads first (`updates-data.js`). */
+const UPDATES_PAGE = 25;
 
 const textOf = async (locator) => ((await locator.textContent()) ?? "").trim();
 
@@ -418,41 +421,52 @@ async function checkTaskFields(run, page) {
   check(done === `2/${names.length}`, `subtasks done: ${done}`);
 }
 
-/** Author, tag and body of each comment of the open task view. */
+/** Author, tag and body of each update card of the open task view. */
 function comments(page) {
-  return page.locator(`${TASK} .task-comment`).evaluateAll((entries) =>
+  return page.locator(`${TASK} .update-card`).evaluateAll((entries) =>
     entries.map((entry) => ({
-      author: entry.querySelector(".task-comment-author").textContent,
-      tag: entry.querySelector(".task-comment-tag")?.textContent ?? null,
-      body: entry.querySelector(".task-comment-body").textContent,
+      author: entry.querySelector(".update-author").textContent,
+      tag: entry.querySelector(".update-source")?.textContent ?? null,
+      body: entry.querySelector(":scope > .update-body").textContent,
     })),
   );
 }
 
-/** Whether the activity stream is scrolled to its end. */
-const streamAtEnd = (page) =>
-  page
-    .locator("#task-stream")
-    .evaluate((n) => n.scrollHeight - n.scrollTop - n.clientHeight < 2);
+/** Whether the Updates feed is scrolled to its top (newest first). */
+const streamAtTop = (page) =>
+  page.locator("#task-stream").evaluate((n) => n.scrollTop === 0);
 
-async function checkActivity(page) {
+/**
+ * The Updates pane (SPEC-6 §2.3): the newest 25 comments, then "Show
+ * older updates" loads the rest; source authors keep their ClickUp tag.
+ */
+async function checkUpdates(page) {
+  const older = page.locator(`${TASK} .updates-older`);
+  check(await older.isVisible(), "Show older updates");
+  await older.click();
+  const shown = page.locator(`${TASK} .update-card`);
+  await waitUntil(
+    async () => (await shown.count()) === MEETINGS.busyComments,
+    "every comment after Show older updates",
+  );
+  check((await older.count()) === 0, "no more older updates");
   const entries = await comments(page);
-  check(entries.length === MEETINGS.busyComments, `${entries.length} shown`);
   const tagOf = (name) => entries.find((entry) => entry.author === name)?.tag;
   check(tagOf("Alex Rivera") === null, "a teammate has no source tag");
   for (const name of [MEETINGS.outsider, MEETINGS.arabicAuthor, "سارة يوسف"]) {
     check(tagOf(name) === "ClickUp", `${name}: tag ${tagOf(name)}`);
   }
-  const created = await textOf(page.locator(`${TASK} .task-event`).first());
+  const created = await textOf(page.locator(`${TASK} .updates-created`));
   check(created.startsWith("Alex Rivera created this task"), created);
   const link = page.locator(
-    `${TASK} .task-comment-body a[href="https://notes.harbor.test/minutes/last-week"]`,
+    `${TASK} .update-body a[href="https://notes.harbor.test/minutes/last-week"]`,
   );
   check(
     (await link.first().getAttribute("rel")) === "noopener noreferrer",
     "rel",
   );
-  check(await streamAtEnd(page), "the stream opens at its end");
+  await page.locator("#task-stream").evaluate((n) => n.scrollTo(0, 0));
+  check(await streamAtTop(page), "the feed starts with the newest");
 }
 
 async function taskView(run) {
@@ -462,15 +476,16 @@ async function taskView(run) {
   await page.locator(TASK).waitFor();
   const itemId = run.itemIds.get(BUSY);
   check(page.url().endsWith(`/items/${itemId}`), `route ${page.url()}`);
-  const shown = page.locator(`${TASK} .task-comment`);
+  const shown = page.locator(`${TASK} .update-card`);
   await waitUntil(
-    async () => (await shown.count()) === MEETINGS.busyComments,
-    "the task's comments",
+    async () => (await shown.count()) === UPDATES_PAGE,
+    "the task's newest comments",
   );
+  check(await streamAtTop(page), "the feed opens at the newest");
   const crumbs = await textOf(page.locator(`${TASK} .task-breadcrumb`));
   check(crumbs.includes(MEETINGS.board), `breadcrumb: ${crumbs}`);
   await checkTaskFields(run, page);
-  await checkActivity(page);
+  await checkUpdates(page);
   // The status pill opens the same compact menu; Escape closes only it.
   await page.locator(`${TASK} .task-status`).click();
   await page.locator(MENU).waitFor();
@@ -479,7 +494,7 @@ async function taskView(run) {
   await page.keyboard.press("Escape");
   await page.locator(MENU).waitFor({ state: "detached" });
   check(await page.locator(TASK).isVisible(), "the task view stays open");
-  await checkContrast(page, `${TASK} .task-comment-tag`, "the ClickUp tag");
+  await checkContrast(page, `${TASK} .update-source`, "the ClickUp tag");
   await checkContrast(page, `${TASK} .task-field-label`, "a field label");
   const cut = await page
     .locator(`${TASK} .task-field-label span`)
@@ -497,25 +512,30 @@ async function taskView(run) {
   });
   await screenshot(run, page, "clickup-task-subtasks.png");
   await page.emulateMedia({ colorScheme: "dark" });
-  await checkContrast(page, `${TASK} .task-comment-tag`, "a dark ClickUp tag");
-  await checkContrast(page, `${TASK} .task-time`, "a dark comment time");
+  await checkContrast(page, `${TASK} .update-source`, "a dark ClickUp tag");
+  await checkContrast(page, `${TASK} .update-time`, "a dark comment time");
   await checkContrast(page, `${TASK} .task-field-label`, "a dark field label");
   await page.emulateMedia({ colorScheme: "light" });
 }
 
 async function postComment(run) {
   const page = run.alex;
-  const box = page.locator(`${TASK} .task-composer textarea`);
+  const box = page.locator(`${TASK} .update-main-composer textarea`);
   await box.fill(COMMENT);
-  await page.locator(`${TASK} .task-composer button[type="submit"]`).click();
-  const shown = page.locator(`${TASK} .task-comment`);
+  await page
+    .locator(`${TASK} .update-main-composer .update-composer-submit`)
+    .click();
+  const shown = page.locator(`${TASK} .update-card`);
   const total = MEETINGS.busyComments + 1;
   await waitUntil(async () => (await shown.count()) === total, "the comment");
-  const last = (await comments(page)).at(-1);
-  check(last.author === "Alex Rivera" && last.tag === null, last.author);
-  check(last.body === COMMENT, `the posted body: ${JSON.stringify(last.body)}`);
+  // Newest first: the new update leads the feed.
+  const [first] = await comments(page);
+  check(first.author === "Alex Rivera" && first.tag === null, first.author);
+  check(
+    first.body === COMMENT,
+    `the posted body: ${JSON.stringify(first.body)}`,
+  );
   check((await box.inputValue()) === "", "the composer is cleared");
-  await waitUntil(() => streamAtEnd(page), "the stream to show the comment");
   const { items } = await dataAs(run, run.ids.users.alex, ITEM, {
     ids: [run.itemIds.get(BUSY)],
   });
@@ -555,8 +575,8 @@ runE2E({
       searchKeepsAncestors,
     ],
     ["at 360 px: View options, tabs scroll in their strip", narrowToolbar],
-    ["the task view: description, fields, subtasks, activity", taskView],
-    ["posting a comment in the task view", postComment],
+    ["the task view: description, fields, subtasks, updates", taskView],
+    ["posting an update in the task view", postComment],
     ["closing the task view returns focus to its name", closeTask],
     [
       "the table and the task view edit multi-line text in a textarea",

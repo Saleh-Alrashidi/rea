@@ -14,7 +14,7 @@ export const REASONS = Object.freeze({
   viewOnly: "You have view-only access",
   notOwner: "Only owners can do this",
   noCreate: "Your account role can’t create this",
-  noWorkspaceEdit: "You can’t add content to this workspace",
+  noWorkspaceEdit: "You can’t add content to this Space",
   admins: "Only admins can do this",
 });
 

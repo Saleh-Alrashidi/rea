@@ -20,7 +20,7 @@ import {
   routed,
 } from "./fixtures/import/clickup-scan.js";
 
-const SPRINT = "Engineering / Sprint 12";
+const SPRINT = "Sprint 12";
 
 test("scans through ClickUp's REST API with its pagination", async () => {
   const { server, snapshot, valid } = await fullScan();
@@ -106,8 +106,8 @@ test("spaces become workspaces and lists become boards", async () => {
     [
       [
         [SPRINT, "public"],
-        ["Engineering / Backlog", "private"],
-        ["Secret projects / Plans", "private"],
+        ["Backlog", "private"],
+        ["Plans", "private"],
         ["Inbox", "public"],
       ],
       [["Hiring", "private"]],
@@ -115,10 +115,19 @@ test("spaces become workspaces and lists become boards", async () => {
       [],
     ],
   );
-  // Each list keeps its folder (null when folderless) and its own name.
+  // Each list keeps its folder (null when folderless) with ClickUp's
+  // private flag, and its own name.
   const placement = (ws) => ws.boards.map((b) => [b.source_name, b.folder]);
-  const engineering = { source_id: "90011001", name: "Engineering" };
-  const secret = { source_id: "90011002", name: "Secret projects" };
+  const engineering = {
+    source_id: "90011001",
+    name: "Engineering",
+    private: false,
+  };
+  const secret = {
+    source_id: "90011002",
+    name: "Secret projects",
+    private: true,
+  };
   const placed = [
     [
       ["Sprint 12", engineering],
@@ -267,8 +276,7 @@ test("groups follow the status type; standard-field losses are reported", async 
     "in progress, complete (done), closed, blocked (custom), to do",
   );
   assert.equal(
-    itemOf(boardNamed(snapshot, "Engineering / Backlog"), "86d0002")
-      .group_source_id,
+    itemOf(boardNamed(snapshot, "Backlog"), "86d0002").group_source_id,
     "closed",
   );
   const one = (code) => {

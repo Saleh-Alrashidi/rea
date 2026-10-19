@@ -51,7 +51,7 @@ import {
   byPosition,
   midpoint,
   nextItemPosition,
-  renumberItems,
+  renumber,
   renumberedMidpoint,
 } from "./positions.js";
 import { moveParent, subtreeOf } from "./subitems.js";
@@ -183,7 +183,7 @@ function newPosition(state, { item, place, toEnd }) {
   if (place === null) return item.position;
   const mid = midpoint(place.order, place.slot);
   if (mid !== null) return mid;
-  renumberItems(state, place.order);
+  renumber(state.items, place.order);
   return renumberedMidpoint(place.slot);
 }
 

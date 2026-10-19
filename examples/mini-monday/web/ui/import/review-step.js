@@ -28,7 +28,7 @@ const counted = (value, noun, plural = `${noun}s`) =>
 function foundText(preview) {
   const { totals } = preview;
   const parts = [
-    counted(totals.workspaces, "workspace"),
+    counted(totals.workspaces, "Space"),
     counted(totals.boards, "board"),
     counted(totals.items, "item"),
   ];

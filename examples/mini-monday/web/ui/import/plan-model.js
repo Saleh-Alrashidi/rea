@@ -229,7 +229,7 @@ export function summarize(selection, preview) {
     ).length;
     const target = selection.targets.get(workspace.source_id) ?? "new";
     if (target === "new") created += 1;
-    else existing.add(targetNames.get(String(target)) ?? "a workspace");
+    else existing.add(targetNames.get(String(target)) ?? "a Space");
   }
   return {
     ...summary,
@@ -265,7 +265,7 @@ function contentText(summary) {
 function targetText(summary) {
   const parts = [];
   if (summary.newWorkspaces > 0) {
-    parts.push(`${counted(summary.newWorkspaces, "new workspace")}`);
+    parts.push(`${counted(summary.newWorkspaces, "new Space")}`);
   }
   for (const name of summary.existingWorkspaces) parts.push(`“${name}”`);
   return joinList(parts);

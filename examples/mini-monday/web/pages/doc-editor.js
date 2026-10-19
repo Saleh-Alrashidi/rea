@@ -12,6 +12,7 @@
 
 import { h } from "../dom.js";
 import { docHash, docsHash } from "../router.js";
+import { docDeletion } from "../ui/components/delete-confirms.js";
 import { formatDay, timeAgo, todayString } from "../ui/components/format.js";
 import { setDocumentTitle } from "../ui/components/page-header.js";
 import { SHARE_MUTATIONS } from "../ui/components/share-model.js";
@@ -144,7 +145,7 @@ async function setVisibility(page, visibility) {
   page.ctx.toast.success(
     visibility === "private"
       ? "Only invited people can open this doc now"
-      : "Everyone in the workspace can read this doc now",
+      : "Everyone in the Space can read this doc now",
   );
   await page.ctx.refreshShell();
 }
@@ -176,12 +177,7 @@ async function share(page) {
 }
 
 async function deleteDoc(page) {
-  const confirmed = await page.ctx.dialog.confirm({
-    title: "Delete this doc?",
-    message: `“${page.doc.title}” will be deleted for everyone with access. This can’t be undone.`,
-    confirmButton: "Delete doc",
-    danger: true,
-  });
+  const confirmed = await page.ctx.dialog.confirm(docDeletion(page.doc));
   if (!confirmed) return;
   try {
     await page.ctx.api.request(DELETE_DOC_MUTATION, { id: page.doc.id });

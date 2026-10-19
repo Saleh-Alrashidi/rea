@@ -15,7 +15,7 @@ const SCAN_PHASES = Object.freeze({
   starting: "Starting",
   account: "Connecting",
   users: "Reading people",
-  workspaces: "Reading workspaces",
+  workspaces: "Reading Spaces",
   boards: "Finding boards and lists",
   items: "Reading items",
   docs: "Reading docs",

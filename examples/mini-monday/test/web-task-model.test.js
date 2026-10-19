@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  activityEntries,
   completeOption,
   customFields,
-  linkParts,
   subtasksOf,
   tagList,
   taskLayout,
   taskParent,
-  updateAuthor,
 } from "../web/ui/board/task-model.js";
 import { prepareColumns } from "../web/ui/board/values.js";
 import { meetingsBoard, task } from "./web-task-fixtures.js";
@@ -136,97 +133,4 @@ test("the parent comes from the loaded item, else the board row", () => {
   assert.deepEqual(taskParent(board, child, detail), detail.parent);
   assert.equal(taskParent(board, child, { parent: null }), null);
   assert.equal(taskParent(board, parent, null), null);
-});
-
-test("activity runs oldest first after the created line", () => {
-  const detail = {
-    createdAt: "2026-10-01T09:00:00.000Z",
-    creator: { id: "1", name: "Alex" },
-    // Saved comments: the pending one is not counted yet.
-    updatesCount: 3,
-    // loadItem's order: newest first.
-    updates: [
-      {
-        id: "pending-1",
-        body: "posting",
-        created_at: "2026-10-01T09:00:00Z",
-        pending: true,
-      },
-      { id: "12", body: "second", created_at: "2026-10-03T09:00:00.000Z" },
-      { id: "11", body: "first b", created_at: "2026-10-02T09:00:00.000Z" },
-      { id: "10", body: "first a", created_at: "2026-10-02T09:00:00.000Z" },
-    ],
-  };
-  const entries = activityEntries(detail);
-  assert.deepEqual(entries[0], {
-    kind: "created",
-    creator: detail.creator,
-    at: detail.createdAt,
-  });
-  assert.deepEqual(
-    entries.slice(1).map((entry) => entry.update.body),
-    ["first a", "first b", "second", "posting"],
-  );
-  // More saved comments than loaded: a note says how many are older.
-  const older = activityEntries({ ...detail, updatesCount: 503 });
-  assert.deepEqual(older[1], { kind: "older", hidden: 500 });
-  assert.equal(older.length, 6);
-  assert.deepEqual(activityEntries(null), []);
-});
-
-test("authors: the user, else the source author with its tag", () => {
-  const alex = { id: "1", name: "Alex" };
-  assert.deepEqual(updateAuthor({ creator: alex }, "clickup"), {
-    user: alex,
-    name: "Alex",
-    tag: null,
-  });
-  const imported = { creator: null, author_name: " Fox Mulder " };
-  assert.deepEqual(updateAuthor(imported, "clickup"), {
-    user: null,
-    name: "Fox Mulder",
-    tag: "ClickUp",
-  });
-  assert.equal(updateAuthor(imported, "monday").tag, "monday.com");
-  assert.equal(updateAuthor(imported, "csv").tag, "Imported");
-  // The API hides authors outside a guest's directory.
-  const hidden = updateAuthor({ creator: null }, "clickup");
-  assert.equal(hidden.name, "Someone");
-  assert.equal(hidden.tag, null);
-});
-
-test("links: http(s) URLs only, without trailing punctuation", () => {
-  assert.deepEqual(
-    linkParts("See https://example.com/a?b=1, then (http://x.test/path)."),
-    [
-      { text: "See " },
-      { text: "https://example.com/a?b=1", href: "https://example.com/a?b=1" },
-      { text: ", then (" },
-      { text: "http://x.test/path", href: "http://x.test/path" },
-      { text: ")." },
-    ],
-  );
-  // Balanced brackets stay in the URL; Arabic punctuation ends it.
-  assert.deepEqual(linkParts("https://en.wikipedia.org/wiki/A_(b)، تم"), [
-    {
-      text: "https://en.wikipedia.org/wiki/A_(b)",
-      href: "https://en.wikipedia.org/wiki/A_(b)",
-    },
-    { text: "، تم" },
-  ]);
-  // Other schemes and look-alikes stay text.
-  for (const body of [
-    "javascript:alert(1)",
-    "xhttps://a.test",
-    "ftp://a.test",
-    "https://",
-  ]) {
-    assert.deepEqual(linkParts(body), [{ text: body }], body);
-  }
-  assert.deepEqual(linkParts("line one\nhttps://a.test\n"), [
-    { text: "line one\n" },
-    { text: "https://a.test", href: "https://a.test/" },
-    { text: "\n" },
-  ]);
-  assert.deepEqual(linkParts(""), []);
 });

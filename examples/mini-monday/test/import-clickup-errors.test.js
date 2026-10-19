@@ -21,7 +21,9 @@ import {
   setup,
 } from "./fixtures/import/clickup-scan.js";
 
-const SPRINT = "Engineering / Sprint 12";
+const SPRINT = "Sprint 12";
+/** How scan messages name the list: with its folder. */
+const SPRINT_LABEL = "Engineering / Sprint 12";
 const failure = (promise) =>
   promise.then(
     () => assert.fail("expected the scan to fail"),
@@ -115,7 +117,7 @@ test("a 'Team not authorized' 401 on one list is a warning, not a rejected token
     failed.message,
     'Tasks of list "Engineering / Backlog" could not be read: ClickUp answered HTTP 401: Team not authorized',
   );
-  assert.deepEqual(boardNamed(snapshot, "Engineering / Backlog").items, []);
+  assert.deepEqual(boardNamed(snapshot, "Backlog").items, []);
   assert.equal(boardNamed(snapshot, SPRINT).items.length, 230, "others read");
   assert.equal(
     server.requests.filter(
@@ -194,8 +196,8 @@ test("a failing list, page or comment read becomes a warning", async (t) => {
     itemOf(boardNamed(snapshot, SPRINT), "86c0001").updates.length,
     30,
   );
-  assert.deepEqual(boardNamed(snapshot, "Engineering / Backlog").items, []);
-  assert.equal(boardNamed(snapshot, "Secret projects / Plans").items.length, 1);
+  assert.deepEqual(boardNamed(snapshot, "Backlog").items, []);
+  assert.equal(boardNamed(snapshot, "Plans").items.length, 1);
   assert.deepEqual(
     itemOf(boardNamed(snapshot, "Inbox"), "86d0004").updates,
     [],
@@ -367,10 +369,10 @@ test("progress reports each phase; aborting stops the scan", async (t) => {
     "one step per list",
   );
   assert.ok(reading.every((event) => event.total === 6));
-  assert.equal(reading[0].message, `Reading list "${SPRINT}"`);
+  assert.equal(reading[0].message, `Reading list "${SPRINT_LABEL}"`);
   assert.equal(
     reading.find((event) => event.message.endsWith("230 tasks so far")).message,
-    `Reading list "${SPRINT}": 230 tasks so far`,
+    `Reading list "${SPRINT_LABEL}": 230 tasks so far`,
     "each page of tasks says how many were read",
   );
   // Waits for the 90-a-minute budget repeat the progress with a message.
