@@ -131,7 +131,8 @@
   border-radius: 4px;
 }
 
-.card-field .inline-input {
+.card-field .inline-input,
+.card-field .text-lines {
   border-color: var(--color-border-subtle);
 }
 

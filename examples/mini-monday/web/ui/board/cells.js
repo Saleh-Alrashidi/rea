@@ -1,9 +1,11 @@
 /**
  * Column value editors shared by the table, kanban cards and the item card:
  * status pills with a label picker, people avatars with a picker, date,
- * numbers and text inputs. Editors receive decoded UI values (`values.js`)
- * and report changes through `onChange(nextValue)`, which may return a
- * promise of `false` when the server refused the change.
+ * numbers and text inputs. Text goes through `textInput`, so a multi-line
+ * value is edited in a textarea, never in an input that would drop its
+ * line breaks. Editors receive decoded UI values (`values.js`) and report
+ * changes through `onChange(nextValue)`, which may return a promise of
+ * `false` when the server refused the change.
  *
  * View-only users get the same values as static elements (`readOnly`), so
  * a board looks the same whether or not it can be edited.
@@ -24,6 +26,7 @@ import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { onMenuKeydown } from "../components/menu.js";
 import { openPopover } from "../components/popover.js";
+import { MAX_TEXT, textInput } from "../components/text-editor.js";
 import { personOf, statusOption, textColorOn } from "./values.js";
 
 const ASSIGN_HINT = "Only people who can open this board can be assigned.";
@@ -399,13 +402,20 @@ export function cellEditor(options) {
     case "date":
       return dateInput({ value, label, onChange, focusKey });
     case "numbers":
-    case "text":
       return inlineInput({
         value: value ?? "",
         label,
-        type: column.type === "numbers" ? "number" : "text",
-        className: column.type === "numbers" ? "cell-number" : "cell-text",
-        maxLength: 2000,
+        type: "number",
+        className: "cell-number",
+        focusKey,
+        onCommit: (next) => onChange(next === "" ? null : next),
+      });
+    case "text":
+      return textInput({
+        value: value ?? "",
+        label,
+        className: "cell-text",
+        maxLength: MAX_TEXT,
         focusKey,
         onCommit: (next) => onChange(next === "" ? null : next),
       });

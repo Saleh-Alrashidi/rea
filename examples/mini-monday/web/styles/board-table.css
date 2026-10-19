@@ -197,10 +197,15 @@
   height: 28px;
 }
 
-.board-table td .inline-input {
+.board-table td .inline-input,
+.board-table td .text-lines {
   height: 39px;
   border-radius: 0;
   text-align: center;
+}
+
+.board-table td .text-lines {
+  line-height: 29px;
 }
 
 .board-table .cell-name .inline-input {

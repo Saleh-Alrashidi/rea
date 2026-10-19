@@ -271,6 +271,12 @@ function emit(ctx, event) {
   }
 }
 
+/** The change event `type` of `item` (`extra` adds fields such as `column_id`). */
+export function itemEvent(type, item, extra = {}) {
+  const { board_id, id: item_id, group_id } = item;
+  return { type, board_id, item_id, group_id, ...extra };
+}
+
 /**
  * Schedules a save, counts a new revision, emits `event` and then the
  * queued events (one per notified recipient or changed resource), and

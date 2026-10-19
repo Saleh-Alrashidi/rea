@@ -31,8 +31,20 @@ test("focusing and leaving a multi-line value saves nothing (SPEC-5 §6)", (t) =
   assert.equal(escape.defaultPrevented, false);
 });
 
-test("a real edit commits, once", (t) => {
+test("an edit never saves over a multi-line value (SPEC-5 §6)", (t) => {
   const { input, commits } = editor(t, "Line one\nLine two");
+  input.focus();
+  // Typing in the input edits the text without its line break.
+  input.value = "Line oneLine two!";
+  fire(input, "keydown", { key: "Enter" });
+  input.blur();
+  assert.deepEqual(commits, []);
+  // The edit is undone, so the line break is not lost either.
+  assert.equal(input.value, "Line oneLine two");
+});
+
+test("a real edit commits, once", (t) => {
+  const { input, commits } = editor(t, "Line one");
   input.focus();
   input.value = "Line one and two";
   fire(input, "keydown", { key: "Enter" });

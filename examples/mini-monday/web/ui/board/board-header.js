@@ -23,6 +23,7 @@ import { inlineInput } from "../components/inline-edit.js";
 import { BOARD_KINDS } from "../components/labels.js";
 import { menuButton, openMenu } from "../components/menu.js";
 import { skeletonBlock, skeletonLine } from "../components/skeleton.js";
+import { textInput } from "../components/text-editor.js";
 import { importBadge } from "../import/import-badge.js";
 import { ITEM_VIEWS, missingViews, viewTabsOf } from "./board-views.js";
 
@@ -250,7 +251,8 @@ function titleRow(container, props) {
 
 function description({ board, caps, onDescribe }) {
   if (caps.manage) {
-    return inlineInput({
+    // An imported description may have line breaks (`textInput`).
+    return textInput({
       value: board.description,
       label: "Board description",
       className: "board-description",

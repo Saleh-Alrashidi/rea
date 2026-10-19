@@ -9,7 +9,8 @@
  * resource_kind?, resource_id? }`, followed by one `notification_created`
  * event per notified user (and, for `deleteTeam`, one `members_changed`
  * event per resource that lost the team's grant; for `deleteItem`, one
- * `item_deleted` event per subitem deleted with it), and returns the new or
+ * `item_deleted` event per subitem deleted with it, and for `deleteGroup`
+ * one per subitem it took from another group), and returns the new or
  * updated record (`importBoard` writes a whole board as one change with
  * one `board_imported` event, SPEC-4 §4). Unknown IDs return null and
  * emit nothing. Expected failures return

@@ -13,7 +13,7 @@ import { showError } from "../components/toast.js";
 import { CREATE_MUTATIONS } from "../shell/create.js";
 import { mutate } from "./board-data.js";
 import { ITEM_VIEWS } from "./board-views.js";
-import { descendantIds } from "./list-model.js";
+import { descendantIds, groupDeletion } from "./list-model.js";
 import {
   ADDABLE_COLUMN_TYPES,
   GROUP_COLORS,
@@ -26,6 +26,24 @@ const NEW_GROUP_NAME = "New group";
 
 function plural(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * The confirmation of deleting `group`: its items and, when some of their
+ * subitems sit in other groups, how many go with them (`groupDeletion`
+ * of the loaded items; a `truncated` board may hold more). Exported for
+ * tests.
+ */
+export function groupDeletionMessage(group, gone, { truncated = false } = {}) {
+  const items = plural(gone.inGroup, "item");
+  const where = gone.otherGroups === 1 ? "another group" : "other groups";
+  const message =
+    gone.elsewhere === 0
+      ? `“${group.title}” and its ${items} will be deleted.`
+      : `“${group.title}”, its ${items} and their ${plural(gone.elsewhere, "subitem")} in ${where} will be deleted.`;
+  return truncated
+    ? `${message} Not every item of this board is loaded, so there may be more.`
+    : message;
 }
 
 /** Shared helpers for every action group. */
@@ -171,17 +189,22 @@ function groupActions(app, kit) {
         { optimistic: () => (group.color = color) },
       );
     },
+    /**
+     * Deletes the group with its items and their subitems, wherever those
+     * sit (the server cascades); the confirmation counts them all.
+     */
     async deleteGroup(group) {
-      const count = state.board.items.filter(
-        (item) => item.groupId === group.id,
-      ).length;
+      const gone = groupDeletion(state.board.items, group.id);
       const confirmed = await confirmDialog({
         title: "Delete group?",
-        message: `“${group.title}” and its ${plural(count, "item")} will be deleted.`,
+        message: groupDeletionMessage(group, gone, {
+          truncated: state.board.truncated,
+        }),
         confirmButton: "Delete group",
         danger: true,
       });
       if (!confirmed) return;
+      for (const id of gone.ids) app.onItemDeleted(id);
       run(
         "deleteGroup",
         { boardId: kit.boardId(), groupId: group.id },
@@ -191,9 +214,7 @@ function groupActions(app, kit) {
             board.groups = board.groups.filter(
               (entry) => entry.id !== group.id,
             );
-            board.items = board.items.filter(
-              (item) => item.groupId !== group.id,
-            );
+            board.items = board.items.filter((item) => !gone.ids.has(item.id));
           },
         },
       );

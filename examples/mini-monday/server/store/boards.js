@@ -19,6 +19,7 @@ import {
   deepFreeze,
   failure,
   forBoard,
+  itemEvent,
   nextId,
   nextPosition,
   onBoard,
@@ -297,13 +298,14 @@ function groupMutators(ctx) {
     const { board_id, id: group_id } = group;
     return { type, board_id, group_id };
   };
-  const log = (group, kind, { actorId, fromText, toText }) =>
+  const log = (group, kind, { actorId, fromText, toText, subitemsDeleted }) =>
     recordActivity(ctx, {
       boardId: group.board_id,
       actorId,
       kind,
       fromText,
       toText,
+      subitemsDeleted,
     });
   return {
     createGroup(boardId, { title, color = GROUP_COLOR } = {}, opts = {}) {
@@ -329,9 +331,11 @@ function groupMutators(ctx) {
     },
     /**
      * Deletes the group and its items (with their subitems, wherever they
-     * sit); forms aimed at it fall back. A board keeps at least one group
-     * (`last_group`), so new items and form responses always have
-     * somewhere to go.
+     * sit); forms aimed at it fall back. The activity entry counts the
+     * subitems taken from other groups, and each of them gets its own
+     * `item_deleted` event after `group_deleted`. A board keeps at least
+     * one group (`last_group`), so new items and form responses always
+     * have somewhere to go.
      */
     deleteGroup(boardId, groupId, opts = {}) {
       const group = onBoard(state.groups, boardId, groupId);
@@ -342,14 +346,21 @@ function groupMutators(ctx) {
         });
       }
       const inGroup = (r) => r.board_id === boardId && r.group_id === groupId;
-      removeItems(state, inGroup);
+      const removed = removeItems(state, inGroup);
+      const elsewhere = removed.filter((item) => !inGroup(item));
       removeWhere(state.groups, (record) => record === group);
       for (const form of state.forms.filter((f) => f.board_id === boardId)) {
         if (form.target_group_id !== groupId) continue;
         replace(state.forms, form, { ...form, target_group_id: null });
       }
-      const texts = { actorId: opts.actorId, fromText: group.title };
-      log(group, "group_deleted", texts);
+      log(group, "group_deleted", {
+        actorId: opts.actorId,
+        fromText: group.title,
+        subitemsDeleted: elsewhere.length,
+      });
+      ctx.pending.unshift(
+        ...elsewhere.map((item) => itemEvent("item_deleted", item)),
+      );
       return commit(ctx, groupEvent("group_deleted", group), group);
     },
     createColumn(boardId, { title, type } = {}, opts = {}) {

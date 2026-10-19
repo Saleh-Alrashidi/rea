@@ -11,7 +11,8 @@
  * description, custom fields, subtasks, the activity stream with author
  * names (the ClickUp tag on authors without an account), posting a comment
  * and closing with focus back on the task's name. Text contrast is checked
- * in light and dark.
+ * in light and dark. Last, the Main table and the item card edit the
+ * multi-line Minutes in a textarea that keeps its line breaks (SPEC-5 §6).
  *
  * Screenshots go to `e2e-output/clickup-<list|task>[-dark|-360].png`,
  * `clickup-status-menu.png` and `clickup-task-subtasks.png`; at 360 px the
@@ -90,6 +91,7 @@ async function importStep(run) {
   const busy = items.find((item) => item.name === BUSY);
   check(busy.updates_count === MEETINGS.busyComments, "the busy task");
   run.itemIds = new Map(items.map((item) => [item.name, item.id]));
+  run.minutesColumn = board.columns.find((c) => c.title === "Minutes").id;
 }
 
 async function listByDefault(run) {
@@ -452,6 +454,63 @@ async function closeTask(run) {
   check(focused === BUSY, `focus returns to the task's name: ${focused}`);
 }
 
+/** The busy task's Minutes as saved. */
+async function savedMinutes(run) {
+  const { items } = await dataAs(run, run.ids.users.alex, ITEM, {
+    ids: [run.itemIds.get(BUSY)],
+  });
+  return items[0].column_values.find((v) => v.id === run.minutesColumn).text;
+}
+
+/** Appends `text` in the open text popover's textarea. */
+async function typeAtEnd(page, text) {
+  const editor = page.locator(".text-popover textarea");
+  await editor.waitFor();
+  await editor.press("Control+End");
+  await page.keyboard.type(text);
+  return editor;
+}
+
+async function multiLineEdits(run) {
+  const page = run.alex;
+  await page.locator(".view-tab", { hasText: "Main table" }).click();
+  await page.locator(".table-view").waitFor();
+  const label = `Minutes for ${BUSY}`;
+  const flat = await page.locator(`input[aria-label="${label}"]`).count();
+  check(flat === 0, "no input holds the multi-line Minutes");
+  let saved = await savedMinutes(run);
+  check(saved.includes("\n"), `multi-line Minutes: ${JSON.stringify(saved)}`);
+  const cell = page.locator(
+    `.table-view button.text-lines[aria-label^="${label}:"]`,
+  );
+  await cell.click();
+  const area = page.locator(".text-popover textarea");
+  check((await area.inputValue()) === saved, "the textarea shows every line");
+  await screenshot(run, page, "clickup-table-text.png");
+  const editor = await typeAtEnd(page, "\nChecked in the table");
+  await editor.press("Control+Enter");
+  await editor.waitFor({ state: "detached" });
+  saved = `${saved}\nChecked in the table`;
+  await waitUntil(async () => (await savedMinutes(run)) === saved, "the edit");
+  // The item card: Escape cancels and keeps the card; a click outside saves.
+  await page.locator(`button.open-item[aria-label="Open ${BUSY}"]`).click();
+  const card = page.locator("dialog.item-card[open]");
+  const field = card.locator(`button.text-lines[aria-label^="${label}:"]`);
+  await field.click();
+  await typeAtEnd(page, " (draft)");
+  await page.keyboard.press("Escape");
+  await area.waitFor({ state: "detached" });
+  check(await card.isVisible(), "Escape in the editor keeps the card open");
+  check((await savedMinutes(run)) === saved, "Escape saved nothing");
+  await field.click();
+  await typeAtEnd(page, "\nReviewed in the card");
+  await card.locator("#card-fields-heading").click();
+  saved = `${saved}\nReviewed in the card`;
+  await waitUntil(async () => (await savedMinutes(run)) === saved, "the card");
+  await page.keyboard.press("Escape");
+  await card.waitFor({ state: "detached" });
+}
+
 runE2E({
   name: "e2e clickup",
   prefix: "clickup-",
@@ -472,5 +531,9 @@ runE2E({
     ["the task view: description, fields, subtasks, activity", taskView],
     ["posting a comment in the task view", postComment],
     ["closing the task view returns focus to its name", closeTask],
+    [
+      "the table and the card edit multi-line text in a textarea",
+      multiLineEdits,
+    ],
   ],
 });

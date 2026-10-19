@@ -90,7 +90,8 @@ export const definition = {
   extras: {
     "Query.notifications": { description: "Your inbox, newest first." },
     "ActivityLog.subitems_deleted": {
-      description: "For item_deleted: how many subitems went with the item.",
+      description:
+        "For item_deleted: how many subitems went with the item. For group_deleted: how many subitems in other groups went with the group's items.",
     },
   },
 };
