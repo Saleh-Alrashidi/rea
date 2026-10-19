@@ -7,6 +7,11 @@
  * Columns are found by role (`column-roles.js`), never by title, and
  * finished work by label type (`isDoneOption`). Subtasks sit under their
  * parent in the parent's group, whatever their own status.
+ *
+ * Order (SPEC-6 §1.2): inside every displayed group, tasks follow the
+ * board's manual order (`byManualOrder`: position, then ID), and so do the
+ * subtasks under a parent; the tree (`buildTree`) is the one place that
+ * orders them, for the List view and the task view alike.
  */
 
 import { roleColumns } from "./column-roles.js";
@@ -37,6 +42,21 @@ const GROUP_BY_ROLE = Object.freeze({
 });
 const UNASSIGNED = "unassigned";
 
+/** IDs compare as numbers (the API's IDs are digit strings), else as text. */
+function compareIds(a, b) {
+  const [x, y] = [Number(a), Number(b)];
+  if (Number.isFinite(x) && Number.isFinite(y) && x !== y) return x - y;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/**
+ * The board's manual order (SPEC-6 §1.2): `position` (`decodeItem`), then
+ * ID, as the server sorts it.
+ */
+export const byManualOrder = (a, b) =>
+  (a.position ?? 0) - (b.position ?? 0) || compareIds(a.id, b.id);
+
 /**
  * A board's toolbar choices before the user changes any: group by
  * status, subtasks collapsed, closed tasks shown, and no overrides of
@@ -57,6 +77,10 @@ export function defaultListPrefs() {
     expanded: new Map(),
     /** Focus-key suffix (`<group key>:<item ID>`) of the row being renamed. */
     renaming: null,
+    /** IDs of the selected tasks (SPEC-6 §1.4 multi-select). */
+    selected: new Set(),
+    /** Row key (`<group key>:<item ID>`) a Shift-click range starts from. */
+    anchor: null,
   };
 }
 
@@ -118,14 +142,15 @@ export function listColumns(board, prefs) {
 // ----------------------------------------------------------- the tree
 
 /**
- * Children of each item by parent ID, in board order. An item whose
- * parent is not on the loaded board is top-level (`roots`).
+ * Children of each item by parent ID, in manual order (`byManualOrder`),
+ * and the top-level items (`roots`) in that order too. An item whose
+ * parent is not on the loaded board is top-level.
  */
 export function buildTree(items) {
   const ids = new Set(items.map((item) => item.id));
   const children = new Map();
   const roots = [];
-  for (const item of items) {
+  for (const item of [...items].sort(byManualOrder)) {
     const parent = item.parentId;
     if (parent && parent !== item.id && ids.has(parent)) {
       if (!children.has(parent)) children.set(parent, []);
@@ -266,6 +291,8 @@ function laneGrouping(column, kind) {
         groupId: null,
         values: lane.index === null ? {} : { [column.id]: lane.index },
       },
+      // A task moved here takes the label, or loses it (SPEC-6 §1.4).
+      move: { groupId: null, values: { [column.id]: lane.index } },
     })),
     keysOf: (item) => [
       `${kind}:${laneKey(column, item.values[column.id] ?? null)}`,
@@ -286,6 +313,7 @@ function assigneeGrouping(column, { roots, users }) {
     personId: person.id,
     done: false,
     create: { groupId: null, values: { [column.id]: [person.id] } },
+    move: { groupId: null, values: { [column.id]: [person.id] } },
   }));
   groups.push({
     key: `assignee:${UNASSIGNED}`,
@@ -293,6 +321,7 @@ function assigneeGrouping(column, { roots, users }) {
     color: null,
     done: false,
     create: { groupId: null, values: {} },
+    move: { groupId: null, values: { [column.id]: [] } },
   });
   return {
     groups,
@@ -312,6 +341,7 @@ function boardGrouping(board) {
       color: safeColor(group.color),
       done: false,
       create: { groupId: group.id, values: {} },
+      move: { groupId: group.id, values: {} },
     })),
     keysOf: (item) => [`group:${item.groupId}`],
   };
@@ -325,6 +355,7 @@ const NO_GROUPING = Object.freeze({
       color: null,
       done: false,
       create: { groupId: null, values: {} },
+      move: { groupId: null, values: {} },
     },
   ],
   keysOf: () => ["all"],
@@ -359,16 +390,19 @@ function flattenRows(roots, { tree, kept, expandedOf, term }) {
 
 /**
  * The List view's groups, in order: `{ key, label, color, done, create,
- * count, collapsed, rows }` where `rows` are `{ item, depth, childCount,
- * expanded, matched }` (subtasks under their parent, expanded ones only)
- * and `create` is `{ groupId, values }` for a new task in the group.
- * Groups without tasks are left out unless `prefs.showEmpty` (not while
- * searching); when every group is empty the first one stays, so editors
- * can add a task.
+ * move, count, collapsed, rows }` where `rows` are `{ item, depth,
+ * childCount, expanded, matched }` (subtasks under their parent, expanded
+ * ones only, each level in manual order), `create` is `{ groupId, values }`
+ * for a new task in the group and `move` the same for a task moved into it
+ * (an Unassigned or "No status" move clears the value). Groups without
+ * tasks are left out unless `prefs.showEmpty` (not while searching); when
+ * every group is empty the first one stays, so editors can add a task.
+ * `keysOf(item)` gives the keys of the groups a top-level `item` belongs to.
  *
  * @param {object} board loaded board (`board-data.js`)
  * @param {{ prefs: object, roles: object, users?: Map, search?: string }} options
- * @returns {{ groupBy: string, groups: object[] }}
+ * @returns {{ groupBy: string, groups: object[],
+ *   keysOf(item: object): string[] }}
  */
 export function listGroups(board, { prefs, roles, users, search = "" }) {
   const groupBy = effectiveGroupBy(prefs.groupBy, roles);
@@ -407,5 +441,5 @@ export function listGroups(board, { prefs, roles, users, search = "" }) {
   if (shown.length === 0 && term === "" && groups.length > 0) {
     shown.push(groups[0]);
   }
-  return { groupBy, groups: shown };
+  return { groupBy, groups: shown, keysOf: grouping.keysOf };
 }

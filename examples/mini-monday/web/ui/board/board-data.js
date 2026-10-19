@@ -288,8 +288,9 @@ const MUTATIONS = Object.freeze({
   renameItem: `mutation HostRenameItem($boardId: ID!, $itemId: ID!, $value: String) {
   change_simple_column_value(board_id: $boardId, item_id: $itemId, column_id: "name", value: $value) { id }
 }`,
-  moveItem: `mutation HostMoveItem($itemId: ID!, $groupId: String!) {
-  move_item_to_group(item_id: $itemId, group_id: $groupId) { id }
+  // SPEC-6 §1.3: neighbors, parent, group and grouping values in one call.
+  moveItem: `mutation HostMoveItem($itemId: ID!, $afterId: ID, $beforeId: ID, $parentId: ID, $detach: Boolean, $groupId: String, $values: String) {
+  move_item(item_id: $itemId, after_item_id: $afterId, before_item_id: $beforeId, parent_item_id: $parentId, detach_parent: $detach, group_id: $groupId, column_values: $values) { id }
 }`,
   deleteItem: `mutation HostDeleteItem($itemId: ID!) {
   delete_item(item_id: $itemId) { id }
@@ -314,7 +315,7 @@ const MUTATION_FIELDS = Object.freeze({
   createBoardView: "create_board_view",
   changeValue: "change_column_value",
   renameItem: "change_simple_column_value",
-  moveItem: "move_item_to_group",
+  moveItem: "move_item",
   deleteItem: "delete_item",
   createUpdate: "create_update",
   setBoardKind: "set_board_kind",
@@ -322,8 +323,8 @@ const MUTATION_FIELDS = Object.freeze({
 
 /**
  * GraphQL documents of this module, for schema validation in tests: the
- * queries and the SPEC-5 mutations (the older mutations are exercised
- * against the real schema by the web data tests).
+ * queries and the SPEC-5 and SPEC-6 mutations (the older mutations are
+ * exercised against the real schema by the web data tests).
  */
 export const BOARD_QUERIES = Object.freeze({
   BOARD_QUERY,
@@ -333,6 +334,7 @@ export const BOARD_QUERIES = Object.freeze({
   BOARD_FORMS_QUERY,
   CREATE_SUBITEM: MUTATIONS.createSubitem,
   CREATE_BOARD_VIEW: MUTATIONS.createBoardView,
+  MOVE_ITEM: MUTATIONS.moveItem,
 });
 
 /**

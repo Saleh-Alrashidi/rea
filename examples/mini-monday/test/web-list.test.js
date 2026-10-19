@@ -11,6 +11,7 @@ import {
   listGroups,
 } from "../web/ui/board/list-model.js";
 import { renderList } from "../web/ui/board/list-view.js";
+import { subtasksOf } from "../web/ui/board/task-model.js";
 import { isDoneStatus, prepareColumns } from "../web/ui/board/values.js";
 import {
   FakeElement,
@@ -215,9 +216,53 @@ test("status groups: label order, closed types last, then No status", () => {
     result.groups.map((group) => group.collapsed),
     [false, false, true, false],
   );
-  // New tasks get the group's status and the board's first group.
+  // New tasks get the group's status and the board's first group; tasks
+  // moved in take the label, or lose theirs in "No status".
   assert.deepEqual(facility.create, { groupId: null, values: { status: 0 } });
   assert.deepEqual(blank.create, { groupId: null, values: {} });
+  assert.deepEqual(facility.move, { groupId: null, values: { status: 0 } });
+  assert.deepEqual(blank.move, { groupId: null, values: { status: null } });
+  assert.deepEqual(result.keysOf(ITEMS[3]), ["status:1"]);
+});
+
+test("groups and subtasks follow the manual order, not the board groups", () => {
+  // Positions are board-wide: Retro (in the board's second group, last in
+  // board order) comes first, Orphan before Agenda, and Agenda's second
+  // subtask before its first.
+  const positions = { 1: 1024, 2: 2048, 3: 1536, 4: 4096, 5: 100, 6: 6144 };
+  const items = ITEMS.map((item) => ({
+    ...item,
+    position: positions[item.id] ?? 512,
+  }));
+  const board = meetingsBoard(items);
+  const status = groupsOf(board, { subtasks: "expanded" });
+  assert.deepEqual(names(status.groups[0]), [
+    "Orphan",
+    "Agenda",
+    "  Agenda item two",
+    "  Agenda item one",
+  ]);
+  const all = groupsOf(board, { groupBy: "none" });
+  assert.deepEqual(names(all.groups[0]), [
+    "Retro",
+    "Orphan",
+    "Agenda",
+    "Budget",
+    "Loose ends",
+  ]);
+  // The task view's subtasks come from the same tree.
+  const agenda = items[0];
+  const { rows } = subtasksOf(board, { item: agenda, status: null });
+  assert.deepEqual(
+    rows.map((row) => row.item.name),
+    ["Agenda item two", "Agenda item one"],
+  );
+  // Equal positions fall back to the ID, as the server sorts.
+  const tied = meetingsBoard([
+    task("10", "Ten", {}, { position: 1 }),
+    task("9", "Nine", {}, { position: 1 }),
+  ]);
+  assert.deepEqual(names(groupsOf(tied).groups[0]), ["Nine", "Ten"]);
 });
 
 test("empty groups show on request; closed ones go when hidden", () => {
@@ -325,6 +370,8 @@ test("priority, assignee, board group and no grouping", () => {
   assert.equal(priority.groups[1].label, "No priority");
   assert.deepEqual(priority.groups[0].create.values, { priority: 0 });
 
+  assert.deepEqual(priority.groups[1].move.values, { priority: null });
+
   const assignee = groupsOf(board, { groupBy: "assignee" });
   // By name, then Unassigned; a task with two assignees is in both.
   assert.deepEqual(keys(assignee), [
@@ -335,10 +382,15 @@ test("priority, assignee, board group and no grouping", () => {
   assert.deepEqual(names(assignee.groups[0]), ["Budget"]);
   assert.deepEqual(names(assignee.groups[1]), ["Agenda", "Budget"]);
   assert.deepEqual(assignee.groups[1].create.values, { people: ["2"] });
+  assert.deepEqual(assignee.groups[1].move.values, { people: ["2"] });
+  // Moving into Unassigned clears the assignees.
+  assert.deepEqual(assignee.groups[2].move.values, { people: [] });
+  assert.deepEqual(assignee.keysOf(ITEMS[3]), ["assignee:2", "assignee:3"]);
 
   const byGroup = groupsOf(board, { groupBy: "group" });
   assert.deepEqual(keys(byGroup), ["group:open", "group:closed"]);
   assert.deepEqual(byGroup.groups[1].create, { groupId: "closed", values: {} });
+  assert.deepEqual(byGroup.groups[1].move, { groupId: "closed", values: {} });
 
   const none = groupsOf(board, { groupBy: "none" });
   assert.deepEqual(keys(none), ["all"]);
@@ -443,6 +495,13 @@ test("the list renders a treegrid per group with nested, labelled rows", (t) => 
   assert.equal(byClass(agenda, "list-rename").length, 1);
   assert.equal(byClass(container, "list-add-input").length, 4);
 
+  // Moves (SPEC-6 §1.4): a drag handle, a checkbox and a move menu; a
+  // selection brings the bulk bar.
+  for (const name of ["list-drag-handle", "list-select", "list-row-menu"]) {
+    assert.equal(byClass(agenda, name).length, 1, name);
+  }
+  fire(byClass(agenda, "list-select")[0], "click", { shiftKey: false });
+  assert.deepEqual([...ctx.prefs.selected], ["1"]);
   fire(byClass(agenda, "list-subtasks")[0], "click");
   assert.equal(ctx.prefs.expanded.get("1"), true);
   const again = new FakeElement("section");
@@ -451,6 +510,7 @@ test("the list renders a treegrid per group with nested, labelled rows", (t) => 
     row.getAttribute("aria-level"),
   );
   assert.deepEqual(levels, ["1", "2", "2", "1"]);
+  assert.equal(byClass(again, "list-bulk-count")[0].textContent, "1 selected");
 
   // "+ Add task" creates a top-level task with the group's status.
   const [input] = byClass(container, "list-add-input");
@@ -472,6 +532,9 @@ test("view-only users get the same list without editing controls", (t) => {
   assert.equal(byClass(container, "list-add-input").length, 0);
   assert.equal(byClass(container, "list-rename").length, 0);
   assert.equal(byClass(container, "list-group-add").length, 0);
+  for (const name of ["list-drag-handle", "list-select", "list-row-menu"]) {
+    assert.equal(byClass(container, name).length, 0, name);
+  }
   const circle = byClass(container, "list-status")[0];
   assert.equal(circle.tagName, "SPAN");
   assert.equal(circle.getAttribute("aria-label"), "Status: facility");

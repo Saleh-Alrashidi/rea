@@ -1,7 +1,8 @@
 /**
  * User actions: each applies an optimistic local change, renders, runs the
- * GraphQL mutation and then re-fetches, so the server stays the source of
- * truth. Failures show a toast; the re-fetch restores the real state.
+ * GraphQL mutation (or several, in order) and then re-fetches, so the
+ * server stays the source of truth. Failures show a toast; the re-fetch
+ * restores the real state.
  */
 
 import { request } from "../../api.js";
@@ -14,6 +15,7 @@ import { CREATE_MUTATIONS } from "../shell/create.js";
 import { mutate } from "./board-data.js";
 import { ITEM_VIEWS } from "./board-views.js";
 import { descendantIds, groupDeletion } from "./list-model.js";
+import { moveActions } from "./move-actions.js";
 import {
   ADDABLE_COLUMN_TYPES,
   GROUP_COLORS,
@@ -49,26 +51,43 @@ export function groupDeletionMessage(group, gone, { truncated = false } = {}) {
 /** Shared helpers for every action group. */
 function createKit(app) {
   const { state } = app;
+  /**
+   * Runs `calls` (`[mutation name, variables]`) in order after one
+   * optimistic change and render, stopping at the first refusal (an
+   * error toast; `rollback(count)` may put back the `count` calls that
+   * went through), then re-fetches once. Resolves with the selected
+   * records of the calls that went through.
+   */
+  async function runAll(calls, { optimistic, rollback, shell = false } = {}) {
+    state.pendingMutations += 1;
+    state.mutationSeq += 1;
+    if (optimistic) {
+      optimistic();
+      app.render();
+    }
+    const results = [];
+    try {
+      for (const [name, variables] of calls) {
+        results.push(await mutate(name, variables));
+      }
+    } catch (error) {
+      showError(error);
+      await rollback?.(results.length);
+    } finally {
+      state.pendingMutations -= 1;
+      app.refresh();
+      if (shell) app.refreshShell();
+    }
+    return results;
+  }
   return {
     state,
     boardId: () => state.board.id,
-    async run(name, variables, { optimistic, shell = false } = {}) {
-      state.pendingMutations += 1;
-      state.mutationSeq += 1;
-      if (optimistic) {
-        optimistic();
-        app.render();
-      }
-      try {
-        return await mutate(name, variables);
-      } catch (error) {
-        showError(error);
-        return null;
-      } finally {
-        state.pendingMutations -= 1;
-        app.refresh();
-        if (shell) app.refreshShell();
-      }
+    runAll: async (calls, options) => (await runAll(calls, options)).length,
+    /** One mutation; resolves with its record, or null when refused. */
+    async run(name, variables, options) {
+      const [result = null] = await runAll([[name, variables]], options);
+      return result;
     },
     /** The loaded copies of an item: its board row and the task's detail. */
     copiesOf(itemId) {
@@ -315,7 +334,7 @@ function creationActions(kit) {
   };
 }
 
-/** Item rename, values, move, delete and updates. */
+/** Item rename, values, delete and updates (moves: `move-actions.js`). */
 function itemActions(app, kit) {
   const { state, run } = kit;
   return {
@@ -351,19 +370,6 @@ function itemActions(app, kit) {
         },
       );
       return done.then((result) => result !== null);
-    },
-    moveItem(item, groupId) {
-      const group = state.board.groups.find((entry) => entry.id === groupId);
-      if (!group || item.groupId === groupId) return;
-      run(
-        "moveItem",
-        { itemId: item.id, groupId },
-        {
-          optimistic() {
-            for (const copy of kit.copiesOf(item.id)) copy.groupId = groupId;
-          },
-        },
-      );
     },
     /** Deletes the item with its subitems (the server cascades). */
     async deleteItem(item) {
@@ -409,6 +415,69 @@ function itemActions(app, kit) {
           },
         },
       );
+    },
+  };
+}
+
+/** Changes and deletions of several tasks at once (the List bulk bar). */
+function bulkActions(app, kit) {
+  const { state } = kit;
+  return {
+    /** Sets `column` to `value` on every one of `items` (the bulk bar). */
+    setValues(items, column, value) {
+      const encoded = encodeValue(column, value);
+      const calls = items.map((item) => [
+        "changeValue",
+        {
+          boardId: kit.boardId(),
+          itemId: item.id,
+          columnId: column.id,
+          value: encoded,
+        },
+      ]);
+      const text = displayText(column, value, state.users);
+      return kit.runAll(calls, {
+        optimistic() {
+          for (const copy of items.flatMap((item) => kit.copiesOf(item.id))) {
+            copy.values[column.id] = value;
+            copy.texts[column.id] = text;
+          }
+        },
+      });
+    },
+    /**
+     * Deletes `items` with their subitems after one confirmation; resolves
+     * with whether they were deleted.
+     */
+    async deleteItems(selected) {
+      // A selected subtask of a selected task goes with its parent.
+      const gone = new Set();
+      for (const item of selected) {
+        for (const id of descendantIds(state.board.items, item.id))
+          gone.add(id);
+      }
+      const items = selected.filter((item) => !gone.has(item.id));
+      const own = plural(items.length, "task");
+      const below =
+        gone.size > 0 ? ` and their ${plural(gone.size, "subtask")}` : "";
+      const confirmed = await confirmDialog({
+        title: `Delete ${own}?`,
+        message: `${own}${below} will be deleted, with their updates.`,
+        confirmButton: "Delete",
+        danger: true,
+      });
+      if (!confirmed) return false;
+      for (const item of items) gone.add(item.id);
+      for (const id of gone) app.onItemDeleted(id);
+      const calls = items.map((item) => ["deleteItem", { itemId: item.id }]);
+      const done = await kit.runAll(calls, {
+        optimistic() {
+          state.board.items = state.board.items.filter(
+            (entry) => !gone.has(entry.id),
+          );
+        },
+      });
+      return done === calls.length;
     },
   };
 }
@@ -470,6 +539,8 @@ export function createActions(app) {
     ...columnActions(kit),
     ...creationActions(kit),
     ...itemActions(app, kit),
+    ...bulkActions(app, kit),
+    ...moveActions(kit),
     ...formActions(app, kit),
   };
 }

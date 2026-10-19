@@ -1,15 +1,16 @@
 /**
  * Kanban view: one lane per status label of the board's status column
  * (`column-roles.js`: the `status` role, else the first status column),
- * plus "No status". Cards move between lanes with HTML5 drag and drop or,
- * from the keyboard, with each card's status pill (the compact status
- * menu, SPEC-6 §1.1); a card's title opens the task view. View-only users
- * see the same lanes without dragging, status menus or "+ Add item".
+ * plus "No status". Cards follow the board's manual order inside each
+ * lane (SPEC-6 §1.2). Dragging a card reorders it within its lane or moves
+ * it to another lane, both through `move_item` with the List view's drop
+ * line (`kanban-dnd.js`); from the keyboard, each card's status pill (the
+ * compact status menu, SPEC-6 §1.1) changes its lane. A card's title
+ * opens the task view. View-only users see the same lanes without
+ * dragging, status menus or "+ Add item".
  *
  * Every card carries `data-item-id` and every lane `data-lane-key` (its
- * `laneKey`), and each item its `position` in the board's manual order
- * (`decodeItem`): what reordering cards inside a lane (SPEC-6 §1.5) needs
- * to name a card's neighbors.
+ * `laneKey`).
  */
 
 import { clear, h } from "../../dom.js";
@@ -18,11 +19,10 @@ import { formatDay } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { peopleStack, statusLabel, statusPill } from "./cells.js";
 import { roleColumns } from "./column-roles.js";
+import { cardDragHandlers, laneDropHandlers } from "./kanban-dnd.js";
+import { byManualOrder } from "./list-model.js";
 import { laneKey, lanesFor } from "./status-lanes.js";
 import { statusOption, textColorOn } from "./values.js";
-
-const DRAG_TYPE = "application/x-mini-monday-item";
-const ID_PATTERN = /^\d{1,20}$/;
 
 function cardMeta(ctx, item) {
   const { assignees: people, due_date: date } = roleColumns(ctx.board.columns);
@@ -43,18 +43,6 @@ function cardMeta(ctx, item) {
       : null,
     ids.length > 0 ? peopleStack(ids, ctx.users) : null,
   );
-}
-
-function dragHandlers(item, getCard) {
-  return {
-    dragstart(event) {
-      event.dataTransfer.setData(DRAG_TYPE, item.id);
-      event.dataTransfer.setData("text/plain", item.name);
-      event.dataTransfer.effectAllowed = "move";
-      getCard().classList.add("dragging");
-    },
-    dragend: () => getCard().classList.remove("dragging"),
-  };
 }
 
 function cardStatus(ctx, item, column) {
@@ -85,7 +73,7 @@ function kanbanCard(ctx, item, column) {
       draggable: editable ? "true" : null,
       dataset: { itemId: item.id },
       "aria-label": item.name,
-      on: editable ? dragHandlers(item, () => card) : null,
+      on: editable ? cardDragHandlers(item, () => card) : null,
     },
     h(
       "button",
@@ -105,38 +93,6 @@ function kanbanCard(ctx, item, column) {
     ),
   );
   return card;
-}
-
-function draggedItem(ctx, event) {
-  const id = event.dataTransfer.getData(DRAG_TYPE);
-  if (!ID_PATTERN.test(id)) return null;
-  return ctx.board.items.find((item) => item.id === id) ?? null;
-}
-
-function dropHandlers(ctx, { lane, column }) {
-  const accepts = (event) => event.dataTransfer?.types?.includes(DRAG_TYPE);
-  return {
-    dragover(event) {
-      if (!accepts(event)) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      event.currentTarget.classList.add("drop-target");
-    },
-    dragleave(event) {
-      if (!event.currentTarget.contains(event.relatedTarget)) {
-        event.currentTarget.classList.remove("drop-target");
-      }
-    },
-    drop(event) {
-      event.currentTarget.classList.remove("drop-target");
-      if (!accepts(event)) return;
-      event.preventDefault();
-      const item = draggedItem(ctx, event);
-      if (!item) return;
-      if (laneKey(column, item.values[column.id] ?? null) === lane.key) return;
-      ctx.actions.setValue(item, column, lane.index);
-    },
-  };
 }
 
 function addCardForm(ctx, { lane, column }) {
@@ -177,7 +133,7 @@ function laneElement(ctx, { lane, column, items }) {
       class: "lane",
       "aria-labelledby": headingId,
       dataset: { laneKey: lane.key },
-      on: editable ? dropHandlers(ctx, { lane, column }) : null,
+      on: editable ? laneDropHandlers(ctx, { lane, column, items }) : null,
     },
     h(
       "header",
@@ -230,7 +186,7 @@ export function renderKanban(container, ctx) {
   }
   const lanes = lanesFor(column);
   const byLane = new Map(lanes.map((lane) => [lane.key, []]));
-  for (const item of ctx.items) {
+  for (const item of [...ctx.items].sort(byManualOrder)) {
     byLane.get(laneKey(column, item.values[column.id] ?? null)).push(item);
   }
   clear(container).append(

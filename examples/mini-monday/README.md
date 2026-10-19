@@ -605,7 +605,7 @@ apps/status-summary/  example iframe app
 sdk/               the iframe-app SDK (served from the apps origin)
 cli/               the mm CLI
 scripts/           browser tests (e2e-smoke, e2e-roles, e2e-hosted,
-                   e2e-import, e2e-clickup) and their harness
+                   e2e-import, e2e-clickup, e2e-dnd) and their harness
 test/              node:test suites; fixtures/import/ has the fake
                    monday.com and ClickUp servers and an .xlsx writer
 ```
@@ -742,6 +742,7 @@ node scripts/e2e-roles.mjs     # roles, sharing and privacy in Chromium
 node scripts/e2e-hosted.mjs    # hosted mode behind the site gate
 node scripts/e2e-import.mjs    # the importer against fake upstreams
 node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
+node scripts/e2e-dnd.mjs       # drag and drop and keyboard moves (SPEC-6)
 ```
 
 - The unit and integration suites cover the GraphQL engine, the store and
@@ -770,7 +771,12 @@ node scripts/e2e-clickup.mjs   # ClickUp List and task views (SPEC-5)
   status menu by mouse and keyboard, search, Show closed) and the task
   view (fields, subtasks,
   activity with ClickUp authors, a new comment, focus on close), with
-  contrast checks in light and dark. All of them fail on console
+  contrast checks in light and dark. `e2e-dnd.mjs` drags List rows and
+  kanban cards with the real mouse (reorder, another status group,
+  nesting and un-nesting, refused drops, a multi-selection with the bulk
+  bar, hover-expand, auto-scroll), moves rows with Alt+arrows and the
+  row menu, undoes moves and checks a viewer cannot drag; it reads every
+  result back through the API. All of them fail on console
   errors, page errors, CSP violations, failed requests and unexpected HTTP
   errors, and save screenshots to `e2e-output/`.
 - The `test/hosted-*.test.js` suites cover hosted mode: configuration

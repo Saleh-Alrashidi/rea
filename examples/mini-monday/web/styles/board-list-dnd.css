@@ -1,0 +1,255 @@
+/* Moving tasks in the List view (SPEC-6 §1.4): for editors (`.can-move`)
+   the name cell starts with a gutter holding the 6-dot drag handle and
+   the selection checkbox, shown on hover and focus; the "…" move menu;
+   while dragging, the dimmed rows, the ghost with its count badge, the
+   2px accent drop line indented to the landing level (`--drop-level`,
+   set from JS), the "inside" outline, the end of a group, red for drops
+   that are not allowed; and the bulk bar of a selection. Logical
+   properties, except where pointer coordinates are physical. */
+
+.list-view.can-move {
+  --list-gutter: 32px;
+}
+
+.list-view.can-move .list-name-cell {
+  padding-inline-start: calc(
+    var(--list-gutter) + var(--depth, 0) * var(--cu-indent)
+  );
+}
+
+.list-view.can-move .list-head-name {
+  padding-inline-start: calc(48px + var(--list-gutter));
+}
+
+.list-view.can-move .list-add-form {
+  padding-inline-start: calc(30px + var(--list-gutter));
+}
+
+/* ------------------------------------------------- handle, checkbox */
+
+.list-drag-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--color-text-muted);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.list-select {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 16px;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0;
+  accent-color: var(--cu-accent-strong);
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* Over the end of the name cell, so names keep their width. */
+.list-row-menu {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 4px;
+  margin-block-start: -13px;
+  color: var(--color-text-muted);
+  opacity: 0;
+}
+
+.list-row-menu:not(:hover) {
+  background: inherit;
+}
+
+.list-row:hover .list-drag-handle,
+.list-row:focus-within .list-drag-handle,
+.list-row:hover .list-select,
+.list-row:focus-within .list-select,
+.list-row:hover .list-row-menu,
+.list-row:focus-within .list-row-menu,
+.list-row-menu[aria-expanded="true"],
+.list-view.selecting .list-select {
+  opacity: 1;
+}
+
+.list-row.selected,
+.list-row.selected:hover {
+  background: var(--cu-accent-soft);
+}
+
+@media (hover: none) {
+  .list-drag-handle,
+  .list-select,
+  .list-row-menu {
+    opacity: 1;
+  }
+}
+
+/* ----------------------------------------------------- while dragging */
+
+html.list-dragging,
+html.list-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+html.list-dragging.drop-not-allowed,
+html.list-dragging.drop-not-allowed * {
+  cursor: not-allowed !important;
+}
+
+/* Toasts and the bulk bar float over rows: a drag sees through them. */
+html.list-dragging .toast,
+html.list-dragging .list-bulk {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.list-row {
+  position: relative;
+}
+
+.list-row.dragging {
+  opacity: 0.45;
+}
+
+.list-row.drop-before::before,
+.list-row.drop-after::after {
+  position: absolute;
+  inset-inline: calc(
+      var(--list-gutter, 4px) + var(--drop-level, 0) * var(--cu-indent)
+    )
+    0;
+  z-index: 3;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--cu-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.list-row.drop-before::before {
+  inset-block-start: -1px;
+}
+
+.list-row.drop-after::after {
+  inset-block-end: -1px;
+}
+
+.list-row.drop-inside {
+  outline: 2px solid var(--cu-accent);
+  outline-offset: -2px;
+}
+
+.list-group.drop-end .list-add-row {
+  box-shadow: inset 0 2px 0 var(--cu-accent);
+}
+
+.list-group.drop-end .list-group-pill {
+  outline: 2px solid var(--cu-accent);
+  outline-offset: 2px;
+}
+
+.list-row.drop-invalid::before,
+.list-row.drop-invalid::after {
+  background: var(--color-danger);
+}
+
+.list-row.drop-inside.drop-invalid,
+.list-group.drop-end.drop-invalid .list-group-pill {
+  outline-color: var(--color-danger);
+}
+
+.list-group.drop-end.drop-invalid .list-add-row {
+  box-shadow: inset 0 2px 0 var(--color-danger);
+}
+
+/* The ghost follows the pointer, whose coordinates are physical: it is
+   placed from the viewport's top left with a transform (from JS). */
+.list-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 4px 10px;
+  border: 1px solid var(--cu-accent);
+  border-radius: 6px;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  pointer-events: none;
+}
+
+.list-drag-ghost .icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.list-drag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.list-drag-count {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--cu-accent-strong);
+  color: #fff;
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  line-height: 18px;
+  text-align: center;
+}
+
+/* ----------------------------------------------------------- bulk bar */
+
+.list-bulk {
+  position: fixed;
+  inset-inline: 16px;
+  inset-block-end: 16px;
+  z-index: var(--z-drawer);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: calc(100vw - 32px);
+  margin-inline: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.list-bulk-count {
+  padding-inline: 6px;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+/* While the bulk bar holds the bottom of the page (and its status menu
+   opens upward from it), toasts such as "Moved … · Undo" show at the top. */
+body:has(.list-bulk) .toasts {
+  top: 72px;
+  bottom: auto;
+}
