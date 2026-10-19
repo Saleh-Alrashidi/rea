@@ -53,8 +53,12 @@ export const STATUS_LABEL_TYPES = Object.freeze([
   "done",
   "closed",
 ]);
-/** Board view types (SPEC-5 §1.5); `app` views come from app installs. */
-export const VIEW_TYPES = Object.freeze(["table", "kanban", "list", "app"]);
+/**
+ * Board view types (SPEC-5 §1.5) in tab order (SPEC-6 §1.1): a board's
+ * views are listed in this order, so its List view comes first; `app`
+ * views come from app installs.
+ */
+export const VIEW_TYPES = Object.freeze(["list", "table", "kanban", "app"]);
 export const GROUP_COLOR = "#579bfc";
 export const SCOPE_KEY = /^(?:install|app):[1-9]\d*$/;
 export const BOARD_KINDS = Object.freeze(["public", "private", "share"]);

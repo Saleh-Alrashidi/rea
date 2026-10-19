@@ -305,7 +305,8 @@ test("importBoard refuses bad parents, roles, label types, authors and views", a
     [(s) => (s.items[0].updates[0].authorName = " "), /Author name/],
     [(s) => s.views.push({ type: "list" }), /listed twice/],
     [(s) => (s.views = [{ type: "app" }]), /View type/],
-    [(s) => (s.views = []), /needs a view/],
+    [(s) => (s.views = []), /needs a List view/],
+    [(s) => (s.views = [{ type: "table" }]), /needs a List view/],
   ];
   for (const [breakIt, message] of broken) {
     const input = spec(base);

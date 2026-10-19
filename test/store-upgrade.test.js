@@ -3,7 +3,8 @@
  * names into notification and activity texts (server/store/legacy-texts.js),
  * so loading one must turn those names into mentions (rendered per viewer,
  * SPEC-2 §6); version 3 files have no subitems, column roles or update
- * authors and load unchanged (SPEC-5 §1.1). Either way the store keeps a
+ * authors (SPEC-5 §1.1), and version 4 positions are renumbered per board
+ * (SPEC-6 §1.2, store-positions.test.js). Either way the store keeps a
  * private copy of the old file named after its version and saves the
  * result in the current format, which older versions refuse.
  */
@@ -119,12 +120,14 @@ test("a version-2 file is converted, copied and saved in the current format", as
   await store.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
   assert.equal(saved.format, FORMAT);
-  assert.equal(FORMAT, "mini-monday-store/4");
+  assert.equal(FORMAT, "mini-monday-store/5");
   const copy = `${file}.v2.bak`;
   assert.deepEqual(JSON.parse(await readFile(copy, "utf8")), doc);
   assert.equal((await stat(copy)).mode & 0o777, 0o600, "the copy is private");
-  // /2 upgrades through the /3 path; only the original version is kept.
+  // /2 upgrades through the /3 and /4 paths; only the original version
+  // is kept.
   await assert.rejects(access(`${file}.v3.bak`), { code: "ENOENT" });
+  await assert.rejects(access(`${file}.v4.bak`), { code: "ENOENT" });
   // Names became mentions; the label of a user actor is not kept.
   assert.deepEqual(assignOf(store, users.chris).text, [
     { user_id: users.noa },
@@ -156,7 +159,7 @@ test("a version-2 file is converted, copied and saved in the current format", as
   );
 });
 
-test("a version-3 file loads unchanged and is saved as version 4", async (t) => {
+test("a version-3 file loads and is saved in the current format", async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), "mini-monday-upgrade-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "data.json");
@@ -173,7 +176,9 @@ test("a version-3 file loads unchanged and is saved as version 4", async (t) => 
   assert.deepEqual(JSON.parse(await readFile(copy, "utf8")), doc);
   assert.equal((await stat(copy)).mode & 0o777, 0o600, "the copy is private");
   const saved = JSON.parse(await readFile(file, "utf8"));
-  // Loading sorts groups by position; nothing else changes.
+  // Loading sorts groups by position; nothing else changes (the seed's
+  // positions already follow its display order, which the /4 → /5
+  // renumbering keeps).
   const byKey = (a, b) =>
     `${a.board_id}/${a.id}`.localeCompare(`${b.board_id}/${b.id}`);
   const normal = (data) => ({ ...data, groups: data.groups.toSorted(byKey) });
@@ -184,13 +189,13 @@ test("a version-3 file loads unchanged and is saved as version 4", async (t) => 
     store.listItems({ boardId: board, limit: 100 }),
     first.listItems({ boardId: board, limit: 100 }),
   );
-  // Formats this version does not know (older servers refusing /4 is the
+  // Formats this version does not know (older servers refusing /5 is the
   // same rule) are refused, and the file is left as it was.
-  const newer = JSON.stringify({ ...current, format: "mini-monday-store/5" });
+  const newer = JSON.stringify({ ...current, format: "mini-monday-store/6" });
   await writeFile(file, newer);
   await assert.rejects(
     createStore({ file, log: quietLog }),
-    /unsupported format \(expected mini-monday-store\/4;/,
+    /unsupported format \(expected mini-monday-store\/5;/,
   );
   assert.equal(await readFile(file, "utf8"), newer);
 });

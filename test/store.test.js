@@ -65,7 +65,7 @@ test("createBoard adds the default columns, group and views", async () => {
   );
   assert.deepEqual(
     store.listViews(board.id).map((v) => v.type),
-    ["table", "kanban"],
+    ["list", "table", "kanban"],
   );
   assert.equal(store.createBoard({ name: "Ghost", creatorId: "99" }), null);
   const anon = store.createBoard({ name: "Anon", workspaceId: null });
@@ -191,7 +191,9 @@ test("createItem validates stored values and appends to the group", async () => 
     creatorId: "3",
   });
   assert.equal(item.group_id, "this_sprint", "defaults to the first group");
-  assert.equal(item.position, 3);
+  // SPEC-6 §1.2: one order per board; the seeded 8 items sit at 1024 …
+  // 8192, so a new item goes after all of them.
+  assert.equal(item.position, 9 * 1024);
   assert.deepEqual(item.values, {
     status: { index: 2 },
     person: ["2", "3"],
@@ -210,7 +212,11 @@ test("createItem validates stored values and appends to the group", async () => 
     groupId: "done",
     name: "Late",
   });
-  assert.equal(done.position, 2);
+  assert.equal(done.position, 10 * 1024);
+  const inGroup = (groupId) =>
+    store.listItems({ boardId: roadmap.id, groupId }).items.map((i) => i.id);
+  assert.equal(inGroup("this_sprint").at(-1), item.id, "the group's end");
+  assert.equal(inGroup("done").at(-1), done.id);
   assert.deepEqual(boardEvents(events), [
     {
       type: "item_created",
@@ -282,11 +288,14 @@ test("item mutators emit one event each and ignore unknown IDs", async () => {
   assert.equal(set.values.estimate, 13);
   const cleared = store.setColumnValue(item.id, "status", null, actor);
   assert.equal("status" in cleared.values, false);
-  const moved = store.moveItem(item.id, "done", actor);
-  assert.deepEqual([moved.group_id, moved.position], ["done", 2]);
+  // move_item_to_group's move: the end of the new group, after every
+  // item of the board (the seeded 8 sit at 1024 … 8192).
+  const toDone = { groupId: "done", toGroupEnd: true };
+  const moved = store.moveItem(item.id, toDone, actor);
+  assert.deepEqual([moved.group_id, moved.position], ["done", 9 * 1024]);
   assert.equal(
-    store.moveItem(item.id, "done").position,
-    2,
+    store.moveItem(item.id, toDone).position,
+    9 * 1024,
     "same group keeps position",
   );
   const deleted = store.deleteItem(item.id, actor);
@@ -320,16 +329,24 @@ test("item mutators emit one event each and ignore unknown IDs", async () => {
       group_id: "this_sprint",
       column_id: "status",
     },
-    { type: "item_moved", ...base, group_id: "done" },
-    { type: "item_moved", ...base, group_id: "done" },
+    ...Array.from({ length: 2 }, () => ({
+      type: "item_moved",
+      ...base,
+      group_id: "done",
+      position: 9 * 1024,
+      parent_item_id: null,
+    })),
     { type: "item_deleted", ...base, group_id: "done" },
   ]);
   const other = store.listItems({ boardId: roadmap.id }).items[0];
   assert.equal(store.renameItem("999", "x"), null);
   assert.equal(store.setColumnValue("999", "status", { index: 1 }), null);
   assert.equal(store.setColumnValue(other.id, "missing", "x"), null);
-  assert.equal(store.moveItem(other.id, "missing"), null);
-  assert.equal(store.moveItem("999", "done"), null);
+  assert.equal(
+    store.moveItem(other.id, { groupId: "missing" }).reason,
+    "not_found",
+  );
+  assert.equal(store.moveItem("999", toDone), null);
   assert.equal(store.deleteItem(item.id), null);
   assert.throws(() => store.setColumnValue(other.id, "name", " "), TypeError);
   assert.throws(
@@ -403,10 +420,10 @@ test("items are ordered by group position, then item position, and paged", async
     "Set up CI pipeline",
     "Fix login timeout bug",
   ]);
-  store.moveItem(
-    store.listItems({ boardId: roadmap.id }).items[0].id,
-    "next_up",
-  );
+  store.moveItem(store.listItems({ boardId: roadmap.id }).items[0].id, {
+    groupId: "next_up",
+    toGroupEnd: true,
+  });
   const after = names();
   assert.equal(after[0], "Set up CI pipeline");
   assert.equal(
@@ -414,6 +431,16 @@ test("items are ordered by group position, then item position, and paged", async
     "Design onboarding flow",
     "moved to the end of next_up",
   );
+  // Without toGroupEnd the item keeps its place in the board's order.
+  const fix = store.listItems({ boardId: roadmap.id }).items[1];
+  store.moveItem(fix.id, { groupId: "next_up" });
+  assert.deepEqual(
+    names().slice(0, 3),
+    ["Set up CI pipeline", "Fix login timeout bug", "Kanban drag and drop"],
+    "first in next_up: its position is the lowest there",
+  );
+  store.moveItem(fix.id, { groupId: "this_sprint" });
+  assert.deepEqual(names(), after, "and back to the same place");
   const page = store.listItems({ boardId: roadmap.id, offset: 2, limit: 3 });
   assert.equal(page.total, 8);
   assert.deepEqual(

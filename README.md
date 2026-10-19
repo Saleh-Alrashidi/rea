@@ -94,15 +94,19 @@ Tests point the importer at fake upstream servers with
 [Import from monday.com or ClickUp](#import-from-mondaycom-or-clickup));
 leave them unset otherwise.
 
-The data file format is `mini-monday-store/4` (subitems, column roles and
-update authors). A part-1 file is refused with a message; move it away and
-the server reseeds. Older files are upgraded once at start-up, the old
-file is kept as `<file>.v<version>.bak` (private, like the data file) and
-the result is saved as `/4`, which older versions refuse as unsupported. A
-`/3` file loads unchanged. A `mini-monday-store/2` file (which wrote
-people's names into notification and activity texts) goes through the
-`/3` upgrade first: names become mentions rendered per viewer, and a name
-that matches no single user becomes "Someone".
+The data file format is `mini-monday-store/5` (one manual item order per
+board). A part-1 file is refused with a message; move it away and the
+server reseeds. Older files are upgraded once at start-up, the old file
+is kept as `<file>.v<version>.bak` (private, like the data file) and the
+result is saved as `/5`, which older versions refuse as unsupported. A
+`/4` file has its item positions renumbered per board in display order
+(1024, 2048, …), so every board shows its items as before. A `/3` file
+(no subitems, column roles or update authors) goes through the `/4`
+upgrade. A `mini-monday-store/2` file (which wrote people's names into
+notification and activity texts) goes through the `/3` upgrade first:
+names become mentions rendered per viewer, and a name that matches no
+single user becomes "Someone". Every load also gives each board without a
+List view one, and saves the file.
 
 ## Deploy privately on CranL
 

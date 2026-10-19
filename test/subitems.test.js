@@ -2,7 +2,7 @@
  * Real subitems in the store (SPEC-5 §1.1): `parent_id` on item records,
  * the parent invariants on write and on load (server/store/subitems.js),
  * the cascade through `removeItems` with its activity entry and events,
- * update authors and column roles in the /4 data file.
+ * update authors and column roles in the data file (since /4).
  */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -44,7 +44,7 @@ test("parent_id is absent at the top level and set on subitems", async () => {
   const elsewhere = add("Elsewhere", { parentId: parent.id, groupId: "done" });
   assert.equal(elsewhere.group_id, "done", "a subitem may sit in any group");
   // Moving a parent never moves its children.
-  store.moveItem(parent.id, "this_sprint");
+  store.moveItem(parent.id, { groupId: "this_sprint" });
   assert.equal(store.getItem(child.id).group_id, "next_up");
   // Order stays group → position → id; nesting is by parent_id only.
   const { items } = store.listItems({ boardId: board.id, limit: 100 });
@@ -160,7 +160,7 @@ async function fileStore(t) {
   return { file, store, board };
 }
 
-test("subitems, update authors and roles persist in the /4 file", async (t) => {
+test("subitems, update authors and roles persist in the data file", async (t) => {
   const { file, store, board } = await fileStore(t);
   const parent = store.createItem({ boardId: board.id, name: "Parent" });
   const child = store.createItem({
@@ -170,7 +170,7 @@ test("subitems, update authors and roles persist in the /4 file", async (t) => {
   });
   await store.flush();
   const doc = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(doc.format, "mini-monday-store/4");
+  assert.equal(doc.format, "mini-monday-store/5");
   const saved = (id) => doc.items.find((item) => item.id === id);
   assert.equal(saved(child.id).parent_id, parent.id);
   assert.equal("parent_id" in saved(parent.id), false);

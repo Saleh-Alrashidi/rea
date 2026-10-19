@@ -8,6 +8,7 @@ import {
 } from "../server/access.js";
 import { ALL_SCOPES } from "../server/auth.js";
 import { createStore } from "../server/store.js";
+import { DEFAULT_VIEWS } from "../server/store/boards.js";
 import { plainEntry } from "./helpers.js";
 
 // The seed (server/store/seed.js and seed-data.js): part-1 content with its
@@ -110,15 +111,25 @@ test("seed includes the Status summary app, its install, view and tokens", async
   const [install] = store.listInstalls({ boardId: roadmap.id });
   assert.deepEqual(store.getInstall(install.id), install);
   assert.equal(install.app_id, app.id);
+  // Every seeded board has the default views (SPEC-6 §1.1), in tab order.
   const views = store.listViews(roadmap.id);
   assert.deepEqual(
     views.map((v) => [v.name, v.type, v.app_install_id]),
     [
+      ["List", "list", null],
       ["Main table", "table", null],
       ["Kanban", "kanban", null],
       ["Status summary", "app", install.id],
     ],
   );
+  for (const board of store.listBoards({ limit: 100 })) {
+    const types = store.listViews(board.id).map((v) => v.type);
+    assert.deepEqual(
+      types.filter((type) => type !== "app"),
+      DEFAULT_VIEWS.map((view) => view.type),
+      board.name,
+    );
+  }
   const tokens = store.listApiTokens();
   assert.deepEqual(
     tokens.map((t) => [t.label, t.user_id, t.scopes]),

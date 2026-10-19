@@ -10,6 +10,14 @@
  * Subitems (SPEC-5 §1.6): `create_subitem` goes through the store path of
  * `create_item`; `Item.subitems`, `subitems_count` and `updates_count` read
  * indexes built once per request (`perRequest`).
+ *
+ * Moves (SPEC-6 §1.3): `move_item` places an item between neighbors of
+ * its board's manual order (`Item.position`, board-wide), changes its
+ * parent, group and grouping values in one store change
+ * (`store/moves.js`); `move_item_to_group` is the same store move with
+ * only a group, to the end of that group. Refusals map as store results
+ * do: `not_found` → NOT_FOUND, `invalid_parent` / `invalid_neighbor` →
+ * BAD_USER_INPUT.
  */
 import {
   HIDDEN_USER_NAME,
@@ -166,6 +174,36 @@ function createSubitem(_p, args, ctx) {
   return newItem(ctx, fields, args);
 }
 
+/**
+ * Moves an item (editor access on its board): neighbors, parent, group
+ * and `column_values` (the change_multiple_column_values formats) in one
+ * store change.
+ */
+function moveItem(_p, args, ctx) {
+  const item = requireItem(ctx, args.item_id, "editor");
+  const parentId = args.parent_item_id ?? null;
+  const detachParent = args.detach_parent === true;
+  if (detachParent && parentId !== null) {
+    badInput("Give parent_item_id or detach_parent, not both");
+  }
+  const groupId = args.group_id ?? null;
+  if (groupId !== null) groupOf(ctx.store, item.board_id, groupId);
+  const text = args.column_values ?? null;
+  const request = { boardId: item.board_id, text, allowName: true };
+  const before = item.values;
+  const pairs = text === null ? [] : parseValueMap(ctx, { ...request, before });
+  const move = {
+    afterId: args.after_item_id ?? null,
+    beforeId: args.before_item_id ?? null,
+    parentId,
+    detachParent,
+    groupId,
+    values: Object.fromEntries(pairs),
+  };
+  const result = ctx.store.moveItem(item.id, move, actor(ctx));
+  return storeResult(result, () => notFound("Item", item.id));
+}
+
 /** Sets every value in one store change (all validated first). */
 function changeMultipleValues(_p, args, ctx) {
   const item = boardItem(ctx, args);
@@ -234,10 +272,13 @@ const Mutation = wrapAll(write, {
   change_column_value: changeValue(parseColumnValue),
   change_simple_column_value: changeValue(parseSimpleColumnValue),
   change_multiple_column_values: changeMultipleValues,
+  move_item: moveItem,
   move_item_to_group(_p, args, ctx) {
     const item = requireItem(ctx, args.item_id, "editor");
     const group = groupOf(ctx.store, item.board_id, args.group_id);
-    return ctx.store.moveItem(item.id, group.id, actor(ctx));
+    const move = { groupId: group.id, toGroupEnd: true };
+    const result = ctx.store.moveItem(item.id, move, actor(ctx));
+    return storeResult(result, () => notFound("Item", item.id));
   },
   delete_item: (_p, { item_id }, ctx) =>
     ctx.store.deleteItem(requireItem(ctx, item_id, "editor").id, actor(ctx)),
@@ -301,7 +342,7 @@ export const definition = {
       column_values(ids:[String!]):[ColumnValue!]!
       updates(limit:Int=25):[Update!]! url:String! parent_item_id:ID
       parent_item:Item subitems(limit:Int=100):[Item!]! subitems_count:Int!
-      updates_count:Int!`,
+      updates_count:Int! position:Float!`,
     ColumnValue: "id:String! type:ColumnType! text:String value:String",
     Update:
       "id:ID! body:String! author_name:String created_at:String! creator:User",
@@ -310,6 +351,7 @@ export const definition = {
       change_column_value(board_id:ID!,item_id:ID!,column_id:String!,value:String!):Item!
       change_simple_column_value(board_id:ID!,item_id:ID!,column_id:String!,value:String):Item!
       change_multiple_column_values(board_id:ID!,item_id:ID!,column_values:String!):Item!
+      move_item(item_id:ID!,before_item_id:ID,after_item_id:ID,parent_item_id:ID,detach_parent:Boolean=false,group_id:String,column_values:String):Item!
       move_item_to_group(item_id:ID!,group_id:String!):Item!
       delete_item(item_id:ID!):Item!
       create_update(item_id:ID!,body:String!):Update!`,
@@ -322,6 +364,18 @@ export const definition = {
       description: "The item this one is a subitem of; null at the top level.",
     },
     "Item.subitems": { description: "Direct subitems, in board order." },
+    "Item.position": {
+      description:
+        "The item's place in its board's manual order (one order per board): sort by the view's grouping, then position, then id.",
+    },
+    "Mutation.move_item": {
+      description:
+        "Moves an item in one change. It lands immediately after after_item_id and/or immediately before before_item_id (items of the same board, not the item or its subitems; with both, after_item_id must come before before_item_id); the server picks the position, and without neighbors the item keeps it. parent_item_id makes it a subitem of that item, detach_parent a top-level item; group_id changes its group; column_values sets values as change_multiple_column_values does.",
+    },
+    "Mutation.move_item_to_group": {
+      description:
+        "Moves an item to the end of another group of its board (a move within its own group changes nothing).",
+    },
     "Update.author_name": {
       description:
         "The source author of an imported update who has no user here.",

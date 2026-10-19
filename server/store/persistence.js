@@ -9,11 +9,16 @@
  * (`mini-monday-store/1`) are rejected as an unsupported format. Older
  * formats are upgraded once, each through the next version (UPGRADES):
  * `mini-monday-store/2` wrote people's names into texts
- * (`legacy-texts.js`), and `/3` has no subitems, column roles or update
- * authors, which `/4` adds (SPEC-5 §1.1). The store keeps a copy of the
- * old file (`keepLegacyCopy`, `<file>.v<version>.bak`) and saves the
- * result in the current format, which older versions refuse as
- * unsupported. Temp files of interrupted saves are removed before loading.
+ * (`legacy-texts.js`), `/3` has no subitems, column roles or update
+ * authors, which `/4` adds (SPEC-5 §1.1), and `/4` kept item positions
+ * per group, which `/5` renumbers into one order per board in display
+ * order (SPEC-6 §1.2, `positions.upgradeItemPositions`). The store keeps
+ * a copy of the old file (`keepLegacyCopy`, `<file>.v<version>.bak`) and
+ * saves the result in the current format, which older versions refuse as
+ * unsupported. Every load then adds a List view to boards without one
+ * (SPEC-6 §1.1, `boards.addListViews`; idempotent, and the store saves
+ * the result). Temp files of interrupted saves are removed before
+ * loading.
  *
  * The file is one compact JSON text, so the state can only grow as far as
  * one string can be built and read back: MAX_DATA_BYTES (half of V8's
@@ -55,11 +60,12 @@ import {
   deepFreeze,
   onBoard,
 } from "../store-state.js";
-import { columnRoleProblem, makeColumn } from "./boards.js";
+import { addListViews, columnRoleProblem, makeColumn } from "./boards.js";
 import { upgradeLegacyTexts } from "./legacy-texts.js";
+import { upgradeItemPositions } from "./positions.js";
 import { parentProblem } from "./subitems.js";
 
-const VERSION = 4;
+const VERSION = 5;
 const formatOf = (version) => `mini-monday-store/${version}`;
 export const FORMAT = formatOf(VERSION);
 /** Older versions this one loads: version → upgrade to the next version. */
@@ -67,6 +73,7 @@ const UPGRADES = new Map([
   [2, upgradeLegacyTexts],
   // Every /4 addition is optional, so a /3 state is a /4 state as it is.
   [3, () => {}],
+  [4, upgradeItemPositions],
 ]);
 export const MAX_DATA_BYTES = 256 * 1024 * 1024;
 const SAVE_DELAY_MS = 50;
@@ -345,10 +352,11 @@ function versionOf(format) {
 
 /**
  * Loads and validates the data file: null when it does not exist, else
- * `{ state, upgradedFrom, bytes }` where `upgradedFrom` is the version of
- * an upgraded older file (not yet saved; null for current files) and
- * `bytes` the file's length in characters. Invalid files throw instead of
- * being replaced.
+ * `{ state, upgradedFrom, normalized, bytes }` where `upgradedFrom` is
+ * the version of an upgraded older file (not yet saved; null for current
+ * files), `normalized` is true when List views were added, and `bytes`
+ * the file's length in characters. Invalid files throw instead of being
+ * replaced.
  */
 export async function loadState(file) {
   const fail = (detail) => {
@@ -381,7 +389,9 @@ export async function loadState(file) {
   checkColumnRoles(state, fail);
   checkReferences(state, fail);
   for (let from = version; from < VERSION; from += 1) UPGRADES.get(from)(state);
-  return { state, upgradedFrom: version < VERSION ? version : null, bytes };
+  const normalized = addListViews(state) > 0;
+  const upgradedFrom = version < VERSION ? version : null;
+  return { state, upgradedFrom, normalized, bytes };
 }
 
 /**

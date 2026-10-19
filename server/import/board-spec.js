@@ -11,11 +11,11 @@
  * group; validation (`snapshot-board.js`) already cleared unknown parents,
  * broke cycles and capped the depth. An update whose author has no
  * Worklane user names the author in `authorName` and keeps its body as
- * written. ClickUp boards get CLICKUP_VIEWS (List first), other sources
- * DEFAULT_VIEWS. What cannot be mapped (members and people of skipped
- * users) is returned in `notes` for the report.
+ * written. Boards from every source get DEFAULT_VIEWS (List, Main table,
+ * Kanban; SPEC-6 §1.1). What cannot be mapped (members and people of
+ * skipped users) is returned in `notes` for the report.
  */
-import { CLICKUP_VIEWS, DEFAULT_VIEWS } from "../store/boards.js";
+import { DEFAULT_VIEWS } from "../store/boards.js";
 
 /**
  * Item indexes in board order: each top-level item in snapshot order,
@@ -138,14 +138,13 @@ export function boardSpec(board, { people, source }) {
     title,
     color,
   }));
-  const views = source === "clickup" ? CLICKUP_VIEWS : DEFAULT_VIEWS;
   const spec = {
     meta: importMeta(board, source),
     members,
     groups,
     columns: board.columns.map(specColumn),
     items,
-    views,
+    views: DEFAULT_VIEWS,
   };
   return { spec, memberIndex, itemIndex, notes };
 }

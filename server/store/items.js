@@ -13,7 +13,11 @@
  *
  * Items may be subitems of another item on their board (`parent_id`,
  * SPEC-5 §1.1, invariants in `subitems.js`); deleting an item deletes its
- * subitems too.
+ * subitems too. Positions are one manual order per board
+ * (`positions.js`, SPEC-6 §1.2): new items go after every item of their
+ * board. Moves (order, parent, group and values in one change) are
+ * `moves.js`, which applies values through `changedFields` and
+ * `valueEvents` here, like `setColumnValues`.
  *
  * Mutators without a creator take a trailing `{ actorId }` option.
  */
@@ -31,7 +35,6 @@ import {
   invalid,
   itemEvent,
   nextId,
-  nextPosition,
   onBoard,
   push,
   replace,
@@ -47,6 +50,7 @@ import {
   resourceUrl,
 } from "./activity.js";
 import { removeItems, sortedGroups } from "./boards.js";
+import { boardOrder, nextItemPosition } from "./positions.js";
 import { newItemParent } from "./subitems.js";
 
 const knownUser = (state, id) => id === null || byId(state.users, id) !== null;
@@ -54,13 +58,13 @@ const knownUser = (state, id) => id === null || byId(state.users, id) !== null;
 const NAME_COLUMN = Object.freeze({ id: "name", type: "name" });
 
 /**
- * Appends a new item at the end of its group; `parentId` (a checked
- * parent, see `newItemParent`) makes it a subitem.
+ * Appends a new item after every item of its board (so at the end of its
+ * group); `parentId` (a checked parent, see `newItemParent`) makes it a
+ * subitem.
  */
 export function insertItem(ctx, fields) {
   const { boardId, groupId, name, values, creatorId } = fields;
   const { state } = ctx;
-  const inGroup = (r) => r.board_id === boardId && r.group_id === groupId;
   const parentId = fields.parentId ?? null;
   const at = ctx.now();
   return push(state.items, {
@@ -69,7 +73,7 @@ export function insertItem(ctx, fields) {
     group_id: groupId,
     ...(parentId === null ? {} : { parent_id: parentId }),
     name,
-    position: nextPosition(state.items.filter(inGroup)),
+    position: nextItemPosition(state.items, boardId),
     state: "active",
     creator_id: creatorId,
     created_at: at,
@@ -90,15 +94,10 @@ export function insertUpdate(ctx, fields) {
   return push(ctx.state.updates, { ...update, ...meta, ...author });
 }
 
-/** Items ordered by group position, then item position. */
+/** Items in board order: group position, then item position, then ID. */
 function boardItems(state, boardId, groupId) {
-  const groups = sortedGroups(state, boardId);
-  const rank = new Map(groups.map((group, index) => [group.id, index]));
+  const order = boardOrder(sortedGroups(state, boardId));
   const wanted = (item) => groupId === null || item.group_id === groupId;
-  const order = (a, b) =>
-    rank.get(a.group_id) - rank.get(b.group_id) ||
-    a.position - b.position ||
-    Number(a.id) - Number(b.id);
   return forBoard(state.items, boardId).filter(wanted).sort(order);
 }
 
@@ -259,13 +258,25 @@ const logRename = (ctx, { item, next, actorId }) =>
   });
 
 /**
- * Applies `changes` (`[{ column, value }]`, distinct columns) to `item` in
- * one commit: the name column renames, other columns take stored values
- * (null clears). Everything is validated before anything changes; each
- * change is logged and emits its own event, newly assigned people are
- * notified.
+ * The `[{ column, value }]` changes of a values map
+ * (`{ [columnId]: storedValue }`) for `item`, or null when a column is
+ * unknown.
  */
-function setValues(ctx, { item, changes, actorId }) {
+export function changesOf(state, item, values) {
+  if (!isPlainObject(values)) throw new TypeError("values must be an object");
+  const changes = Object.entries(values).map(([columnId, value]) => ({
+    column: onBoard(state.columns, item.board_id, columnId),
+    value,
+  }));
+  return changes.some((entry) => !entry.column) ? null : changes;
+}
+
+/**
+ * The `{ name, values }` of `item` after `changes` (distinct columns):
+ * the name column renames, other columns take stored values (null
+ * clears). Validates everything and writes nothing.
+ */
+export function changedFields(ctx, item, changes) {
   let values = item.values;
   let name = item.name;
   for (const { column, value } of changes) {
@@ -276,25 +287,43 @@ function setValues(ctx, { item, changes, actorId }) {
     requireText(value, "name");
     name = value;
   }
-  const at = ctx.now();
-  const next = { ...item, name, values, updated_at: at };
-  replace(ctx.state.items, item, next);
+  return { name, values };
+}
+
+/**
+ * Logs each of `changes` from `item` to the stored `next` and returns
+ * their events (`item_renamed`, `column_value_changed`), in order; users
+ * newly in people columns are notified (queued after them).
+ */
+export function valueEvents(ctx, { item, next, changes, actorId }) {
   const events = changes.map(({ column }) => {
     if (column.type === "name") {
       logRename(ctx, { item, next, actorId });
       return itemEvent("item_renamed", next);
     }
-    const before = item.values;
-    logValueChange(ctx, { item: next, column, before, after: values, actorId });
+    const [before, after] = [item.values, next.values];
+    logValueChange(ctx, { item: next, column, before, after, actorId });
     return itemEvent("column_value_changed", next, { column_id: column.id });
   });
   notifyAssigned(ctx, {
     item: next,
     before: item.values,
-    after: values,
+    after: next.values,
     actorId,
   });
-  const [first, ...rest] = events;
+  return events;
+}
+
+/**
+ * Applies `changes` to `item` in one commit. Everything is validated
+ * before anything changes; each change is logged and emits its own
+ * event, newly assigned people are notified.
+ */
+function setValues(ctx, { item, changes, actorId }) {
+  const fields = changedFields(ctx, item, changes);
+  const next = { ...item, ...fields, updated_at: ctx.now() };
+  replace(ctx.state.items, item, next);
+  const [first, ...rest] = valueEvents(ctx, { item, next, changes, actorId });
   ctx.pending.unshift(...rest);
   return commit(ctx, first, next);
 }
@@ -323,10 +352,6 @@ function createUpdate(ctx, { itemId, body, creatorId = null }) {
 
 export function itemApi(ctx) {
   const { state } = ctx;
-  const change = (item, changes) => {
-    const next = { ...item, ...changes, updated_at: ctx.now() };
-    return replace(state.items, item, next);
-  };
   const log = (item, kind, extra) =>
     recordActivity(ctx, {
       boardId: item.board_id,
@@ -335,36 +360,12 @@ export function itemApi(ctx) {
       kind,
       ...extra,
     });
-  /** The `[{ column, value }]` changes of a values map, or null. */
-  const changesOf = (item, values) => {
-    if (!isPlainObject(values)) throw new TypeError("values must be an object");
-    const changes = Object.entries(values).map(([columnId, value]) => ({
-      column: onBoard(state.columns, item.board_id, columnId),
-      value,
-    }));
-    return changes.some((entry) => !entry.column) ? null : changes;
-  };
   const setAll = (id, values, actorId) => {
     const item = byId(state.items, id);
-    const changes = item && changesOf(item, values);
+    const changes = item && changesOf(state, item, values);
     if (!changes) return null;
     if (changes.length === 0) return item;
     return setValues(ctx, { item, changes, actorId });
-  };
-  const move = (item, group, actorId) => {
-    const inTarget = (r) =>
-      r.board_id === item.board_id && r.group_id === group.id;
-    const same = group.id === item.group_id;
-    const position = same
-      ? item.position
-      : nextPosition(state.items.filter(inTarget));
-    const next = change(item, { group_id: group.id, position });
-    if (!same) {
-      const from = onBoard(state.groups, item.board_id, item.group_id);
-      const texts = { fromText: from.title, toText: group.title };
-      log(next, "item_moved", { actorId, ...texts });
-    }
-    return commit(ctx, itemEvent("item_moved", next), next);
   };
   return {
     ...itemReads(state),
@@ -412,12 +413,6 @@ export function itemApi(ctx) {
      */
     setColumnValues(id, values, { actorId = null } = {}) {
       return setAll(id, values, actorId);
-    },
-    /** Moves the item to the end of another group of its board. */
-    moveItem(id, groupId, { actorId = null } = {}) {
-      const item = byId(state.items, id);
-      const group = item && onBoard(state.groups, item.board_id, groupId);
-      return group ? move(item, group, actorId) : null;
     },
     /**
      * Deletes the item with its subitems: one activity entry (counting
