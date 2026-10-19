@@ -249,6 +249,10 @@ export const definition = {
       deprecationReason: "Use items_page.",
     },
     "Board.items_page": { description: "Items in board order, by cursor." },
+    "Board.views": {
+      description:
+        "The board's views in tab order: list, table, kanban, then apps (record order within a type); the first non-app view is the default.",
+    },
     "Board.assignable_users": {
       description:
         "Active users who can open the board and whom the caller may see: the people a people column accepts.",

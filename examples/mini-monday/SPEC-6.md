@@ -48,6 +48,10 @@ and is deployed before the next one starts.
     non-app view.
   - Tabs are ordered List, Main table, Kanban, then apps, Activity and
     Forms.
+  - `Board.views` lists a board's views in that tab order (list, table,
+    kanban, app; record order within a type), so the first non-app view
+    of the list is the default view. The seed adds its boards' List views
+    after its other records, so the seeded IDs stay as they were.
 - **Item route:** `#/boards/<id>/items/<itemId>` always opens the
   **task view**, from every view.
   - The monday-style item card (`item-card.js`, `board-card.css`) is
@@ -79,14 +83,25 @@ and is deployed before the next one starts.
   - The upgrade to format `/5` renumbers each board's items in their current
     display order (group position, then item position, then id) at a
     spacing of 1024, with a `.v4.bak` backup.
-  - New items get `max(position on the board) + 1024`.
+  - New items get `max(position on the board) + 1024`. This holds for
+    every creation path: items, subitems, form responses and imports
+    (an import gives its items 1024, 2048, … in spec order).
   - Every view sorts by its grouping first, then by `position`, then by id.
     The Main table's order is unchanged by the upgrade.
+  - `Item.position: Float!` exposes the position, so clients can sort.
 - **Moves use midpoints.** A move places the item between two neighbors
   (`before_item_id` / `after_item_id`) at the midpoint of their positions.
-  - When the gap is smaller than `1e-6`, or either neighbor is missing,
-    the server renumbers that board (spacing 1024) inside the same commit,
-    then places the item.
+  - The neighbors are adjacent places in the board's **manual order**:
+    all of its items by `position`, then id, without the moved item.
+  - When the gap is smaller than `1e-6` (or no float lies between the
+    two), or either neighbor is missing, the server renumbers that board
+    (spacing 1024) inside the same commit, then places the item.
+    "Missing" means the item goes before the first or after the last
+    item of the board: after renumbering it takes 512 or the last
+    position + 512.
+  - Renumbering follows the manual order, so every grouping keeps its
+    order. It changes positions only, not `updated_at`, and emits no
+    events of its own.
   - The client never computes positions.
 
 ### 1.3 `move_item` (server)
@@ -101,6 +116,13 @@ move_item(item_id:ID!, before_item_id:ID, after_item_id:ID,
 
 - **Order:** places the item between its neighbors. The neighbors must be
   on the same board. If none are given, the item keeps its position.
+  - `after_item_id: A` alone: the item lands immediately **after** A,
+    between A and the item that follows A in the manual order.
+  - `before_item_id: B` alone: the item lands immediately **before** B,
+    between the item that precedes B and B.
+  - Both: the item lands between A and B. A must come before B in the
+    manual order. Items between them (for example those of other groups)
+    keep their places.
 - **Parent:** `parent_item_id` makes the item a subitem of that parent.
   `detach_parent` makes it top-level.
 - **Group:** `group_id` changes the board group.
@@ -118,15 +140,34 @@ move_item(item_id:ID!, before_item_id:ID, after_item_id:ID,
 - Neighbors must not be descendants of the moved item.
 - A refused move fails as a whole and changes nothing. Codes:
   `invalid_parent`, `invalid_neighbor`, `not_found`.
+  - `not_found` (GraphQL `NOT_FOUND`): a neighbor, parent or group that
+    is unknown or on another board, worded the same either way.
+  - `invalid_neighbor` (`BAD_USER_INPUT`): the item itself or one of its
+    subitems, or `after_item_id` not before `before_item_id`.
+  - `invalid_parent` (`BAD_USER_INPUT`): the item itself, one of its
+    subitems, or a parent so deep that the item's subtree would pass 5
+    levels.
+  - Giving both `parent_item_id` and `detach_parent: true` is
+    `BAD_USER_INPUT`.
 
 **Events:**
 
 - One `item_moved` event with `{ position, parent_item_id, group_id }`.
-- `column_value_changed` events for the changed values.
+- `column_value_changed` events for the changed values (a value equal to
+  the stored one emits and logs nothing; a `name` renames, with
+  `item_renamed`).
 - Activity entries "moved", "changed status" and so on, as single changes
   already log them.
+  - A new group logs `item_moved` with the group titles.
+  - A new parent logs `item_moved` from/to "Top level" or
+    "Subitem of “<parent>”".
+  - A new place in the order alone is not logged, as a move within a
+    group was not before.
 
-`move_item_to_group` stays, and is implemented through `move_item`.
+`move_item_to_group` stays, and is implemented through `move_item`'s
+store path. It keeps its contract: an item that changes group goes to the
+end of that group (after every item of the board); a move within its own
+group changes nothing.
 
 ### 1.4 Drag and drop in the List view
 

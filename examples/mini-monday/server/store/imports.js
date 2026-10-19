@@ -48,6 +48,7 @@ import {
   readList,
   readViews,
 } from "./import-spec.js";
+import { POSITION_SPACING, nextItemPosition } from "./positions.js";
 
 const MAX_SOURCE_ID = 255;
 const MAX_URL = 2048;
@@ -226,17 +227,18 @@ function prepareBoard(ctx, spec) {
 
 /**
  * Writes the items with their updates: every item gets its ID first, so
- * a subitem may come before its parent or sit in another group.
+ * a subitem may come before its parent or sit in another group. Items
+ * take board-wide positions in spec order, each after the one before
+ * (SPEC-6 §1.2), so every group keeps the spec's order.
  */
 function insertItems(ctx, board, items) {
   const { state } = ctx;
   const at = ctx.now();
   const ids = items.map(() => nextId(state));
-  const positions = new Map();
+  const first = nextItemPosition(state.items, board.id);
   let updates = 0;
   for (const [index, item] of items.entries()) {
-    const position = positions.get(item.group_id) ?? 0;
-    positions.set(item.group_id, position + 1);
+    const position = first + index * POSITION_SPACING;
     const { updates: list, created_at, parent, ...fields } = item;
     push(state.items, {
       id: ids[index],

@@ -20,18 +20,21 @@ const MAX_ITEMS = 5000;
 /** `activity_logs(limit:)` accepts 1–500 (the API's list limit). */
 export const MAX_ACTIVITY = 500;
 
-// `parent_item_id` nests subitems and `updates_count` is the List view's
-// comment chip (SPEC-5 §1.6, §3.4).
+// `parent_item_id` nests subitems, `updates_count` is the List view's
+// comment chip (SPEC-5 §1.6, §3.4) and `position` the item's place in the
+// board's manual order, which views sort by inside their grouping
+// (SPEC-6 §1.2).
 const ITEM_FIELDS = `fragment BoardItem on Item {
   id
   name
   group { id }
   parent_item_id
   updates_count
+  position
   column_values { id text value }
 }`;
-/** Fields of one BoardItem besides its column values (id … updates_count). */
-const ITEM_OWN_FIELDS = 7;
+/** Fields of one BoardItem besides its column values (id … position). */
+const ITEM_OWN_FIELDS = 8;
 
 // A board can be shared with someone outside its workspace: the server's
 // `can_open` says whether its link is shown. `assignable_users` is the

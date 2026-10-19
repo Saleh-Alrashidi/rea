@@ -103,7 +103,7 @@ test("without MM_APPS_ORIGIN the app platform is off", async (t) => {
   const views = await viewsOf(hosted, as(cookie));
   assert.deepEqual(
     views.map((view) => view.type),
-    ["table", "kanban"],
+    ["list", "table", "kanban"],
   );
   assert.ok(views.every((view) => view.app_url === null));
   const install = installOf(hosted);

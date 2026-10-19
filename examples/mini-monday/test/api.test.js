@@ -222,7 +222,7 @@ test("board mutations: create, update and delete", async (t) => {
   const columns = board.columns.map((column) => column.id);
   assert.deepEqual(columns, ["name", "status", "person", "date"]);
   const views = board.views.map((view) => view.type);
-  assert.deepEqual(views, ["table", "kanban"]);
+  assert.deepEqual(views, ["list", "table", "kanban"], "SPEC-6 §1.1");
   const id = { b: board.id };
   const update = `mutation U($b: ID!, $a: BoardAttribute!, $v: String!) {
     update_board(board_id: $b, board_attribute: $a, new_value: $v) {

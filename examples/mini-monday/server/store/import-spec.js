@@ -129,12 +129,14 @@ export function readGroups(groups) {
   return { prepared, keys };
 }
 
-/** Views `[{ type, name? }]` (default DEFAULT_VIEWS), each type once. */
+/**
+ * Views `[{ type, name? }]` (default DEFAULT_VIEWS), each type once; one
+ * of them is a List view, which every board has (SPEC-6 §1.1).
+ */
 export function readViews(views) {
   const list = readList(views ?? DEFAULT_VIEWS, "views");
-  if (list.length === 0) invalid("An imported board needs a view");
   const types = new Set();
-  return list.map((raw) => {
+  const prepared = list.map((raw) => {
     const type = readChoice(raw?.type, Object.keys(VIEW_NAMES), "View type");
     if (types.has(type))
       invalid(`The ${VIEW_NAMES[type]} view is listed twice`);
@@ -144,6 +146,8 @@ export function readViews(views) {
       : VIEW_NAMES[type];
     return { type, name };
   });
+  if (!types.has("list")) invalid("An imported board needs a List view");
+  return prepared;
 }
 
 /** A stored value for `column`; people limited by `assignable(id)`. */

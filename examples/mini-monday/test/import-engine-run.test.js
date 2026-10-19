@@ -149,10 +149,11 @@ test("columns, statuses, items, subitems and updates keep their content", async 
   assert.deepEqual(
     store.listViews(roadmap.id).map((v) => [v.type, v.name]),
     [
+      ["list", "List"],
       ["table", "Main table"],
       ["kanban", "Kanban"],
     ],
-    "monday boards keep the table as their default view",
+    "boards from every source start with List (SPEC-6 §1.1)",
   );
   assert.equal(items[0].created_at, "2025-03-04T05:06:07.000Z");
   assert.equal(items[0].creator_id, ids.users.sam);

@@ -5,9 +5,11 @@
  *
  * The part-1 records come first so they keep their IDs (users 1-3, boards
  * 4 and 17, app 23, install 24); everything SPEC-2 adds follows, and the
- * part-1 boards then get their workspace, kind and members. Seeding writes
- * records directly: it emits no events and sends no notifications beyond
- * the seeded inbox.
+ * part-1 boards then get their workspace, kind and members. Seeded boards
+ * have the DEFAULT_VIEWS of every new board; their List views are added
+ * last (`addListViews`), so the part-1 records keep their IDs. Seeding
+ * writes records directly: it emits no events and sends no notifications
+ * beyond the seeded inbox.
  */
 import { randomBytes } from "node:crypto";
 import { ALL_SCOPES } from "../auth.js";
@@ -18,7 +20,13 @@ import {
   recordActivity,
   resourceUrl,
 } from "./activity.js";
-import { insertBoard, insertContent, insertView } from "./boards.js";
+import {
+  DEFAULT_VIEWS,
+  addListViews,
+  insertBoard,
+  insertContent,
+  insertView,
+} from "./boards.js";
 import { insertDoc, readBlocks } from "./docs.js";
 import { insertForm } from "./forms.js";
 import { insertItem, insertUpdate } from "./items.js";
@@ -39,6 +47,8 @@ import {
 import { insertWorkspace } from "./workspaces.js";
 
 const rows = (table) => table.map((row) => row.split("|"));
+/** DEFAULT_VIEWS but the List view, which `addListViews` adds last. */
+const FIRST_VIEWS = DEFAULT_VIEWS.filter((view) => view.type !== "list");
 const keys = (text) => text.split(",").filter(Boolean);
 
 /** Resolves "kind:key:role" grant specs with the seeded IDs. */
@@ -83,7 +93,7 @@ function seedBoard(ctx, seed, key) {
     creatorId: "1",
     workspaceId: null,
   });
-  insertContent(ctx, board.id, table);
+  insertContent(ctx, board.id, { ...table, views: FIRST_VIEWS });
   const items = rows(table.items).map(([groupId, name, ...rest]) => {
     const values = itemValues(seed, rest);
     const item = { boardId: board.id, groupId, name, values, creatorId: "1" };
@@ -299,4 +309,5 @@ export function seedState(ctx) {
   seedContent(ctx, seed);
   seedActivity(ctx, seed);
   seedInbox(ctx, seed);
+  addListViews(ctx.state);
 }

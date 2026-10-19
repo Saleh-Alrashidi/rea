@@ -10,7 +10,8 @@
  * event per notified user (and, for `deleteTeam`, one `members_changed`
  * event per resource that lost the team's grant; for `deleteItem`, one
  * `item_deleted` event per subitem deleted with it, and for `deleteGroup`
- * one per subitem it took from another group), and returns the new or
+ * one per subitem it took from another group; `moveItem` follows its
+ * `item_moved` with one event per changed value), and returns the new or
  * updated record (`importBoard` writes a whole board as one change with
  * one `board_imported` event, SPEC-4 §4). Unknown IDs return null and
  * emit nothing. Expected failures return
@@ -30,6 +31,7 @@ import { formApi } from "./store/forms.js";
 import { grantApi } from "./store/grants.js";
 import { importApi } from "./store/imports.js";
 import { itemApi } from "./store/items.js";
+import { moveApi } from "./store/moves.js";
 import { noteApi } from "./store/notes.js";
 import { peopleApi } from "./store/people.js";
 import {
@@ -49,6 +51,7 @@ const DOMAINS = [
   workspaceApi,
   boardApi,
   itemApi,
+  moveApi,
   grantApi,
   docApi,
   noteApi,
@@ -61,7 +64,8 @@ const DOMAINS = [
 /**
  * Opens the data file `file` (null or ":memory:": none): removes stale
  * temp files, loads it when it exists and keeps a copy of an older
- * version's file before it is saved in the current format.
+ * version's file before it is saved in the current format. `changed`:
+ * loading upgraded or normalized the state, which is then saved.
  */
 async function openData(file) {
   if (file === null || file === ":memory:") return { target: null };
@@ -70,14 +74,16 @@ async function openData(file) {
   const loaded = await loadState(target);
   const from = loaded?.upgradedFrom ?? null;
   if (from !== null) await keepLegacyCopy(target, from);
-  return { target, loaded, upgraded: from !== null };
+  const changed = from !== null || loaded?.normalized === true;
+  return { target, loaded, changed };
 }
 
 /**
  * Creates the store. Removes temp files that interrupted saves of `file`
  * left, then loads `file` when it exists (an invalid file is an error and
  * is never overwritten; an older version's file is upgraded, copied to
- * `<file>.v<version>.bak` and saved in the current format); otherwise
+ * `<file>.v<version>.bak` and saved in the current format; a file whose
+ * boards lacked a List view gets them and is saved too); otherwise
  * seeds when `seed` is true and saves the result. `file: null` (or
  * `":memory:"`) keeps data in memory.
  * Writes are debounced (50 ms) and atomic; `flush()` awaits them. `now`
@@ -92,7 +98,7 @@ export async function createStore({
   log = console,
   maxDataBytes = MAX_DATA_BYTES,
 } = {}) {
-  const { target, loaded = null, upgraded = false } = await openData(file);
+  const { target, loaded = null, changed = false } = await openData(file);
   const state = loaded?.state ?? emptyState();
   const listeners = new Set();
   const ctx = {
@@ -108,8 +114,9 @@ export async function createStore({
   if (!loaded && seed) seedState(ctx);
   const bytes = loaded ? loaded.bytes : 0;
   ctx.persist = createPersistence({ file: target, state, log, bytes });
-  // New and upgraded state is saved right away (in the current format).
-  if (!loaded || upgraded) ctx.persist.schedule();
+  // New, upgraded and normalized state is saved right away (in the
+  // current format).
+  if (!loaded || changed) ctx.persist.schedule();
   const on = (listener) => {
     if (typeof listener !== "function") {
       throw new TypeError("listener must be a function");

@@ -140,17 +140,28 @@ test("Column.role and Update.author_name come from the data file", async (t) => 
   assert.ok(authors.some(([, name]) => name === null));
 });
 
+/** A file store whose board "Views" (Sam's) has only its List view. */
+async function listOnlyStore(t) {
+  const dir = await mkdtemp(path.join(tmpdir(), "mini-monday-views-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "data.json");
+  const seeded = await createStore({ file, log: quietLog });
+  const board = seeded.createBoard({ name: "Views", creatorId: "2" });
+  await seeded.flush();
+  const doc = JSON.parse(await readFile(file, "utf8"));
+  doc.views = doc.views.filter(
+    (view) => view.board_id !== board.id || view.type === "list",
+  );
+  await writeFile(file, JSON.stringify(doc));
+  return { store: await createStore({ file, log: quietLog }), board };
+}
+
 test("create_board_view adds each list, table or kanban view once", async (t) => {
-  const { as, users, roadmap, store } = await setup(t);
+  const { store, board } = await listOnlyStore(t);
+  const { as, users, roadmap } = await setup(t, { store });
   const sam = as(users.sam);
-  const created = await sam.data(VIEW, { b: roadmap, t: "list" });
-  assert.deepEqual(created.create_board_view, {
-    id: created.create_board_view.id,
-    name: "List",
-    type: "list",
-  });
   const types = store.listViews(roadmap).map((view) => view.type);
-  assert.deepEqual(types, ["table", "kanban", "app", "list"], "appended");
+  assert.deepEqual(types, ["list", "table", "kanban", "app"], "tab order");
   const again = await sam.error(VIEW, { b: roadmap, t: "list", n: "Mine" });
   assert.equal(again.extensions.code, "BAD_USER_INPUT");
   assert.equal(again.message, "The board already has a List view");
@@ -172,20 +183,26 @@ test("create_board_view adds each list, table or kanban view once", async (t) =>
     await as(users.chris).code(VIEW, { b: roadmap, t: "list" }),
     "NOT_FOUND",
   );
-  // A given name is trimmed; a blank one is refused.
-  const board = store.createBoard({ name: "Views", creatorId: users.sam });
-  const named = await sam.data(VIEW, { b: board.id, t: "list", n: " Tasks " });
-  assert.equal(named.create_board_view.name, "Tasks");
-  const blank = await sam.error(VIEW, { b: board.id, t: "kanban", n: " " });
+  // A missing view is added with its default name, or a given name
+  // (trimmed); a blank one is refused. Views come back in tab order.
+  const created = await sam.data(VIEW, { b: board.id, t: "kanban" });
+  assert.deepEqual(created.create_board_view, {
+    id: created.create_board_view.id,
+    name: "Kanban",
+    type: "kanban",
+  });
+  const blank = await sam.error(VIEW, { b: board.id, t: "table", n: " " });
   assert.equal(blank.extensions.code, "BAD_USER_INPUT");
+  const named = await sam.data(VIEW, { b: board.id, t: "table", n: " Tasks " });
+  assert.equal(named.create_board_view.name, "Tasks");
   const { boards } = await sam.data(
     "query B($b: ID!) { boards(ids: [$b]) { views { name type } } }",
     { b: board.id },
   );
   assert.deepEqual(boards[0].views, [
-    { name: "Main table", type: "table" },
+    { name: "List", type: "list" },
+    { name: "Tasks", type: "table" },
     { name: "Kanban", type: "kanban" },
-    { name: "Tasks", type: "list" },
   ]);
 });
 
@@ -196,7 +213,7 @@ test("delete_group streams item_deleted for subitems in other groups", async (t)
     .items[0];
   const child = (await sam.data(CREATE, { p: parent.id, n: "Child" }))
     .create_subitem;
-  store.moveItem(child.id, "done");
+  store.moveItem(child.id, { groupId: "done" });
   const url = new URL(`/v2/events?board_id=${roadmap}`, hostUrl);
   const stream = await openStream(url, sessionFor(users.sam));
   t.after(() => stream.close());

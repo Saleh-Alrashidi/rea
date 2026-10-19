@@ -9,7 +9,8 @@
  * may sit in another group than its parent, and nesting is by `parent_id`,
  * never by position. Removing an item removes its descendants
  * (`withDescendants`, applied by `boards.removeItems`), so no `parent_id`
- * can dangle.
+ * can dangle. Moving an item under another parent (`moveParent`, SPEC-6
+ * §1.3) keeps the same invariants for the item and its whole subtree.
  */
 import { describe } from "../input.js";
 import { byId, failure } from "../store-state.js";
@@ -104,8 +105,8 @@ export function newItemParent(state, { boardId, parentId }) {
   return parent;
 }
 
-/** Adds to `ids` (a Set of item IDs) every descendant of those items. */
-export function withDescendants(items, ids) {
+/** Child IDs by parent ID. */
+function childIndex(items) {
   const children = new Map();
   for (const item of items) {
     if (item.parent_id === undefined) continue;
@@ -113,6 +114,12 @@ export function withDescendants(items, ids) {
     if (list) list.push(item.id);
     else children.set(item.parent_id, [item.id]);
   }
+  return children;
+}
+
+/** Adds to `ids` (a Set of item IDs) every descendant of those items. */
+export function withDescendants(items, ids) {
+  const children = childIndex(items);
   const queue = [...ids];
   while (queue.length > 0) {
     for (const child of children.get(queue.pop()) ?? []) {
@@ -122,4 +129,45 @@ export function withDescendants(items, ids) {
     }
   }
   return ids;
+}
+
+/**
+ * The subtree below `item`: `{ ids }` (a Set of its descendants' IDs) and
+ * `height`, how many levels it reaches below the item (0 without
+ * subitems).
+ */
+export function subtreeOf(items, item) {
+  const children = childIndex(items);
+  const ids = new Set();
+  let height = 0;
+  for (let level = [item.id]; level.length > 0;) {
+    const next = level.flatMap((id) => children.get(id) ?? []);
+    for (const id of next) ids.add(id);
+    if (next.length > 0) height += 1;
+    level = next;
+  }
+  return { ids, height };
+}
+
+/**
+ * The new parent `parentId` of `item` (with `subtree` from `subtreeOf`):
+ * an active item of the same board, outside the item's own subtree, deep
+ * enough for the whole subtree to stay within MAX_SUBITEM_DEPTH. Fails
+ * with `not_found` (unknown, or on another board) or `invalid_parent`.
+ */
+export function moveParent(state, { item, parentId, subtree }) {
+  const parent = newItemParent(state, { boardId: item.board_id, parentId });
+  if (parent.ok === false && parent.reason === "not_found") return parent;
+  if (parentId === item.id || subtree.ids.has(parentId)) {
+    return failure("invalid_parent", {
+      message: "An item cannot become a subitem of itself or its subitems",
+    });
+  }
+  const depth = depthOf(state, byId(state.items, parentId)) + 1;
+  if (depth + subtree.height > MAX_SUBITEM_DEPTH) {
+    return failure("invalid_parent", {
+      message: `Subitems nest at most ${MAX_SUBITEM_DEPTH} levels deep`,
+    });
+  }
+  return byId(state.items, parentId);
 }

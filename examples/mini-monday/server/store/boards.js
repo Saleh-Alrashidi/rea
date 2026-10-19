@@ -5,6 +5,14 @@
  * column changes, column roles and the views users add (SPEC-5 §1.2,
  * §1.5).
  *
+ * Views (SPEC-6 §1.1): every board has a List view. Boards start with
+ * DEFAULT_VIEWS (List, Main table, Kanban), whoever creates them; loading
+ * a data file adds a List view to any board without one
+ * (`addListViews`). `listViews` returns a board's views in tab order
+ * (VIEW_TYPES: list, table, kanban, app; record order within a type), so
+ * the first view is the List view, which clients open by default (the
+ * first non-app view).
+ *
  * Part-1 methods keep their names and behavior; mutators that record
  * activity take a trailing `{ actorId }` option.
  */
@@ -14,6 +22,7 @@ import {
   COLUMN_ROLES,
   COLUMN_TYPES,
   GROUP_COLOR,
+  VIEW_TYPES,
   byId,
   commit,
   deepFreeze,
@@ -60,12 +69,14 @@ const viewList = (...types) =>
     types.map((type) => Object.freeze({ type, name: VIEW_NAMES[type] })),
   );
 /**
- * The views a board starts with, in record order (its default view is the
- * first non-app one): new boards and imports from most sources get
- * DEFAULT_VIEWS, ClickUp imports CLICKUP_VIEWS.
+ * The views every board starts with (SPEC-6 §1.1): new boards, the seed
+ * and imports from every source.
  */
-export const DEFAULT_VIEWS = viewList("table", "kanban");
-export const CLICKUP_VIEWS = viewList("list", "table", "kanban");
+export const DEFAULT_VIEWS = viewList("list", "table", "kanban");
+const VIEW_RANK = new Map(VIEW_TYPES.map((type, index) => [type, index]));
+/** Views in tab order (VIEW_TYPES), keeping record order within a type. */
+const inTabOrder = (views) =>
+  views.sort((a, b) => VIEW_RANK.get(a.type) - VIEW_RANK.get(b.type));
 
 /**
  * Column record; `settings_str` is derived for GraphQL and not persisted.
@@ -141,6 +152,20 @@ export function insertView(ctx, boardId, { name, type, installId = null }) {
   return push(ctx.state.views, { ...view, app_install_id: installId });
 }
 
+/**
+ * Adds a List view (named "List") to every board of `state` that has
+ * none, after every other record; idempotent. Returns how many it added.
+ */
+export function addListViews(state) {
+  const listed = new Set(
+    state.views.filter((v) => v.type === "list").map((v) => v.board_id),
+  );
+  const missing = state.boards.filter((board) => !listed.has(board.id));
+  const list = { type: "list", name: VIEW_NAMES.list };
+  for (const board of missing) insertView({ state }, board.id, list);
+  return missing.length;
+}
+
 /** Adds groups and columns from `|` rows plus `views` (`[{ type, name }]`). */
 export function insertContent(
   ctx,
@@ -201,7 +226,8 @@ function boardReads(state) {
         ? [...state.installs]
         : forBoard(state.installs, boardId),
     getInstall: (id) => byId(state.installs, id),
-    listViews: (boardId) => forBoard(state.views, boardId),
+    /** The board's views in tab order (List first). */
+    listViews: (boardId) => inTabOrder(forBoard(state.views, boardId)),
   };
 }
 
