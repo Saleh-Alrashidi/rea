@@ -104,10 +104,12 @@ function trim(list, keep, max) {
  * Appends an activity entry for `boardId`. `actorId` null with an
  * `actorLabel` marks non-user actors (form submissions); both name a user
  * acting through a tool (imports). `fromText` and `toText` are rich text.
+ * `subitemsDeleted` (item deletions, SPEC-5 §1.1) is kept when above 0.
  */
 export function recordActivity(ctx, entry) {
   const { state } = ctx;
   const actorId = entry.actorId ?? null;
+  const subitems = entry.subitemsDeleted ?? 0;
   const record = push(state.activity, {
     id: nextId(state),
     board_id: entry.boardId,
@@ -119,6 +121,7 @@ export function recordActivity(ctx, entry) {
     column_id: entry.columnId ?? null,
     from_text: entry.fromText ?? null,
     to_text: entry.toText ?? null,
+    ...(subitems > 0 ? { subitems_deleted: subitems } : {}),
     created_at: ctx.now(),
   });
   trim(state.activity, (r) => r.board_id === entry.boardId, MAX_ACTIVITY);

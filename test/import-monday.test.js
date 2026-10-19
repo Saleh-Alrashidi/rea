@@ -248,6 +248,10 @@ test("subitems follow their parent; their columns merge by title and type", asyn
   assert.deepEqual(itemOf(roadmap, "2002").values, { status: "Done" });
   assert.equal(itemOf(roadmap, "2001").creator_source_id, "2");
   assert.equal(roadmap.items.length, 455);
+  assert.ok(
+    roadmap.columns.every((c) => c.role === undefined),
+    "monday columns have no roles",
+  );
 });
 
 test("updates are plain text, oldest first, with replies", async () => {

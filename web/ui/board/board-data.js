@@ -17,16 +17,21 @@ import { decodeItem, prepareColumns } from "./values.js";
 const FIELD_BUDGET = 3000;
 const MAX_ITEMS_PAGE = 500;
 const MAX_ITEMS = 5000;
-const UPDATES_LIMIT = 100;
 /** `activity_logs(limit:)` accepts 1–500 (the API's list limit). */
 export const MAX_ACTIVITY = 500;
 
+// `parent_item_id` nests subitems and `updates_count` is the List view's
+// comment chip (SPEC-5 §1.6, §3.4).
 const ITEM_FIELDS = `fragment BoardItem on Item {
   id
   name
   group { id }
+  parent_item_id
+  updates_count
   column_values { id text value }
 }`;
+/** Fields of one BoardItem besides its column values (id … updates_count). */
+const ITEM_OWN_FIELDS = 7;
 
 // A board can be shared with someone outside its workspace: the server's
 // `can_open` says whether its link is shown. `assignable_users` is the
@@ -41,7 +46,7 @@ const BOARD_QUERY = `query HostBoard($ids: [ID!]) {
       user { id name initials color role }
       team { id name member_count }
     }
-    columns { id title type settings_str }
+    columns { id title type settings_str role }
     groups { id title color position }
     views { id name type app_install_id app_url }
     import { source source_url imported_at imported_by { id name } }
@@ -55,24 +60,50 @@ const BOARD_ITEMS_QUERY = `query HostBoardItems($ids: [ID!], $limit: Int, $curso
 }
 ${ITEM_FIELDS}`;
 
-const ITEM_QUERY = `query HostItem($ids: [ID!]!) {
+// The task view (SPEC-5 §4) names the parent, counts the subtasks the
+// server has (the board's rows hold their values) and shows up to
+// MAX_UPDATES comments; `updates_count` says how many exist.
+const ITEM_QUERY = `query HostItem($ids: [ID!]!, $updates: Int) {
   items(ids: $ids) {
     id name created_at
     board { id }
     group { id title color }
     creator { id name initials }
+    parent_item_id
+    parent_item { name }
+    subitems_count
+    updates_count
     column_values { id text value }
-    updates(limit: ${UPDATES_LIMIT}) {
-      id body created_at
+    updates(limit: $updates) {
+      id body author_name created_at
       creator { id name initials }
     }
   }
 }`;
+/** Fields ITEM_QUERY resolves besides its column values and updates. */
+const ITEM_QUERY_FIELDS = 21;
+/** Fields of one update (id … creator { id name initials }). */
+const UPDATE_FIELDS = 8;
+/**
+ * The item query is one request of known size, so it may use more of the
+ * server's 5,000-field budget than a page of items: MAX_UPDATES (the
+ * task view's 500 comments, SPEC-5 §4.2) fit beside 150 columns, and
+ * wider boards load fewer.
+ */
+const ITEM_FIELD_BUDGET = 4500;
+const MAX_UPDATES = 500;
+
+/** Updates the item query loads for `columnCount` columns. */
+function updatesLimit(columnCount) {
+  const columns = 3 * Math.max(columnCount, 1);
+  const room = ITEM_FIELD_BUDGET - ITEM_QUERY_FIELDS - columns;
+  return Math.max(1, Math.min(MAX_UPDATES, Math.floor(room / UPDATE_FIELDS)));
+}
 
 /** Items per page for `columnCount` columns, within FIELD_BUDGET. */
 function itemsPageLimit(columnCount) {
-  // Each item resolves 5 fields plus 3 per column value.
-  const perItem = 5 + 3 * Math.max(columnCount, 1);
+  // Each item resolves its own fields plus 3 per column value.
+  const perItem = ITEM_OWN_FIELDS + 3 * Math.max(columnCount, 1);
   return Math.max(
     1,
     Math.min(MAX_ITEMS_PAGE, Math.floor(FIELD_BUDGET / perItem)),
@@ -143,18 +174,31 @@ function newestFirst(a, b) {
 }
 
 /**
- * Loads one item with its group, creator and updates (newest first),
- * decoding its values with `columns`. Returns null for unknown items.
+ * Loads one item with its group, creator, parent (`{ id, name }` or
+ * null), subtask and update counts and its newest updates (newest
+ * first, as many as `updatesLimit` allows), decoding its values with
+ * `columns`. Returns null for unknown items.
  */
 export async function loadItem(itemId, columns) {
-  const data = await request(ITEM_QUERY, { ids: [itemId] });
+  const data = await request(ITEM_QUERY, {
+    ids: [itemId],
+    updates: updatesLimit(columns.length),
+  });
   const raw = data.items[0];
   if (!raw) return null;
+  const item = decodeItem(raw, columns);
   return {
-    ...decodeItem(raw, columns),
+    ...item,
     boardId: String(raw.board.id),
     group: raw.group,
     creator: raw.creator,
+    parent:
+      item.parentId && raw.parent_item
+        ? { id: item.parentId, name: String(raw.parent_item.name ?? "") }
+        : null,
+    subitemsCount: Number.isSafeInteger(raw.subitems_count)
+      ? raw.subitems_count
+      : 0,
     updates: [...raw.updates].sort(newestFirst),
   };
 }
@@ -203,14 +247,6 @@ export async function loadBoardForms(boardId) {
 }
 
 /** GraphQL documents of this module (for schema validation in tests). */
-export const BOARD_QUERIES = Object.freeze({
-  BOARD_QUERY,
-  BOARD_ITEMS_QUERY,
-  ITEM_QUERY,
-  ACTIVITY_QUERY,
-  BOARD_FORMS_QUERY,
-});
-
 /** Mutation documents keyed by name; every one selects only `id`. */
 const MUTATIONS = Object.freeze({
   createBoard: `mutation HostCreateBoard($name: String!, $description: String, $workspaceId: ID, $kind: BoardKind) {
@@ -236,6 +272,12 @@ const MUTATIONS = Object.freeze({
 }`,
   createItem: `mutation HostCreateItem($boardId: ID!, $groupId: String, $name: String!, $values: String) {
   create_item(board_id: $boardId, group_id: $groupId, item_name: $name, column_values: $values) { id }
+}`,
+  createSubitem: `mutation HostCreateSubitem($parentId: ID!, $name: String!, $values: String) {
+  create_subitem(parent_item_id: $parentId, item_name: $name, column_values: $values) { id }
+}`,
+  createBoardView: `mutation HostCreateBoardView($boardId: ID!, $type: BoardViewType!) {
+  create_board_view(board_id: $boardId, type: $type) { id }
 }`,
   changeValue: `mutation HostChangeValue($boardId: ID!, $itemId: ID!, $columnId: String!, $value: String!) {
   change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) { id }
@@ -265,12 +307,29 @@ const MUTATION_FIELDS = Object.freeze({
   deleteGroup: "delete_group",
   createColumn: "create_column",
   createItem: "create_item",
+  createSubitem: "create_subitem",
+  createBoardView: "create_board_view",
   changeValue: "change_column_value",
   renameItem: "change_simple_column_value",
   moveItem: "move_item_to_group",
   deleteItem: "delete_item",
   createUpdate: "create_update",
   setBoardKind: "set_board_kind",
+});
+
+/**
+ * GraphQL documents of this module, for schema validation in tests: the
+ * queries and the SPEC-5 mutations (the older mutations are exercised
+ * against the real schema by the web data tests).
+ */
+export const BOARD_QUERIES = Object.freeze({
+  BOARD_QUERY,
+  BOARD_ITEMS_QUERY,
+  ITEM_QUERY,
+  ACTIVITY_QUERY,
+  BOARD_FORMS_QUERY,
+  CREATE_SUBITEM: MUTATIONS.createSubitem,
+  CREATE_BOARD_VIEW: MUTATIONS.createBoardView,
 });
 
 /**

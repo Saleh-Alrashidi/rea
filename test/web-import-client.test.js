@@ -210,6 +210,14 @@ test("refused requests throw ApiErrors with codes and plan details", async (t) =
     }),
     new Response("<html>oops</html>", { status: 502 }),
     jsonResponse(202, { ok: true }),
+    jsonResponse(409, {
+      errors: [
+        {
+          message: "This scan was already imported",
+          extensions: { code: "ALREADY_IMPORTED", import_job_id: "../x" },
+        },
+      ],
+    }),
   ];
   const calls = stubFetch(t, () => answers.shift());
   const invalid = await A.runImport({ scanJobId: ID, plan: {} }).catch(
@@ -227,12 +235,20 @@ test("refused requests throw ApiErrors with codes and plan details", async (t) =
     (e) => e,
   );
   assert.equal(noJob.message, "The server returned no job");
-  assert.equal(calls.length, 3);
+  const imported = await A.runImport({ scanJobId: ID, plan: {} }).catch(
+    (e) => e,
+  );
+  assert.deepEqual(
+    [imported.status, imported.code, imported.importJobId],
+    [409, "ALREADY_IMPORTED", null],
+    "a malformed job ID is not followed",
+  );
+  assert.equal(calls.length, 4);
   for (const bad of ["../admin", "short", `${ID}/x`, 42]) {
     await assert.rejects(A.getJob(bad), TypeError);
   }
   await assert.rejects(A.cancelJob("../x"), TypeError);
-  assert.equal(calls.length, 3, "malformed IDs are never requested");
+  assert.equal(calls.length, 4, "malformed IDs are never requested");
 });
 
 test("import events are parsed from the user's stream", (t) => {
@@ -313,7 +329,20 @@ test("the wizard's requests round-trip through the real import routes", async (t
   state = W.transition(state, { type: "job", job: scan });
   assert.equal(state.step, "review");
   const selection = createSelection(state.preview);
+  // A plan the server refuses comes back with its paths.
+  selection.users.set("u-anon", "invite:member");
+  const refused = await A.runImport({
+    scanJobId: scanId,
+    plan: toPlan(selection, state.preview),
+  }).catch((e) => e);
+  assert.equal(refused.status, 400);
+  assert.deepEqual(
+    refused.details.map((entry) => entry.path),
+    ['plan.users["u-anon"]'],
+  );
+  selection.users.set("u-anon", "skip");
   selection.users.set("u-new", "invite:member");
+  const reviewing = state;
   state = W.transition(state, { type: "submit" });
   const importId = await A.runImport({
     scanJobId: scanId,
@@ -327,17 +356,24 @@ test("the wizard's requests round-trip through the real import routes", async (t
     (s) => s.kind === "board",
   );
   assert.ok(boards.links.every((link) => /^#\/boards\/\d+$/.test(link.href)));
-  // A plan the server refuses comes back with its paths.
-  selection.users.set("u-anon", "invite:member");
-  const refused = await A.runImport({
-    scanJobId: scanId,
-    plan: toPlan(selection, state.preview),
-  }).catch((e) => e);
-  assert.equal(refused.status, 400);
-  assert.deepEqual(
-    refused.details.map((entry) => entry.path),
-    ['plan.users["u-anon"]'],
+  // The same scan again (another tab): the wizard follows the first import.
+  const again = await A.runImport({ scanJobId: scanId, plan: {} }).catch(
+    (e) => e,
   );
+  assert.deepEqual(
+    [again.status, again.code, again.importJobId],
+    [409, "ALREADY_IMPORTED", importId],
+  );
+  const followed = W.transition(W.transition(reviewing, { type: "submit" }), {
+    type: "submit-failed",
+    error: W.requestFailure(again),
+  });
+  assert.deepEqual(
+    [followed.step, W.followedJob(followed)],
+    ["importing", importId],
+  );
+  const listed = (await A.listJobs()).find((job) => job.id === scanId);
+  assert.equal(listed.import_job_id, importId, "the list names the import");
   // An unknown scan sends the wizard back to the source step.
   const review = W.transition(W.initialState("monday"), { type: "submit" });
   const gone = await A.runImport({ scanJobId: "x".repeat(22), plan: {} }).catch(

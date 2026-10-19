@@ -3,9 +3,11 @@
  * (inline-editable for owners), kind, "View only" and "Imported from …"
  * (SPEC-4 §6, with the source link) badges, the members'
  * avatars and the Share button (both open the share dialog), the board
- * settings menu, view tabs (Main table, Kanban, one per app view, Activity,
- * Forms) and, for item views, the toolbar with "New item" and the
- * item-name search.
+ * settings menu, view tabs (the board's views in record order — List,
+ * Main table, Kanban, apps — then Activity and Forms, plus "+ View" for
+ * editors to add a missing one, SPEC-5 §3.1) and, for item views, the
+ * toolbar with "New item" (in List: "Add task" and the view's own
+ * controls) and the item-name search.
  *
  * Owner-only settings stay visible to everyone else, disabled with the
  * reason, so users can tell what the board's owners can change.
@@ -19,9 +21,10 @@ import { button } from "../components/button.js";
 import { icon } from "../components/icon.js";
 import { inlineInput } from "../components/inline-edit.js";
 import { BOARD_KINDS } from "../components/labels.js";
-import { menuButton } from "../components/menu.js";
+import { menuButton, openMenu } from "../components/menu.js";
 import { skeletonBlock, skeletonLine } from "../components/skeleton.js";
 import { importBadge } from "../import/import-badge.js";
+import { ITEM_VIEWS, missingViews, viewTabsOf } from "./board-views.js";
 
 const MAX_DESCRIPTION = 1000;
 const MAX_MEMBER_AVATARS = 4;
@@ -42,36 +45,60 @@ function viewTab({ boardId, route, view, label, iconName }) {
   );
 }
 
-function viewTabs(board, route) {
-  const appViews = board.views.filter(
-    (view) => view.type === "app" && view.app_install_id,
+/** "+ View": a menu of the item views the board lacks (editors). */
+function addViewButton({ board, caps, onAddView }) {
+  const missing = missingViews(board);
+  if (!caps.edit || missing.length === 0) return null;
+  const trigger = h(
+    "button",
+    {
+      type: "button",
+      class: "view-add",
+      "aria-haspopup": "menu",
+      "aria-expanded": "false",
+      dataset: { focusKey: "view-add" },
+      on: {
+        click: () =>
+          openMenu({
+            anchor: trigger,
+            label: "Add a view",
+            items: missing.map((type) => ({
+              label: ITEM_VIEWS[type].label,
+              icon: ITEM_VIEWS[type].icon,
+              onSelect: () => onAddView(type),
+            })),
+          }),
+      },
+    },
+    icon("plus"),
+    h("span", null, "View"),
   );
+  return trigger;
+}
+
+function viewTabs(props) {
+  const { board, route } = props;
   const tab = (view, label, iconName) =>
     viewTab({ boardId: board.id, route, view, label, iconName });
   return h(
     "nav",
     { class: "view-tabs", "aria-label": "Board views" },
-    tab({ view: "table" }, "Main table", "table"),
-    tab({ view: "kanban" }, "Kanban", "kanban"),
-    appViews.map((view) =>
-      tab(
-        { view: "app", installId: String(view.app_install_id) },
-        view.name,
-        "app",
-      ),
-    ),
+    viewTabsOf(board).map((view) => tab(view, view.label, view.icon)),
     tab({ view: "activity" }, "Activity", "activity"),
     tab({ view: "forms" }, "Forms", "forms"),
+    addViewButton(props),
   );
 }
 
-function toolbar({ caps, search, visibleCount, onNewItem, onSearch }) {
+function toolbar(props) {
+  const { caps, search, visibleCount, onNewItem, onSearch } = props;
+  const list = props.route.view === "list";
   return h(
     "div",
     { class: "toolbar", role: "toolbar", "aria-label": "Board tools" },
     caps.edit
       ? button({
-          label: "New item",
+          label: list ? "Add task" : "New item",
           icon: "plus",
           variant: "primary",
           className: "new-item",
@@ -85,14 +112,15 @@ function toolbar({ caps, search, visibleCount, onNewItem, onSearch }) {
       h("input", {
         class: "search-input",
         type: "search",
-        placeholder: "Search items",
-        "aria-label": "Search items by name",
+        placeholder: list ? "Search tasks" : "Search items",
+        "aria-label": list ? "Search tasks by name" : "Search items by name",
         autocomplete: "off",
         dataset: { focusKey: "search", live: "" },
         value: search,
         on: { input: (event) => onSearch(event.currentTarget.value) },
       }),
     ),
+    props.tools ?? null,
     h(
       "span",
       { class: "toolbar-count", "aria-live": "polite", id: "toolbar-count" },
@@ -101,14 +129,14 @@ function toolbar({ caps, search, visibleCount, onNewItem, onSearch }) {
   );
 }
 
-/** Text for the toolbar's live item count. */
-export function itemCountText(count, search) {
-  const noun = count === 1 ? "item" : "items";
-  return search.trim() ? `${count} matching ${noun}` : `${count} ${noun}`;
+/** Text for the toolbar's live count ("items", or "tasks" in List). */
+export function itemCountText(count, search, { noun = "item" } = {}) {
+  const word = count === 1 ? noun : `${noun}s`;
+  return search.trim() ? `${count} matching ${word}` : `${count} ${word}`;
 }
 
 /** Views whose content is the item list (they get the toolbar). */
-const ITEM_VIEWS = new Set(["table", "kanban", "app"]);
+const TOOLBAR_VIEWS = new Set(["list", "table", "kanban", "app"]);
 
 /** Focuses and selects the header input with `selector` (owners). */
 function focusField(container, selector) {
@@ -251,11 +279,14 @@ function workspaceLink(board) {
 /**
  * Renders the board header into `container`.
  * @param {HTMLElement} container
+ * `tools` are the current view's own toolbar controls (List).
  * @param {{ board: object, caps: object, route: object, search: string,
- *   visibleCount: string, onRename(name: string): void,
+ *   visibleCount: string, tools?: Node[] | null,
+ *   onRename(name: string): void,
  *   onDescribe(text: string): void, onKind(kind: string): void,
  *   onDelete(): void, onShare(): void, onCopyLink(): void,
- *   onNewItem(): void, onSearch(term: string): void }} props
+ *   onNewItem(): void, onSearch(term: string): void,
+ *   onAddView(type: string): void }} props
  */
 export function renderBoardHeader(container, props) {
   const { board, route } = props;
@@ -266,8 +297,8 @@ export function renderBoardHeader(container, props) {
       workspaceLink(board),
       titleRow(container, props),
       description(props),
-      viewTabs(board, route),
-      ITEM_VIEWS.has(route.view) ? toolbar(props) : null,
+      viewTabs(props),
+      TOOLBAR_VIEWS.has(route.view) ? toolbar(props) : null,
     ),
   );
 }

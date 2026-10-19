@@ -1,6 +1,8 @@
 /**
  * Board page (`#/boards/<id>` and its view and item routes): the header,
- * the table / kanban / app / activity / forms views and the item card.
+ * the list / table / kanban / app / activity / forms views and the item
+ * card. The board's own link opens its default view (SPEC-5 §3.1); an
+ * item route shows the item over the view the user came from.
  * What the user may change follows the board's `my_access`
  * (`ui/board/capabilities.js`): view-only users get read-only cells and no
  * add or delete controls, editors cannot change board settings or columns.
@@ -25,7 +27,14 @@ import {
   renderBoardHeader,
   renderPlainHeader,
 } from "../ui/board/board-header.js";
+import {
+  collapsedGroups,
+  lastView,
+  listPrefs,
+  rememberView,
+} from "../ui/board/board-memory.js";
 import { createBoardSync } from "../ui/board/board-sync.js";
+import { defaultView, itemViewKind } from "../ui/board/board-views.js";
 import { mountActivityView } from "../ui/board/activity-view.js";
 import { boardCapabilities } from "../ui/board/capabilities.js";
 import {
@@ -35,8 +44,11 @@ import {
 import { mountFormsView } from "../ui/board/forms-view.js";
 import { createItemCard } from "../ui/board/item-card.js";
 import { renderKanban } from "../ui/board/kanban-view.js";
+import { listTools } from "../ui/board/list-toolbar.js";
+import { addTaskFromToolbar, renderList } from "../ui/board/list-view.js";
 import { createRegions } from "../ui/board/regions.js";
 import { renderTable } from "../ui/board/table-view.js";
+import { createTaskView } from "../ui/board/task-view.js";
 import { BUS_EVENTS } from "../ui/shell/bus.js";
 import { rememberVisit } from "../ui/shell/recent.js";
 import { currentTheme } from "../ui/shell/theme.js";
@@ -47,16 +59,18 @@ const PLAIN_TITLES = {
   missing: "Board not available",
   error: "Something went wrong",
 };
-/** Session memory per board: the last view and the collapsed groups. */
-const lastViews = new Map();
-const collapsedByBoard = new Map();
 
 // ------------------------------------------------------------- helpers
 
+/**
+ * The view on screen: the route's, or on an item route the one the user
+ * came from; without one (the board's own link) the board's default.
+ */
 function currentViewSpec(page) {
-  const { route, boardId } = page.state;
-  if (route.view) return { view: route.view, installId: route.installId };
-  return lastViews.get(boardId) ?? { view: "table", installId: null };
+  const { route, boardId, board } = page.state;
+  const shown = route.itemId ? lastView(boardId) : route;
+  if (shown?.view) return { view: shown.view, installId: shown.installId };
+  return { view: defaultView(board), installId: null };
 }
 
 function filteredItems(page) {
@@ -67,10 +81,16 @@ function filteredItems(page) {
   return items.filter((item) => item.name.toLowerCase().includes(term));
 }
 
-function collapsedGroups(page) {
-  const { boardId } = page.state;
-  if (!collapsedByBoard.has(boardId)) collapsedByBoard.set(boardId, new Set());
-  return collapsedByBoard.get(boardId);
+/** The toolbar's live count: tasks in List, items elsewhere. */
+function countText(page) {
+  const noun = currentViewSpec(page).view === "list" ? "task" : "item";
+  return itemCountText(filteredItems(page).length, page.state.search, { noun });
+}
+
+/** Changes the List view's choices and redraws the toolbar and the list. */
+function changeListPrefs(page, mutate) {
+  mutate(listPrefs(page.state.boardId));
+  page.render(["header", "view"]);
 }
 
 /** What the user may do on the loaded board (read `ctx.me` fresh). */
@@ -79,7 +99,10 @@ const navigate = (page, hash) => page.ctx.router.navigate(hash);
 const openItem = (page, itemId) =>
   navigate(page, itemHash(page.state.boardId, itemId));
 const closeCard = (page) =>
-  navigate(page, viewHash(page.state.boardId, currentViewSpec(page)));
+  navigate(
+    page,
+    viewHash(page.state.boardId, lastView(page.state.boardId) ?? {}),
+  );
 
 // ------------------------------------------------------------ drawing
 
@@ -94,12 +117,22 @@ function drawHeader(page) {
     return;
   }
   setDocumentTitle(state.board.name);
+  const route = currentViewSpec(page);
+  const prefs = listPrefs(state.boardId);
   renderBoardHeader(dom.header, {
     board: state.board,
     caps: capsOf(page),
-    route: currentViewSpec(page),
+    route,
     search: state.search,
-    visibleCount: itemCountText(filteredItems(page).length, state.search),
+    visibleCount: countText(page),
+    tools:
+      route.view === "list"
+        ? listTools({
+            board: state.board,
+            prefs,
+            change: (mutate) => changeListPrefs(page, mutate),
+          })
+        : null,
     onRename: (name) => page.actions.renameBoard(name),
     onDescribe: (text) => page.actions.describeBoard(text),
     onKind: (kind) => page.actions.setBoardKind(kind),
@@ -108,7 +141,38 @@ function drawHeader(page) {
     onCopyLink: () => copyBoardLink(page),
     onNewItem: () => newItem(page),
     onSearch: (term) => setSearch(page, term),
+    onAddView: (type) => page.actions.addView(type),
   });
+}
+
+/** What the table and kanban views draw from. */
+function itemsContext(page) {
+  const { state } = page;
+  return {
+    board: state.board,
+    items: filteredItems(page),
+    search: state.search,
+    users: state.users,
+    collapsed: collapsedGroups(state.boardId),
+    actions: page.actions,
+    caps: capsOf(page),
+    openItem: (itemId) => openItem(page, itemId),
+    toggleGroup: (groupId) => toggleGroup(page, groupId),
+  };
+}
+
+/**
+ * The List view's context: the items context with its session choices.
+ * The list searches the board's items itself (`search`), since matching
+ * subtasks keep their parents visible.
+ */
+function listContext(page) {
+  return {
+    ...itemsContext(page),
+    prefs: listPrefs(page.state.boardId),
+    change: (mutate) => changeListPrefs(page, mutate),
+    focusAfterRender: page.focusAfterRender,
+  };
 }
 
 function drawItemsView(page, spec) {
@@ -116,18 +180,9 @@ function drawItemsView(page, spec) {
   const key = `${state.boardId}:${spec.view}`;
   const keepScroll = dom.view.dataset.viewKey === key;
   const { scrollTop, scrollLeft } = dom.view;
-  const viewCtx = {
-    board: state.board,
-    items: filteredItems(page),
-    search: state.search,
-    users: state.users,
-    collapsed: collapsedGroups(page),
-    actions: page.actions,
-    caps: capsOf(page),
-    openItem: (itemId) => openItem(page, itemId),
-    toggleGroup: (groupId) => toggleGroup(page, groupId),
-  };
+  const viewCtx = itemsContext(page);
   if (spec.view === "kanban") renderKanban(dom.view, viewCtx);
+  else if (spec.view === "list") renderList(dom.view, listContext(page));
   else renderTable(dom.view, viewCtx);
   dom.view.dataset.viewKey = key;
   dom.view.scrollTop = keepScroll ? scrollTop : 0;
@@ -158,6 +213,8 @@ function drawOwnView(page, view, key) {
 
 function drawView(page) {
   const { state, dom, slot } = page;
+  // The header and view styles follow the view (SPEC-5 §5).
+  dom.root.dataset.view = currentViewSpec(page).view;
   if (state.boardStatus !== "ready") {
     slot.unmount();
     renderBoardStatus(dom.view, {
@@ -187,13 +244,28 @@ function drawView(page) {
   drawItemsView(page, spec);
 }
 
+/**
+ * The panel of the item route (SPEC-5 §4.1): the task view when the view
+ * the user came from (or on a direct link, the board's default) is List,
+ * else the item card; null on a direct link while the board loads, as its
+ * default view is not known yet.
+ */
+function cardPanel(page) {
+  const { state } = page;
+  const last = lastView(state.boardId);
+  if (state.boardStatus === "loading" && !last?.view) return null;
+  const kind = itemViewKind({ board: state.board, lastView: last });
+  return kind === "task" ? page.taskView : page.itemCard;
+}
+
 function drawCard(page) {
-  const { state, itemCard } = page;
+  const { state } = page;
   const { card } = state;
-  if (!card) {
-    itemCard.hide();
-    return;
+  const panel = card ? cardPanel(page) : null;
+  for (const other of [page.itemCard, page.taskView]) {
+    if (other !== panel) other.hide();
   }
+  if (!panel) return;
   const item =
     state.board?.items.find((entry) => entry.id === card.itemId) ?? card.detail;
   let status = card.status;
@@ -202,9 +274,10 @@ function drawCard(page) {
   } else if (item) {
     status = "ready";
   }
-  itemCard.render({
+  panel.render({
     status,
     item,
+    itemId: card.itemId,
     detail: card.detail,
     board: state.board,
     users: state.users,
@@ -212,8 +285,9 @@ function drawCard(page) {
     caps: capsOf(page),
     draft: state.draft,
     onDraft: (text) => (state.draft = text),
+    repaint: () => page.render(["card"]),
   });
-  itemCard.show();
+  panel.show();
 }
 
 // ------------------------------------------------------------ app views
@@ -243,7 +317,7 @@ function emitContext(page) {
 // ------------------------------------------------------- routes & actions
 
 function toggleGroup(page, groupId) {
-  const groups = collapsedGroups(page);
+  const groups = collapsedGroups(page.state.boardId);
   if (!groups.delete(groupId)) groups.add(groupId);
   page.render(["view"]);
 }
@@ -272,12 +346,7 @@ function applyRoute(page, params) {
     installId: params.installId ?? null,
     itemId: params.itemId ?? null,
   };
-  if (state.route.view) {
-    lastViews.set(state.boardId, {
-      view: state.route.view,
-      installId: state.route.installId,
-    });
-  }
+  if (!state.route.itemId) rememberView(state.boardId, state.route);
   syncCard(page, state.route.itemId);
   // Opening or closing an item card leaves the header and the view as
   // they are: rebuilding a wide board's table would freeze the page.
@@ -290,8 +359,7 @@ function setSearch(page, term) {
   page.state.search = term;
   page.render(["view"]);
   const count = globalThis.document.getElementById("toolbar-count");
-  if (count)
-    count.textContent = itemCountText(filteredItems(page).length, term);
+  if (count) count.textContent = countText(page);
   page.slot.emit("filter", { term });
 }
 
@@ -299,10 +367,15 @@ async function newItem(page) {
   const { state } = page;
   if (!capsOf(page).edit) return;
   const group = state.board.groups[0];
-  if (group) collapsedGroups(page).delete(group.id);
+  if (group) collapsedGroups(state.boardId).delete(group.id);
   if (state.search) {
     state.search = "";
     page.render(["header", "view"]);
+  }
+  if (currentViewSpec(page).view === "list") {
+    // ClickUp's "+ Add task" starts typing a task in the first group.
+    addTaskFromToolbar(listContext(page));
+    return;
   }
   const id = await page.actions.createItem({
     groupId: group?.id ?? null,
@@ -367,7 +440,7 @@ function createState(ctx, boardId) {
     board: null,
     /** "loading" | "ready" | "missing" | "error" */
     boardStatus: "loading",
-    route: { view: "table", installId: null, itemId: null },
+    route: { view: null, installId: null, itemId: null },
     search: "",
     /** Open item card: `{ itemId, status, detail }` or null. */
     card: null,
@@ -387,16 +460,21 @@ function createPage(container, ctx, boardId) {
       "aria-label": "Board",
     }),
   };
-  container.append(h("div", { class: "board-page" }, dom.header, dom.view));
+  dom.root = h("div", { class: "board-page" }, dom.header, dom.view);
+  container.append(dom.root);
   const page = { ctx, dom, state: createState(ctx, boardId), cleanups: [] };
   const regions = createRegions({
     header: { element: () => dom.header, draw: () => drawHeader(page) },
     view: { element: () => dom.view, draw: () => drawView(page) },
-    card: { element: () => page.itemCard.element, draw: () => drawCard(page) },
+    card: {
+      element: () => (cardPanel(page) ?? page.itemCard).element,
+      draw: () => drawCard(page),
+    },
   });
   Object.assign(page, regions);
   page.slot = createEmbeddedSlot({ container: dom.view });
   page.itemCard = createItemCard({ onClose: () => closeCard(page) });
+  page.taskView = createTaskView({ onClose: () => closeCard(page) });
   page.appHost = {
     getContext: (view) => appContext(page, view),
     getFilter: () => ({ term: page.state.search }),
@@ -475,6 +553,7 @@ export async function mount(container, ctx, params) {
     page.sync.destroy();
     page.slot.unmount();
     page.itemCard.hide();
+    page.taskView.hide();
     for (const cleanup of page.cleanups) cleanup();
   };
 }

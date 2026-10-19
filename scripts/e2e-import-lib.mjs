@@ -108,26 +108,27 @@ async function sidebarSettled(page, mobile) {
 }
 
 /**
- * Screenshots of the page from its top: `import-<name>.png` (light, desktop),
- * `-dark.png` and `-360.png` (light, 360 px wide, which must not scroll
- * sideways). The page is back at desktop size in light mode afterwards.
+ * Screenshots of the page from its top: `<prefix><name>.png` (light,
+ * desktop), `-dark.png` and `-360.png` (light, 360 px wide, which must not
+ * scroll sideways); `prefix` is "import-" unless given. The page is back
+ * at desktop size in light mode afterwards.
  */
-export async function shots(run, page, name) {
+export async function shots(run, page, name, { prefix = "import-" } = {}) {
   // Each picture starts at the top of the page, with the step's heading.
   const toTop = () =>
     page.evaluate(() => document.getElementById("page").scrollTo(0, 0));
   await toTop();
-  await screenshot(run, page, `import-${name}.png`);
+  await screenshot(run, page, `${prefix}${name}.png`);
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForTimeout(100);
-  await screenshot(run, page, `import-${name}-dark.png`);
+  await screenshot(run, page, `${prefix}${name}-dark.png`);
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize(MOBILE);
   await sidebarSettled(page, true);
   await toTop();
   const overflow = await sidewaysOverflow(page);
   check(overflow <= 0, `${name} at 360 px scrolls sideways by ${overflow}px`);
-  await screenshot(run, page, `import-${name}-360.png`);
+  await screenshot(run, page, `${prefix}${name}-360.png`);
   await page.setViewportSize(DESKTOP);
   await sidebarSettled(page, false);
 }

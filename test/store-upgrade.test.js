@@ -1,12 +1,21 @@
 /**
- * Upgrading `mini-monday-store/2` data files (server/store/legacy-texts.js
- * via persistence.js): version 2 wrote people's names into notification
- * and activity texts, so loading one must turn those names into mentions
- * (rendered per viewer, SPEC-2 §6), keep a private copy of the old file
- * and save the result in the current format, which older versions refuse.
+ * Upgrading older data files (persistence.js): version 2 wrote people's
+ * names into notification and activity texts (server/store/legacy-texts.js),
+ * so loading one must turn those names into mentions (rendered per viewer,
+ * SPEC-2 §6); version 3 files have no subitems, column roles or update
+ * authors and load unchanged (SPEC-5 §1.1). Either way the store keeps a
+ * private copy of the old file named after its version and saves the
+ * result in the current format, which older versions refuse.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -110,10 +119,12 @@ test("a version-2 file is converted, copied and saved in the current format", as
   await store.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
   assert.equal(saved.format, FORMAT);
-  assert.equal(FORMAT, "mini-monday-store/3");
+  assert.equal(FORMAT, "mini-monday-store/4");
   const copy = `${file}.v2.bak`;
   assert.deepEqual(JSON.parse(await readFile(copy, "utf8")), doc);
   assert.equal((await stat(copy)).mode & 0o777, 0o600, "the copy is private");
+  // /2 upgrades through the /3 path; only the original version is kept.
+  await assert.rejects(access(`${file}.v3.bak`), { code: "ENOENT" });
   // Names became mentions; the label of a user actor is not kept.
   assert.deepEqual(assignOf(store, users.chris).text, [
     { user_id: users.noa },
@@ -143,6 +154,45 @@ test("a version-2 file is converted, copied and saved in the current format", as
     assignOf(again, users.chris).text,
     assignOf(store, users.chris).text,
   );
+});
+
+test("a version-3 file loads unchanged and is saved as version 4", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "mini-monday-upgrade-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "data.json");
+  const first = await createStore({ file, log: quietLog });
+  const ids = seedIds(first);
+  await first.flush();
+  const current = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(current.format, FORMAT);
+  const doc = { ...current, format: "mini-monday-store/3" };
+  await save(file, doc);
+  const store = await createStore({ file, log: quietLog });
+  await store.flush();
+  const copy = `${file}.v3.bak`;
+  assert.deepEqual(JSON.parse(await readFile(copy, "utf8")), doc);
+  assert.equal((await stat(copy)).mode & 0o777, 0o600, "the copy is private");
+  const saved = JSON.parse(await readFile(file, "utf8"));
+  // Loading sorts groups by position; nothing else changes.
+  const byKey = (a, b) =>
+    `${a.board_id}/${a.id}`.localeCompare(`${b.board_id}/${b.id}`);
+  const normal = (data) => ({ ...data, groups: data.groups.toSorted(byKey) });
+  assert.deepEqual(normal(saved), normal(current));
+  assert.ok(saved.items.every((item) => !("parent_id" in item)));
+  const board = ids.boards.roadmap;
+  assert.deepEqual(
+    store.listItems({ boardId: board, limit: 100 }),
+    first.listItems({ boardId: board, limit: 100 }),
+  );
+  // Formats this version does not know (older servers refusing /4 is the
+  // same rule) are refused, and the file is left as it was.
+  const newer = JSON.stringify({ ...current, format: "mini-monday-store/5" });
+  await writeFile(file, newer);
+  await assert.rejects(
+    createStore({ file, log: quietLog }),
+    /unsupported format \(expected mini-monday-store\/4;/,
+  );
+  assert.equal(await readFile(file, "utf8"), newer);
 });
 
 test("after the upgrade a guest reads Someone for people outside their directory", async (t) => {

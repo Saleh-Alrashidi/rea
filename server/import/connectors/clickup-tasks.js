@@ -25,6 +25,7 @@ import {
   addStatuses,
   fieldPlan,
   readValues,
+  statusType,
 } from "./clickup-fields.js";
 import {
   countValues,
@@ -88,7 +89,6 @@ export function createBoard(ctx, entry, path) {
     statusPlan: null,
     pointsPlan: undefined,
     fields: new Map(),
-    statusTypes: new Map(),
     seen: new Set(),
   };
   addStandardColumns(state);
@@ -107,8 +107,8 @@ export function addFields(state, json) {
 
 function groupOf(state, raw) {
   const status = isObject(raw.status) ? raw.status : {};
-  const label = str(status.status).trim().toLowerCase();
-  const type = status.type ?? state.statusTypes.get(label);
+  const label = str(status.status).trim();
+  const type = status.type ?? statusType(state.statusPlan, label);
   return CLOSED_TYPES.has(type) ? "closed" : "open";
 }
 

@@ -11,7 +11,10 @@
  *   progress messages, error messages). Validation runs in time slices
  *   and stops when the job is cancelled.
  * - An import job runs a plan over a finished scan's snapshot
- *   (`engine.run`).
+ *   (`engine.run`). A scan is imported at most once (SPEC-5 §2.5): the
+ *   scan job keeps the ID of the import it started (`import_job_id` in
+ *   its views), and starting another one is refused with that ID, however
+ *   the first one ended. Importing the same source again takes a new scan.
  *
  * Bounds: one running job per admin and MAX_RUNNING per server; a finished
  * job (with its snapshot) is discarded JOB_TTL_MS after it ended, and each
@@ -87,9 +90,12 @@ function readProgress(raw, secret) {
   };
 }
 
-/** The job as its creator lists it (no preview, report or error). */
+/**
+ * The job as its creator lists it (no preview, report or error); a scan
+ * names the import it started (`import_job_id`, else null).
+ */
 function summaryOf(job) {
-  return {
+  const summary = {
     id: job.id,
     kind: job.kind,
     source: job.source,
@@ -103,6 +109,8 @@ function summaryOf(job) {
         ? null
         : new Date(job.finishedAt + JOB_TTL_MS).toISOString(),
   };
+  if (job.kind === "scan") summary.import_job_id = job.importJobId ?? null;
+  return summary;
 }
 
 /** The job as its creator reads it. */
@@ -328,14 +336,20 @@ export function createImportJobs({
       return { ok: true, job: viewOf(job) };
     },
     /**
-     * Starts importing finished scan `scanJobId` of `userId` with `plan`.
-     * → `{ ok: true, job }` or `{ ok: false, reason: "unknown_scan" |
-     * "invalid_plan" | "busy_user" | "busy_server", errors? }`.
+     * Starts importing finished scan `scanJobId` of `userId` with `plan`,
+     * once per scan (see the module comment). → `{ ok: true, job }` or `{
+     * ok: false, reason: "unknown_scan" | "already_imported" |
+     * "invalid_plan" | "busy_user" | "busy_server", importJobId?, errors?
+     * }`. The once-only check and the claim run in the same turn, before
+     * the plan and busy checks.
      */
     startImport({ userId, scanJobId, plan }) {
       const scanJob = own(scanJobId, userId);
       if (scanJob?.kind !== "scan" || scanJob.state !== "done")
         return { ok: false, reason: "unknown_scan" };
+      const { importJobId } = scanJob;
+      if (importJobId)
+        return { ok: false, reason: "already_imported", importJobId };
       const { snapshot } = scanJob;
       const checked = checkPlan(snapshot, plan, { store, importerId: userId });
       if (!checked.ok)
@@ -343,6 +357,7 @@ export function createImportJobs({
       const reason = table.busy(userId);
       if (reason) return { ok: false, reason };
       const job = table.add("import", { userId, source: scanJob.source });
+      scanJob.importJobId = job.id;
       void runImport(env, job, { snapshot, plan });
       return { ok: true, job: viewOf(job) };
     },

@@ -1,0 +1,172 @@
+/* List view cells (SPEC-5 §3.4): avatar stacks, short dates (red when
+   overdue), priority flags, rounded status pills, one-line text and
+   right-aligned numbers. Empty cells stay blank until the row is hovered
+   or focused, then show a faint icon to add a value. */
+
+.list-faint {
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.list-row:hover .list-faint,
+.list-row:focus-within .list-faint {
+  opacity: 1;
+}
+
+/* People: the shared picker button, sized for 36px rows. */
+.list-row .people-button {
+  width: auto;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+}
+
+.list-row .people-empty {
+  border-color: var(--color-border-strong);
+  opacity: 0;
+}
+
+.list-row:hover .people-empty,
+.list-row .people-button:focus-visible .people-empty {
+  opacity: 1;
+}
+
+/* Dates, priority and other labels: quiet buttons for editors. */
+.list-date,
+.list-priority,
+.list-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+  white-space: nowrap;
+}
+
+button.list-date,
+button.list-priority,
+button.list-text {
+  cursor: pointer;
+}
+
+button.list-date:hover,
+button.list-priority:hover,
+button.list-text:hover {
+  background: var(--color-hover);
+}
+
+.list-date.overdue {
+  color: var(--color-danger);
+  font-weight: var(--weight-medium);
+}
+
+.list-priority {
+  color: var(--color-text);
+}
+
+.list-flag {
+  flex: none;
+  color: var(--flag-color, var(--cu-priority-normal));
+}
+
+.list-flag path {
+  fill: currentColor;
+}
+
+.list-priority-label,
+.list-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-text {
+  display: block;
+  line-height: 26px;
+  unicode-bidi: plaintext;
+}
+
+.list-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: var(--pill-color, transparent);
+  color: var(--pill-text, var(--color-text-muted));
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.list-pill {
+  cursor: pointer;
+}
+
+button.list-pill:hover {
+  filter: brightness(0.95);
+}
+
+button.list-pill.empty {
+  min-width: 48px;
+}
+
+button.list-pill.empty:hover {
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+  filter: none;
+}
+
+.list-text-input,
+.list-number-input {
+  width: 100%;
+  height: 28px;
+  font-size: var(--text-sm);
+}
+
+.list-text-input {
+  unicode-bidi: plaintext;
+}
+
+.list-number-input,
+.list-number {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.list-number {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* The date popover. */
+.list-date-form {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.list-date-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (hover: none) {
+  .list-faint,
+  .list-row .people-empty {
+    opacity: 0.7;
+  }
+}

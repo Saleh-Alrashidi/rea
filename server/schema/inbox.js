@@ -69,7 +69,7 @@ export const definition = {
       actor:User created_at:String!`,
     ActivityLog: `id:ID! kind:String! actor:User actor_label:String item_id:ID
       item_name:String column_id:String from_text:String to_text:String
-      created_at:String!`,
+      subitems_deleted:Int created_at:String!`,
     Mutation: "mark_notifications_read(ids:[ID!],all:Boolean=false):Int!",
   },
   resolvers: {
@@ -89,5 +89,8 @@ export const definition = {
   },
   extras: {
     "Query.notifications": { description: "Your inbox, newest first." },
+    "ActivityLog.subitems_deleted": {
+      description: "For item_deleted: how many subitems went with the item.",
+    },
   },
 };

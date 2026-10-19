@@ -86,27 +86,40 @@ export function textColorOn(color) {
   return onWhite >= onDark ? LIGHT_TEXT : DARK_TEXT;
 }
 
+/** Status label types (SPEC-5 §1.3); `done` and `closed` finish work. */
+const LABEL_TYPES = new Set(["open", "custom", "done", "closed"]);
+const DONE_TYPES = new Set(["done", "closed"]);
+
+const objectAt = (settings, key) =>
+  isPlainObject(settings?.[key]) ? settings[key] : {};
+
 /**
  * Parses a status column's `settings_str` into ordered label options.
- * Labels with empty text are "blank" options (index 5 by default).
- * @returns {{ options: { index: number, label: string, color: string }[],
+ * Labels with empty text are "blank" options (index 5 by default). An
+ * option has a `type` when `labels_types` gives a known one for its index.
+ * @returns {{ options: { index: number, label: string, color: string,
+ *   type?: "open" | "custom" | "done" | "closed" }[],
  *   blank: { index: number, color: string } | null }}
  */
 export function parseStatusSettings(settingsStr) {
   const settings = parseJson(settingsStr);
-  const labels = isPlainObject(settings?.labels) ? settings.labels : {};
-  const colors = isPlainObject(settings?.labels_colors)
-    ? settings.labels_colors
-    : {};
+  const labels = objectAt(settings, "labels");
+  const colors = objectAt(settings, "labels_colors");
+  const types = objectAt(settings, "labels_types");
   const entries = Object.entries(labels)
     .filter(
       ([key, label]) => /^\d{1,4}$/.test(key) && typeof label === "string",
     )
-    .map(([key, label]) => ({
-      index: Number(key),
-      label,
-      color: safeColor(colors[key]),
-    }))
+    .map(([key, label]) => {
+      const entry = {
+        index: Number(key),
+        label,
+        color: safeColor(colors[key]),
+      };
+      return LABEL_TYPES.has(types[key])
+        ? { ...entry, type: types[key] }
+        : entry;
+    })
     .sort((a, b) => a.index - b.index);
   const blank = entries.find((entry) => entry.label === "") ?? null;
   return {
@@ -182,18 +195,24 @@ export function decodeItem(raw, columns) {
     values[column.id] = decodeValue(column, cell.value);
     texts[column.id] = typeof cell.text === "string" ? cell.text : null;
   }
+  const parent = raw.parent_item_id;
   return {
     id: String(raw.id),
     name: String(raw.name ?? ""),
     groupId: raw.group?.id ?? null,
     createdAt: raw.created_at ?? null,
+    // SPEC-5 §1.6: null at the top level (and when not selected).
+    parentId: parent === null || parent === undefined ? null : String(parent),
+    updatesCount: Number.isSafeInteger(raw.updates_count)
+      ? raw.updates_count
+      : 0,
     values,
     texts,
   };
 }
 
 /** Returns true when a UI value is empty for its column type. */
-function isEmptyValue(value) {
+export function isEmptyValue(value) {
   return (
     value === null ||
     value === undefined ||
@@ -235,14 +254,24 @@ export const encodeValue = (column, value) =>
   JSON.stringify(valuePayload(column, value));
 
 /**
- * Whether status `index` of `column` marks work as finished: its label is
- * "Done" (the default label at index 1, SPEC.md "Status settings"), in any
- * case. The API has no completion flag, so this is the one place the UI
- * decides it (My work and Home keep finished items out of Overdue).
+ * Whether a status option marks work as finished: its `done` or `closed`
+ * type (SPEC-5 §1.3) when it has one, else a label reading "Done" (the
+ * default label at index 1, SPEC.md "Status settings"), in any case.
+ */
+export function isDoneOption(option) {
+  if (!option) return false;
+  if (option.type) return DONE_TYPES.has(option.type);
+  return option.label.trim().toLowerCase() === "done";
+}
+
+/**
+ * Whether status `index` of `column` marks work as finished
+ * (`isDoneOption`). The API has no completion flag, so this is the one
+ * place the UI decides it (My work and Home keep finished items out of
+ * Overdue; the List view sorts finished labels last).
  */
 export function isDoneStatus(column, index) {
-  const label = statusOption(column, index)?.label ?? "";
-  return label.trim().toLowerCase() === "done";
+  return isDoneOption(statusOption(column, index));
 }
 
 /** Returns the status option for `index`, the blank option, or null. */

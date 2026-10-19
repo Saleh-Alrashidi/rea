@@ -1,10 +1,11 @@
 /**
  * Columns and values of the ClickUp connector (SPEC-4 §3.2). Every board
  * has the standard columns Status (the list's statuses in order, with
- * their colors), Assignees, Due date and Start date (UTC days of epoch
- * ms), Priority (Urgent/High/Normal/Low), Time estimate (h), Tags (comma
- * joined) and Description (`text_content`), then one column per custom
- * field, and "Sprint points" once a task has points.
+ * their colors and status types), Assignees, Due date and Start date (UTC
+ * days of epoch ms), Priority (Urgent/High/Normal/Low), Time estimate
+ * (h), Tags (comma joined) and Description (`text_content`), each with
+ * the column role of its ClickUp field (SPEC-5 §1.2), then one column per
+ * custom field, and "Sprint points" once a task has points.
  *
  * Custom fields: drop_down → status (options in `orderindex` order with
  * their colors); labels → comma-joined text (warned); number, currency
@@ -64,24 +65,36 @@ const TEXT_KEYS = Object.freeze([
 
 const orUndefined = (text) => (text.trim() === "" ? undefined : text);
 
-/** Adds `label` (once, case-insensitively) to a status plan; → the label. */
-function addLabel(plan, label, color) {
+/**
+ * Adds `label` (once, case-insensitively: the first casing, color and
+ * type win) to a status plan; → the label. `type` is a ClickUp status
+ * type, for the Status column only.
+ */
+function addLabel(plan, { label, color, type }) {
   const key = label.toLowerCase();
   const known = plan.known.get(key);
-  if (known !== undefined) return known;
+  if (known !== undefined) return known.label;
   // Past the limit the snapshot adds used labels itself (in its color).
   if (plan.column.labels.length >= COLUMN_LIMITS.labels) return label;
-  plan.column.labels.push({ label, color: hexColor(color, LABEL_COLOR) });
-  plan.known.set(key, label);
+  const entry = { label, color: hexColor(color, LABEL_COLOR) };
+  const kind = str(type).trim().toLowerCase();
+  if (kind !== "") entry.type = kind;
+  plan.column.labels.push(entry);
+  plan.known.set(key, entry);
   return label;
 }
+
+/** The ClickUp type of a label of the Status column, if known. */
+export const statusType = (plan, label) =>
+  plan.known.get(label.toLowerCase())?.type;
 
 // ---------------------------------------------------------- task fields
 
 function readStatus(plan, task) {
   const status = isObject(task.status) ? task.status : {};
   const label = str(status.status).trim();
-  return label === "" ? undefined : addLabel(plan, label, status.color);
+  if (label === "") return undefined;
+  return addLabel(plan, { label, color: status.color, type: status.type });
 }
 
 function readAssignees(plan, task) {
@@ -323,15 +336,19 @@ function standardPlan(state, [id, title, type, read, original = id]) {
   return addPlan(state, column, read);
 }
 
-/** Adds the standard columns (Priority with its four labels) to a board. */
+/**
+ * Adds the standard columns (Priority with its four labels) to a board;
+ * each has the role its ID names (`STANDARD` IDs are column roles).
+ */
 export function addStandardColumns(state) {
   for (const spec of STANDARD) {
     const plan = standardPlan(state, spec);
+    plan.column.role = spec[0];
     state.standard.push(plan);
     if (spec[0] === "status") state.statusPlan = plan;
     if (spec[0] !== "priority") continue;
     for (const { label, color } of Object.values(PRIORITIES)) {
-      addLabel(plan, label, color);
+      addLabel(plan, { label, color });
     }
   }
 }
@@ -344,9 +361,8 @@ export function addStatuses(state, statuses) {
   for (const { status } of ordered) {
     const label = str(status.status).trim();
     if (label === "") continue;
-    addLabel(state.statusPlan, label, status.color);
-    const key = label.toLowerCase();
-    if (!state.statusTypes.has(key)) state.statusTypes.set(key, status.type);
+    const { color, type } = status;
+    addLabel(state.statusPlan, { label, color, type });
   }
 }
 
@@ -374,7 +390,7 @@ export function fieldPlan(state, raw) {
   plan.options = optionsOf(plan.config);
   if (type === "status") {
     for (const option of plan.options.list) {
-      addLabel(plan, option.name, option.color);
+      addLabel(plan, { label: option.name, color: option.color });
     }
   }
   fieldWarnings(plan);

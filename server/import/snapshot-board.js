@@ -3,13 +3,22 @@
  * items with their values (`snapshot-columns.js`), subitem parents and
  * updates. Used by `validateSnapshot`; see `snapshot.js` for what errors
  * and warnings mean. Item and parent references that cannot be resolved
- * are cleared with a warning, and parent cycles are broken. `readBoard`
- * is a generator that yields every ITEMS_PER_STEP items (`slices.js`).
+ * are cleared with a warning, parent cycles are broken, and an item
+ * nested deeper than Worklane's MAX_SUBITEM_DEPTH becomes a subitem of
+ * its deepest ancestor that is allowed to have one (`subitems_flattened`).
+ * `readBoard` is a generator that yields every ITEMS_PER_STEP items
+ * (`slices.js`).
  */
 import { ACCESS_ROLES, ROLE_RANK } from "../access.js";
 import { LIMITS } from "../input.js";
 import { BOARD_KINDS, GROUP_COLOR, deepFreeze } from "../store-state.js";
-import { capLabels, readColumns, readValues } from "./snapshot-columns.js";
+import { MAX_SUBITEM_DEPTH } from "../store/subitems.js";
+import {
+  capLabels,
+  checkRoles,
+  readColumns,
+  readValues,
+} from "./snapshot-columns.js";
 import {
   readArray,
   readChoice,
@@ -180,6 +189,41 @@ function resolveParents(c, items, scope) {
   }
 }
 
+/**
+ * Re-parents every item nested deeper than MAX_SUBITEM_DEPTH to its
+ * ancestor at depth MAX_SUBITEM_DEPTH - 1 (top-level items have depth 0);
+ * runs after `resolveParents`, so every item descends from a top-level one.
+ */
+function capDepth(c, items, scope) {
+  const children = Map.groupBy(
+    items.filter((item) => item.parent_source_id !== null),
+    (item) => item.parent_source_id,
+  );
+  const stack = items
+    .filter((item) => item.parent_source_id === null)
+    .map((item) => ({ item, ancestors: [] }));
+  while (stack.length > 0) {
+    const entry = stack.pop();
+    const { item } = entry;
+    let { ancestors } = entry;
+    if (ancestors.length > MAX_SUBITEM_DEPTH) {
+      ancestors = ancestors.slice(0, MAX_SUBITEM_DEPTH);
+      const parent = ancestors.at(-1);
+      item.parent_source_id = parent.source_id;
+      const message = `${shown(item.name)} was nested more than ${MAX_SUBITEM_DEPTH} levels deep; it became a subitem of ${shown(parent.name)}`;
+      c.repeat(
+        scope,
+        "subitems_flattened",
+        `${item.path}.parent_source_id`,
+        message,
+      );
+    }
+    const next = [...ancestors, item];
+    for (const child of children.get(item.source_id) ?? [])
+      stack.push({ item: child, ancestors: next });
+  }
+}
+
 // ------------------------------------------------------------------ boards
 
 function readGroups(c, raw, { path, scope }) {
@@ -285,10 +329,12 @@ function* readItems(c, raw, ctx) {
   return items.includes(null) ? null : items;
 }
 
-const publicColumn = ({ source_id, title, type, original_type, labels }) =>
-  type === "status"
-    ? { source_id, title, type, original_type, labels }
-    : { source_id, title, type, original_type };
+function publicColumn({ source_id, title, type, original_type, ...rest }) {
+  const column = { source_id, title, type, original_type };
+  if (rest.role !== undefined) column.role = rest.role;
+  if (type === "status") column.labels = rest.labels;
+  return column;
+}
 
 const publicItem = ({ path: _path, ...item }) => item;
 
@@ -349,7 +395,9 @@ export function* readBoard(c, raw, { path, users, totals }) {
   const parts = [items, groups, members].includes(null) || !columns.ok;
   if (parts || broken) return null;
   resolveParents(c, items, scope);
+  capDepth(c, items, scope);
   capLabels(c, columns.columns);
+  checkRoles(c, columns.columns);
   c.flush(scope);
   return {
     ...head,

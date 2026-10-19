@@ -18,6 +18,8 @@
  * - `POST /import/jobs/<id>/cancel` → the job, cancelled or stopping.
  * - `POST /import/run`: JSON `{ scan_job_id, plan }` → 202 `{ job_id }`;
  *   an invalid plan is 400 with `extensions.errors` (`{ path, message }`).
+ *   A scan is imported once: running it again is 409 with `extensions`
+ *   `{ code: "ALREADY_IMPORTED", import_job_id }` (that import's job).
  *
  * At most one running job per admin and two per server (429 with
  * Retry-After). The source token is read from the scan body, handed to the
@@ -216,6 +218,11 @@ function started(res, result) {
   if (result.reason === "invalid_plan")
     fail(400, "The import plan is not valid", {
       details: { errors: result.errors },
+    });
+  if (result.reason === "already_imported")
+    fail(409, "This scan was already imported", {
+      code: "ALREADY_IMPORTED",
+      details: { import_job_id: result.importJobId },
     });
   fail(404, "Unknown or expired scan job");
 }

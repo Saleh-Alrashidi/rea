@@ -513,7 +513,8 @@ test("an imported export keeps statuses, people, dates and subitems", async () =
   );
   assert.equal(launch.values[columns.get("Due").id], "2026-03-05");
   const copy = items.find((i) => i.name === "Copy");
-  assert.equal(copy.values[columns.get("Parent item").id], "Launch site");
+  assert.equal(copy.parent_id, launch.id, "a real subitem of its parent");
+  assert.equal(columns.has("Parent item"), false);
   assert.equal(copy.values[columns.get("Notes").id], "=1+1");
   assert.deepEqual(
     store.listGroups(board.id).map((g) => g.title),

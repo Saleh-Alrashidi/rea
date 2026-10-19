@@ -1,6 +1,7 @@
 /**
- * Kanban view: one lane per status label of the board's first status column
- * (plus "No status"). Cards move between lanes with HTML5 drag and drop or,
+ * Kanban view: one lane per status label of the board's status column
+ * (`column-roles.js`: the `status` role, else the first status column),
+ * plus "No status". Cards move between lanes with HTML5 drag and drop or,
  * from the keyboard, with each card's status pill. View-only users see the
  * same lanes without dragging, status pickers or "+ Add item".
  */
@@ -10,36 +11,15 @@ import { emptyState } from "../components/empty-state.js";
 import { formatDay } from "../components/format.js";
 import { icon } from "../components/icon.js";
 import { peopleStack, statusLabel, statusPill } from "./cells.js";
+import { roleColumns } from "./column-roles.js";
+import { laneKey, lanesFor } from "./status-lanes.js";
 import { statusOption, textColorOn } from "./values.js";
 
 const DRAG_TYPE = "application/x-mini-monday-item";
 const ID_PATTERN = /^\d{1,20}$/;
-const BLANK_LANE = "blank";
-
-function laneKey(column, value) {
-  const known = column.status.options.some((option) => option.index === value);
-  return known ? String(value) : BLANK_LANE;
-}
-
-function lanesFor(column) {
-  const lanes = column.status.options.map((option) => ({
-    key: String(option.index),
-    index: option.index,
-    label: option.label,
-    color: option.color,
-  }));
-  lanes.push({
-    key: BLANK_LANE,
-    index: null,
-    label: "No status",
-    color: column.status.blank?.color ?? "#c4c4c4",
-  });
-  return lanes;
-}
 
 function cardMeta(ctx, item) {
-  const people = ctx.board.columns.find((column) => column.type === "people");
-  const date = ctx.board.columns.find((column) => column.type === "date");
+  const { assignees: people, due_date: date } = roleColumns(ctx.board.columns);
   const group = ctx.board.groups.find((entry) => entry.id === item.groupId);
   const ids = people ? (item.values[people.id] ?? []) : [];
   const due = date ? item.values[date.id] : null;
@@ -227,7 +207,7 @@ function laneElement(ctx, { lane, column, items }) {
  *   caps: object, openItem(id: string): void }} ctx
  */
 export function renderKanban(container, ctx) {
-  const column = ctx.board.columns.find((entry) => entry.type === "status");
+  const column = roleColumns(ctx.board.columns).status;
   if (!column) {
     clear(container).append(
       emptyState({

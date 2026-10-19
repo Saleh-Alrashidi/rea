@@ -228,7 +228,7 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
   const made = touchEverything(first);
   await first.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(saved.format, "mini-monday-store/3", "SPEC-2 data format");
+  assert.equal(saved.format, "mini-monday-store/4", "SPEC-5 data format");
   assert.equal(
     "settings_str" in saved.columns[0],
     false,

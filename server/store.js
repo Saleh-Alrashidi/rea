@@ -8,7 +8,8 @@
  * event `{ type, board_id?, item_id?, group_id?, column_id?, user_ids?,
  * resource_kind?, resource_id? }`, followed by one `notification_created`
  * event per notified user (and, for `deleteTeam`, one `members_changed`
- * event per resource that lost the team's grant), and returns the new or
+ * event per resource that lost the team's grant; for `deleteItem`, one
+ * `item_deleted` event per subitem deleted with it), and returns the new or
  * updated record (`importBoard` writes a whole board as one change with
  * one `board_imported` event, SPEC-4 §4). Unknown IDs return null and
  * emit nothing. Expected failures return
@@ -57,11 +58,27 @@ const DOMAINS = [
 ];
 
 /**
+ * Opens the data file `file` (null or ":memory:": none): removes stale
+ * temp files, loads it when it exists and keeps a copy of an older
+ * version's file before it is saved in the current format.
+ */
+async function openData(file) {
+  if (file === null || file === ":memory:") return { target: null };
+  const target = path.resolve(file);
+  await removeStaleTemps(target);
+  const loaded = await loadState(target);
+  const from = loaded?.upgradedFrom ?? null;
+  if (from !== null) await keepLegacyCopy(target, from);
+  return { target, loaded, upgraded: from !== null };
+}
+
+/**
  * Creates the store. Removes temp files that interrupted saves of `file`
  * left, then loads `file` when it exists (an invalid file is an error and
- * is never overwritten; a version-2 file is upgraded, copied to
- * `<file>.v2.bak` and saved in the current format); otherwise seeds when
- * `seed` is true and saves the result. `file: null` (or `":memory:"`) keeps data in memory.
+ * is never overwritten; an older version's file is upgraded, copied to
+ * `<file>.v<version>.bak` and saved in the current format); otherwise
+ * seeds when `seed` is true and saves the result. `file: null` (or
+ * `":memory:"`) keeps data in memory.
  * Writes are debounced (50 ms) and atomic; `flush()` awaits them. `now`
  * returns a Date; `log.error` receives background save and listener errors.
  * `maxDataBytes` (default and at most MAX_DATA_BYTES) bounds what imports
@@ -74,11 +91,7 @@ export async function createStore({
   log = console,
   maxDataBytes = MAX_DATA_BYTES,
 } = {}) {
-  const memory = file === null || file === ":memory:";
-  const target = memory ? null : path.resolve(file);
-  if (target) await removeStaleTemps(target);
-  const loaded = target ? await loadState(target) : null;
-  if (loaded?.upgraded) await keepLegacyCopy(target);
+  const { target, loaded = null, upgraded = false } = await openData(file);
   const state = loaded?.state ?? emptyState();
   const listeners = new Set();
   const ctx = {
@@ -95,7 +108,7 @@ export async function createStore({
   const bytes = loaded ? loaded.bytes : 0;
   ctx.persist = createPersistence({ file: target, state, log, bytes });
   // New and upgraded state is saved right away (in the current format).
-  if (!loaded || loaded.upgraded) ctx.persist.schedule();
+  if (!loaded || upgraded) ctx.persist.schedule();
   const on = (listener) => {
     if (typeof listener !== "function") {
       throw new TypeError("listener must be a function");

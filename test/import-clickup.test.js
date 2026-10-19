@@ -148,29 +148,40 @@ test("standard columns: status, people, dates, priority, estimate, tags, descrip
   assert.deepEqual(
     sprint.columns
       .slice(0, 8)
-      .map((c) => [c.source_id, c.title, c.type, c.original_type]),
+      .map((c) => [c.source_id, c.title, c.type, c.original_type, c.role]),
     [
-      ["status", "Status", "status", "status"],
-      ["assignees", "Assignees", "people", "assignees"],
-      ["due_date", "Due date", "date", "due_date"],
-      ["start_date", "Start date", "date", "start_date"],
-      ["priority", "Priority", "status", "priority"],
-      ["time_estimate", "Time estimate (h)", "numbers", "time_estimate"],
-      ["tags", "Tags", "text", "tags"],
-      ["description", "Description", "text", "text_content"],
+      ["status", "Status", "status", "status", "status"],
+      ["assignees", "Assignees", "people", "assignees", "assignees"],
+      ["due_date", "Due date", "date", "due_date", "due_date"],
+      ["start_date", "Start date", "date", "start_date", "start_date"],
+      ["priority", "Priority", "status", "priority", "priority"],
+      [
+        "time_estimate",
+        "Time estimate (h)",
+        "numbers",
+        "time_estimate",
+        "time_estimate",
+      ],
+      ["tags", "Tags", "text", "tags", "tags"],
+      ["description", "Description", "text", "text_content", "description"],
     ],
+    "the standard columns carry their roles",
+  );
+  assert.ok(
+    sprint.columns.slice(8).every((c) => c.role === undefined),
+    "custom fields have no role",
   );
   assert.deepEqual(
     sprint.columns[0].labels,
     [
-      { label: "to do", color: "#d3d3d3" },
-      { label: "in progress", color: "#4194f6" },
-      { label: "review", color: "#a875ff" },
-      { label: "complete", color: "#6bc950" },
-      { label: "closed", color: "#008844" },
-      { label: "blocked", color: "#ff0000" },
+      { label: "to do", color: "#d3d3d3", type: "open" },
+      { label: "in progress", color: "#4194f6", type: "custom" },
+      { label: "review", color: "#a875ff", type: "custom" },
+      { label: "complete", color: "#6bc950", type: "done" },
+      { label: "closed", color: "#008844", type: "closed" },
+      { label: "blocked", color: "#ff0000", type: "custom" },
     ],
-    "the list's statuses by orderindex, then one only a task uses",
+    "the list's statuses by orderindex with their types, then one only a task uses",
   );
   assert.deepEqual(sprint.columns[4].labels, [
     { label: "Urgent", color: "#df2f4a" },

@@ -10,8 +10,10 @@
  * review (tree, people, warnings) with one person invited, the import
  * with its progress and done step (counts, links, the warnings as a .txt
  * download), the imported board with its badge, items, statuses, people
- * and updates, then a ClickUp import, a CSV file and a monday Excel
- * export built by `test/fixtures/import/make-xlsx.js`.
+ * and updates, then a ClickUp import (its board opens in the List view,
+ * and running its scan again is refused with 409, SPEC-5 §2.5), a CSV
+ * file and a monday Excel export built by
+ * `test/fixtures/import/make-xlsx.js` (its subitems are real subitems).
  *
  * Every wizard step is photographed light, dark and 360 px wide
  * (`e2e-output/import-<n>-<step>[-dark|-360].png`). The source tokens
@@ -60,6 +62,11 @@ const IMPORTED = `{
   boards(limit: 500) { id name import { source source_id } }
   users { name email role }
   notifications(limit: 50) { kind text }
+}`;
+const PARENTS = `query ($ids: [ID!]) {
+  boards(ids: $ids, limit: 1) {
+    items_page(limit: 100) { items { name parent_item { name } } }
+  }
 }`;
 const CSV_TEXT = [
   "Name,Status,Owner,Due,Estimate,Group",
@@ -300,20 +307,27 @@ async function clickupImport(run) {
   await page.locator(".import-limits summary").click();
   await page.locator("#import-limit-updates").fill("40");
   const before = upstreams.clickup.requests.length;
-  run.jobIds.push(await scanWithToken(page, upstreams.clickup.token));
+  const scanId = await scanWithToken(page, upstreams.clickup.token);
+  run.jobIds.push(scanId);
   await waitStep(page, "Review what to import");
   const requests = upstreams.clickup.requests.length - before;
   check(requests < 90, `the ClickUp scan sent ${requests} requests`);
   const fox = page.getByLabel("Action for Fox Mulder", { exact: true });
   const action = await fox.inputValue();
   check(action.startsWith("match:"), `Fox is matched by email: ${action}`);
-  run.jobIds.push(await startImport(page));
+  const importId = await startImport(page);
+  run.jobIds.push(importId);
   await waitStep(page, "Import finished");
+  await importedOnce(run, { scanId, importId });
   await openImportedBoard(page, {
     title: "Engineering / Sprint 12",
     badge: "Imported from ClickUp",
     href: "https://app.clickup.com/9001/v/li/901101",
   });
+  // ClickUp boards open in the List view (SPEC-5 §3.1); the checks below
+  // read the Main table.
+  await page.locator('.board-page[data-view="list"] .list-view').waitFor();
+  await page.locator(".view-tab", { hasText: /^Main table$/ }).click();
   await checkItem(page, {
     name: "Plan the sprint",
     status: "in progress",
@@ -322,6 +336,27 @@ async function clickupImport(run) {
   });
   await screenshot(run, page, "import-board-clickup.png");
   await checkNoTokens(run, page);
+}
+
+/**
+ * A scan is imported once (SPEC-5 §2.5): running it again is 409 and
+ * names the import that ran.
+ */
+async function importedOnce(run, { scanId, importId }) {
+  run.expectHttp(409, "/import/run");
+  const again = await run.alex.evaluate(async (scanJobId) => {
+    const response = await fetch("/import/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scan_job_id: scanJobId, plan: {} }),
+    });
+    return { status: response.status, body: await response.json() };
+  }, scanId);
+  const details = again.body.errors?.[0]?.extensions ?? {};
+  check(again.status === 409, `a second run answered ${again.status}`);
+  check(details.code === "ALREADY_IMPORTED", `code ${details.code}`);
+  const named = String(details.import_job_id);
+  check(named === String(importId), `the import named: ${named}`);
 }
 
 /** Imports `file` from the source step of a fresh `#/import`. */
@@ -373,10 +408,22 @@ async function xlsxImport(run) {
     status: "Done",
     person: "Sam Lee",
   });
-  // Subitems follow their parent, which their "Parent item" column names.
+  // Subitems are real subitems of their parent, with no "Parent item"
+  // column (SPEC-5 §2.1); the Main table lists them as rows.
   await itemNamed(page, "Copy");
+  const heads = await page.locator('th[scope="col"]').allTextContents();
+  check(!heads.join("|").includes("Parent item"), `columns: ${heads}`);
   await screenshot(run, page, "import-board-xlsx.png");
   const data = await dataAs(run, run.ids.users.alex, IMPORTED);
+  const board = data.boards.find((entry) => entry.import?.source === "xlsx");
+  const { boards } = await dataAs(run, run.ids.users.alex, PARENTS, {
+    ids: [board.id],
+  });
+  const { items } = boards[0].items_page;
+  const parentOf = (name) =>
+    items.find((item) => item.name === name)?.parent_item?.name ?? null;
+  check(parentOf("Copy") === "Launch site", `Copy: ${parentOf("Copy")}`);
+  check(parentOf("Launch site") === null, "Launch site is top-level");
   const sources = data.boards.map((board) => board.import?.source);
   for (const source of ["monday", "clickup", "csv", "xlsx"]) {
     check(sources.includes(source), `a board imported from ${source}`);

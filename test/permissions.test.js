@@ -125,6 +125,12 @@ function boardOperations(store, board) {
     ["editor", 'create_item(board_id: $b, item_name: "Extra") { id }'],
     [
       "editor",
+      'create_subitem(parent_item_id: $i, item_name: "Extra") { id }',
+      { i: item.id },
+      "$i: ID!",
+    ],
+    [
+      "editor",
       'change_simple_column_value(board_id: $b, item_id: $i, column_id: "name", value: $v) { id }',
       { i: item.id, v: item.name },
       "$i: ID!, $v: String",

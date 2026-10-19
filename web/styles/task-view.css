@@ -1,0 +1,381 @@
+/* Task view (SPEC-5 §4.2, ClickUp style): a centered modal with a top bar,
+   a scrolling left pane (title, then the fields of task-fields.css, then
+   subtasks) and the Activity pane (task-activity.css). Under 900px it is
+   one full-screen column with Activity below. Data colors come from JS
+   (`--progress`). Logical properties only. */
+
+.task-view {
+  width: min(1200px, calc(100vw - 32px));
+  max-width: none;
+  height: calc(100vh - 48px);
+  height: calc(100dvh - 48px);
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  color: var(--color-text);
+  box-shadow: var(--shadow-lg);
+}
+
+.task-view::backdrop {
+  background: var(--color-backdrop);
+}
+
+/* The dialog persists while open, so this runs once per opening. */
+.task-view[open] {
+  animation: modal-in var(--duration-slow) var(--ease-out);
+}
+
+.task-inner {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+/* ------------------------------------------------------------ top bar */
+
+.task-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 48px;
+  padding-block: 6px;
+  padding-inline: 20px 10px;
+  border-bottom: 1px solid var(--cu-border);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.task-topbar-title {
+  font-weight: var(--weight-semibold);
+}
+
+.task-topbar-end {
+  flex: 1;
+}
+
+.task-breadcrumb {
+  min-width: 0;
+}
+
+.task-breadcrumb ol {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-breadcrumb li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.task-breadcrumb li + li::before {
+  color: var(--color-text-muted);
+  content: "/";
+}
+
+.task-breadcrumb a,
+.task-parent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  text-decoration: none;
+}
+
+.task-breadcrumb a span,
+.task-parent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.task-breadcrumb a:hover,
+.task-parent:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.task-parent {
+  max-width: 40%;
+  border: 1px solid var(--cu-border);
+}
+
+.task-parent-name {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+
+.task-id {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* --------------------------------------------------------------- body */
+
+.task-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  min-height: 0;
+}
+
+.task-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 40px 48px;
+}
+
+.task-status-body {
+  overflow: auto;
+  padding: var(--space-6);
+}
+
+.task-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.task-title-heading,
+.task-title-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 26px;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.task-title-text {
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.task-title {
+  /* The input's padding and border: its text lines up with the fields. */
+  width: calc(100% + 7px);
+  margin-inline-start: -7px;
+  height: auto;
+  padding-block: 4px;
+  font-size: 26px;
+  font-weight: var(--weight-semibold);
+  unicode-bidi: plaintext;
+}
+
+.task-section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.task-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.task-heading {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.task-note,
+.task-empty {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.task-note {
+  margin: 0;
+}
+
+/* ----------------------------------------------------------- subtasks */
+
+.task-progress-count {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-progress {
+  position: relative;
+  width: 120px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--cu-border);
+}
+
+.task-progress-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: var(--progress, 0%);
+  border-radius: inherit;
+  background: var(--color-success);
+}
+
+.task-subtask-list {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--cu-border);
+  list-style: none;
+}
+
+.task-subtask {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--cu-row-height);
+  padding-inline: 4px;
+  border-bottom: 1px solid var(--cu-border);
+}
+
+.task-subtask:hover,
+.task-subtask:focus-within {
+  background: var(--cu-row-hover);
+}
+
+.task-subtask-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.task-subtask-name:hover {
+  color: var(--cu-accent-text);
+}
+
+.task-subtask.done .task-subtask-name {
+  color: var(--color-text-muted);
+}
+
+.task-subtask-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+
+.task-subtask-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+}
+
+.task-subtask-due {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.task-subtask-due.overdue {
+  color: var(--color-danger);
+}
+
+.task-subtask-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--cu-row-height);
+  padding-inline-start: 8px;
+  color: var(--color-text-muted);
+}
+
+.task-subtask-add:hover,
+.task-subtask-add:focus-within {
+  color: var(--cu-accent-text);
+}
+
+.task-subtask-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.task-subtask-input::placeholder {
+  color: inherit;
+}
+
+/* ------------------------------------------------------------ narrow */
+
+/* One full-screen column: the whole body scrolls, Activity below. */
+@media (max-width: 899px) {
+  .task-view {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    border-radius: 0;
+  }
+
+  .task-body {
+    display: block;
+    overflow: auto;
+  }
+
+  .task-main {
+    overflow: visible;
+    padding: 20px 16px 32px;
+  }
+
+  .task-topbar {
+    padding-inline-start: 12px;
+  }
+
+  .task-parent {
+    max-width: 50%;
+  }
+
+  .task-breadcrumb li:first-child:not(:last-child) {
+    display: none;
+  }
+
+  .task-breadcrumb li:first-child + li::before {
+    content: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .task-title,
+  .task-title-heading,
+  .task-title-text {
+    font-size: 22px;
+  }
+
+  .task-progress {
+    width: 72px;
+  }
+}
