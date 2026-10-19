@@ -120,14 +120,17 @@ test("a version-2 file is converted, copied and saved in the current format", as
   await store.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
   assert.equal(saved.format, FORMAT);
-  assert.equal(FORMAT, "mini-monday-store/5");
+  assert.equal(FORMAT, "mini-monday-store/6");
   const copy = `${file}.v2.bak`;
   assert.deepEqual(JSON.parse(await readFile(copy, "utf8")), doc);
   assert.equal((await stat(copy)).mode & 0o777, 0o600, "the copy is private");
-  // /2 upgrades through the /3 and /4 paths; only the original version
-  // is kept.
-  await assert.rejects(access(`${file}.v3.bak`), { code: "ENOENT" });
-  await assert.rejects(access(`${file}.v4.bak`), { code: "ENOENT" });
+  // /2 upgrades through the /3, /4 and /5 paths; only the original
+  // version is kept.
+  for (const version of [3, 4, 5]) {
+    await assert.rejects(access(`${file}.v${version}.bak`), {
+      code: "ENOENT",
+    });
+  }
   // Names became mentions; the label of a user actor is not kept.
   assert.deepEqual(assignOf(store, users.chris).text, [
     { user_id: users.noa },
@@ -189,13 +192,13 @@ test("a version-3 file loads and is saved in the current format", async (t) => {
     store.listItems({ boardId: board, limit: 100 }),
     first.listItems({ boardId: board, limit: 100 }),
   );
-  // Formats this version does not know (older servers refusing /5 is the
+  // Formats this version does not know (older servers refusing /6 is the
   // same rule) are refused, and the file is left as it was.
-  const newer = JSON.stringify({ ...current, format: "mini-monday-store/6" });
+  const newer = JSON.stringify({ ...current, format: "mini-monday-store/7" });
   await writeFile(file, newer);
   await assert.rejects(
     createStore({ file, log: quietLog }),
-    /unsupported format \(expected mini-monday-store\/5;/,
+    /unsupported format \(expected mini-monday-store\/6;/,
   );
   assert.equal(await readFile(file, "utf8"), newer);
 });

@@ -85,6 +85,7 @@ export const BLOCK_TYPES = Object.freeze([
   "divider",
   "callout",
 ]);
+/** Notification kinds; `mention`, `reply` and `like` are SPEC-6 §2.2. */
 export const NOTIFICATION_KINDS = Object.freeze([
   "share",
   "assign",
@@ -92,6 +93,9 @@ export const NOTIFICATION_KINDS = Object.freeze([
   "form_response",
   "role",
   "import_finished",
+  "mention",
+  "reply",
+  "like",
 ]);
 /** Where imported boards come from (SPEC-4 §2 `Snapshot.source`). */
 export const IMPORT_SOURCES = Object.freeze([
@@ -294,7 +298,10 @@ export function commit(ctx, event, record) {
   return record;
 }
 
-/** The store-like lookups `server/access.js` reads. */
+/**
+ * The store-like lookups `server/access.js` reads, the lists of
+ * `visibleUserIds` (guest directories) included.
+ */
 export function createReader(state) {
   return Object.freeze({
     getUser: (id) => byId(state.users, id),
@@ -305,5 +312,9 @@ export function createReader(state) {
     getNote: (id) => byId(state.notes, id),
     getForm: (id) => byId(state.forms, id),
     listUsers: () => [...state.users],
+    listTeams: () => [...state.teams],
+    listBoards: () => [...state.boards],
+    listDocs: () => [...state.docs],
+    listNotes: () => [...state.notes],
   });
 }

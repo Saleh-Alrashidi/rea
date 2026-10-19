@@ -11,7 +11,7 @@
  * group; validation (`snapshot-board.js`) already cleared unknown parents,
  * broke cycles and capped the depth. An update whose author has no
  * Worklane user names the author in `authorName` and keeps its body as
- * written. Boards from every source get DEFAULT_VIEWS (List, Main table,
+ * written; its replies stay its `replies` (real replies, SPEC-6 §2.1). Boards from every source get DEFAULT_VIEWS (List, Main table,
  * Kanban; SPEC-6 §1.1). What cannot be mapped (members and people of
  * skipped users) is returned in `notes` for the report.
  */
@@ -67,15 +67,23 @@ function itemValues(item, { columns, people, notes }) {
   return Object.fromEntries(entries);
 }
 
+/** One snapshot update as a spec update, without its replies. */
+function specUpdate(update, people) {
+  const author = people.get(update.author_source_id) ?? null;
+  const creatorId = author?.userId ?? null;
+  const name = update.author_name ?? author?.name ?? null;
+  const spec = { body: update.body, creatorId, createdAt: update.created_at };
+  return creatorId === null && name !== null
+    ? { ...spec, authorName: name }
+    : spec;
+}
+
+/** The item's updates, each with its `replies` when it has any. */
 function itemUpdates(item, people) {
   return item.updates.map((update) => {
-    const author = people.get(update.author_source_id) ?? null;
-    const creatorId = author?.userId ?? null;
-    const name = update.author_name ?? author?.name ?? null;
-    const spec = { body: update.body, creatorId, createdAt: update.created_at };
-    return creatorId === null && name !== null
-      ? { ...spec, authorName: name }
-      : spec;
+    const spec = specUpdate(update, people);
+    const replies = (update.replies ?? []).map((r) => specUpdate(r, people));
+    return replies.length > 0 ? { ...spec, replies } : spec;
   });
 }
 

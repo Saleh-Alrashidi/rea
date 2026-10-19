@@ -29,9 +29,10 @@ import {
 } from "./boards.js";
 import { insertDoc, readBlocks } from "./docs.js";
 import { insertForm } from "./forms.js";
-import { insertItem, insertUpdate } from "./items.js";
+import { insertItem } from "./items.js";
 import { insertNote } from "./notes.js";
 import { insertTeam, insertUser } from "./people.js";
+import { insertUpdate } from "./updates.js";
 import {
   ACTIVITY,
   BOARDS,

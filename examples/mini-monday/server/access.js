@@ -612,6 +612,17 @@ export function canBeAssigned(store, user, board) {
   return boardAccess(store, user, board) !== null;
 }
 
+/**
+ * What `user`, holding `role` on its board, may do with `update` (SPEC-6
+ * §2.1): its author edits it with editor access; the author or a board
+ * owner deletes it.
+ */
+export function updateVerdicts(role, user, update) {
+  const author = isActive(user) && update.creator_id === user.id;
+  const canEdit = author && hasRole(role, "editor");
+  return { canEdit, canDelete: canEdit || hasRole(role, "owner") };
+}
+
 // ------------------------------------------------- NOT_FOUND vs FORBIDDEN
 
 /** The error for a missing or inaccessible record; the two look the same. */

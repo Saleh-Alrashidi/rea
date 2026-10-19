@@ -311,6 +311,9 @@ nothing:
   - ClickUp and monday replies become real replies (`parent_update_id`).
     The flattened `"Reply: "` prefix is removed at the producer.
   - Imported likes and reactions are out of scope.
+  - Already-imported data is left as is: replies imported before this
+    phase stay separate top-level updates whose bodies start with
+    `"Reply: "`. Nothing parses or re-threads them.
 
 ### 2.2 Mentions
 
@@ -415,6 +418,93 @@ nothing:
 
 ---
 
+### 2.4 Server contract (as built)
+
+**Data file:** format `mini-monday-store/6`.
+
+- Updates gain `parent_update_id:id~`, `edited_at:str~` and
+  `pinned_at:str~`. A reply keeps its item's `item_id`.
+- The new collection is `likes: "update_id:id user_id:id created_at:str"`.
+- Loading checks every reply's parent: it must be a top-level update of
+  the same item. Replies are never pinned, and a like names an existing
+  update and user, once per pair. A file that breaks a rule is refused.
+- A `/5` file upgrades additively, with a `.v5.bak` copy. `likes` starts
+  empty, and a plain `/5` body that would read as a token is escaped, so
+  it still reads as written. `/2`–`/4` files upgrade through the same
+  chain.
+- `store/updates.js` owns the model. `removeUpdates` is the single removal
+  owner of updates, their replies and their likes; `boards.removeItems`
+  calls it for item, group and board deletions.
+
+**GraphQL** (`server/schema/updates.js`), besides §2.1:
+
+```
+Update.can_delete: Boolean!     # the author with editor access, or a board owner
+Update.body: String!            # tokens; a task the reader can't open reads "Private task"
+BodyPart { type: BodyPartType!  # text | user | team | item | link
+           text: String         # what to show (null for a private task)
+           user: User  team: Team  item_id: ID  name: String  board_id: ID  url: String }
+Query.notifications(unread_only, kinds:[NotificationKind!], limit)   # Mentions = [mention]
+```
+
+- `create_update` keeps working without `parent_id`.
+- Refusals map as follows:
+  - An unknown or hidden update, or one on another item for
+    `pin_to_top`, is `NOT_FOUND` (worded like an unknown ID).
+  - A reply to a reply, pinning a reply, a body outside 1–10,000
+    characters and more than 50 tokens are `BAD_USER_INPUT`.
+  - A viewer, or a non-author editing, is `FORBIDDEN`.
+- `edit_update` needs the author with editor access.
+- Board events are `{ type, board_id, item_id, update_id }`:
+  - `update_created`;
+  - `update_edited` (pins add `pinned`);
+  - `update_deleted`;
+  - `update_liked` (with `liked: true | false`).
+
+  A call that changes nothing emits nothing.
+
+**Token grammar** (`server/mentions.js`):
+
+```
+token   = "@[" display "](" kind ":" id ")"     kind = user | team | item
+id      = 1-16 digits, no leading zero
+display = 1-255 characters once unescaped, not all blank, no line break;
+          \\ \[ \] stand for \ [ ]; the first unescaped "]" ends it,
+          and an unescaped "[" before it makes it no token
+```
+
+- A run of n backslashes right before a well-formed token stands for
+  ⌊n/2⌋ backslashes. The token is a mention when n is even and literal
+  text when n is odd.
+- Every other character is literal, so text without a well-formed token
+  reads as written. Imports store source text escaped this way.
+- Links are `https?://…` runs in text, without trailing punctuation or
+  an unbalanced `)`, at most 2,048 characters.
+
+**Validation, on create and edit:**
+
+- The body is trimmed and 1–10,000 characters as written, tokens
+  included.
+- It may hold at most 50 tokens, counted as written.
+- A mention of something the author can't see becomes the plain text
+  `@<display>`: an unknown user, team or item, a user outside a guest's
+  directory, a team a guest isn't in, or an item on a board the author
+  can't open.
+- The body is stored in canonical form.
+
+**Notifications:**
+
+- Every notification goes through `activity.notify`: never to the actor,
+  to deactivated users, or to users who can't open the board.
+- Each user gets at most one notification per post. The first kind that
+  applies wins: `mention`, then `reply`, then `update`.
+- `update` goes to the item's assignees, for top-level updates only.
+- An edit notifies only the people it newly mentions.
+- A like notifies the update's author once per (update, liker), for as
+  long as that notification is kept (200 per user).
+- Mention, reply and like notifications link to
+  `#/boards/<id>/items/<itemId>/updates/<updateId>`.
+
 ## Phase 3: Spaces, Folders and the ClickUp sidebar
 
 ### 3.1 Model
@@ -431,7 +521,8 @@ nothing:
     their Space or folder. Spaces gain `position:num~` too.
 - **Folder access:** folders have no access rules of their own. They inherit
   the Space's. A private board stays private inside any folder.
-- **Upgrade `/5 → /6`, with a `.v5.bak` backup:**
+- **Upgrade `/6 → /7`, with a `.v6.bak` backup** (Phase 2 took format
+  `/6`, §2.4):
   - For every board whose `import.folder` is set, a folder is created per
     (Space, `folder.source_id`) and the board moves into it.
   - The board is renamed to `import.source_name` only if its current name
@@ -542,8 +633,8 @@ move_item_to_board(item_id:ID!, board_id:ID!, group_id:String): MoveResult!
 ## Verification (every phase)
 
 - **Unit tests:**
-  - Store invariants and upgrades: `/4→/5` renumbering, `/5→/6` folders and
-    renames, each with a version-named backup.
+  - Store invariants and upgrades: `/4→/5` renumbering, `/5→/6` updates,
+    `/6→/7` folders and renames, each with a version-named backup.
   - Permissions for every new mutation.
   - The mentions parser: tokens, unknown ids, limits, and no notification
     leaks to users without access.

@@ -9,6 +9,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { updateCount } from "../server/import/snapshot-board.js";
 import { FIELD, SPRINT_TASKS, T0 } from "./fixtures/import/clickup-data.js";
 import {
   boardNamed,
@@ -440,27 +441,32 @@ test("subtasks keep their parent", async () => {
   assert.ok(valid.snapshot.warnings.some((w) => w.code === "unknown_parent"));
 });
 
-test("comments and replies become updates in time order", async () => {
+test("comments become updates in time order, with their replies", async () => {
   const { server, snapshot, valid } = await fullScan();
   const plan = itemOf(boardNamed(snapshot, SPRINT), "86c0001");
-  assert.equal(
-    plan.updates.length,
-    32,
-    "30 comments (two pages) and 2 replies",
-  );
+  assert.equal(plan.updates.length, 30, "30 comments (two pages)");
   assert.deepEqual(plan.updates[0], {
     body: "Planning started",
     author_source_id: "101",
     author_name: "Dana Scully",
     created_at: new Date(T0).toISOString(),
   });
+  // SPEC-6 §2.1: threaded replies stay replies of their comment, as
+  // written (no "Reply: " prefix), oldest first.
+  const threads = plan.updates.filter((u) => u.replies !== undefined);
   assert.deepEqual(
-    plan.updates.slice(-2).map((u) => [u.body, u.author_name]),
+    threads.map((u) => u.body),
+    ["Comment 10"],
+  );
+  assert.deepEqual(
+    threads[0].replies.map((u) => [u.body, u.author_name]),
     [
-      ["Reply: First reply", "Walter Skinner"],
-      ["Reply: Second reply", "Dana Scully"],
+      ["First reply", "Walter Skinner"],
+      ["Second reply", "Dana Scully"],
     ],
   );
+  const kept = itemOf(boardNamed(valid.snapshot, SPRINT), "86c0001");
+  assert.equal(updateCount(kept), 32, "the snapshot keeps both replies");
   const times = plan.updates.map((u) => Date.parse(u.created_at));
   assert.deepEqual(
     times,

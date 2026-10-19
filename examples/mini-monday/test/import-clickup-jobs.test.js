@@ -86,7 +86,19 @@ test("a ClickUp scan is previewed and imported through the jobs", async (t) => {
   const { items, total } = store.listItems({ boardId: board.id, limit: 500 });
   assert.equal(total, 230);
   const plan1 = items.find((item) => item.name === "Plan the sprint");
-  assert.equal(store.listUpdates(plan1.id, { limit: 100 }).length, 32);
+  // 30 comments, one of them with 2 real replies (SPEC-6 §2.1).
+  const posted = store.listUpdates(plan1.id, { limit: 100 });
+  assert.equal(posted.length, 30);
+  assert.equal(store.countUpdatesByItem().get(plan1.id), 32);
+  const thread = posted.find((update) => update.body === "Comment 10");
+  const replies = store.listReplies(thread.id);
+  assert.deepEqual(
+    replies.map((reply) => [reply.body, reply.parent_update_id]),
+    [
+      ["First reply", thread.id],
+      ["Second reply", thread.id],
+    ],
+  );
   const ship = items.find((item) => item.name === "Ship it");
   const columns = store.listColumns(board.id);
   const assignees = columns.find((c) => c.role === "assignees");

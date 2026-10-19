@@ -1,10 +1,9 @@
 /**
- * Items and updates (part-1 API) with SPEC-2 activity entries and
- * notifications: item create/rename/move/delete and column value changes
- * are logged with `from_text`/`to_text` from `formatColumnValue` (people
- * values as rich text naming each user); users newly added to a people
- * column get an `assign` notification and users assigned to an item get
- * an `update` notification for its updates.
+ * Items (part-1 API) with SPEC-2 activity entries and notifications: item
+ * create/rename/move/delete and column value changes are logged with
+ * `from_text`/`to_text` from `formatColumnValue` (people values as rich
+ * text naming each user); users newly added to a people column get an
+ * `assign` notification. Updates are `updates.js`.
  *
  * People values may only add users who can open the board (SPEC-2 §6,
  * `access.canBeAssigned`), on every write path: item creation (also by
@@ -13,7 +12,7 @@
  *
  * Items may be subitems of another item on their board (`parent_id`,
  * SPEC-5 §1.1, invariants in `subitems.js`); deleting an item deletes its
- * subitems too. Positions are one manual order per board
+ * subitems too, and the updates of all of them (`boards.removeItems`). Positions are one manual order per board
  * (`positions.js`, SPEC-6 §1.2): new items go after every item of their
  * board. Moves (order, parent, group and values in one change) are
  * `moves.js`, which applies values through `changedFields` and
@@ -80,18 +79,6 @@ export function insertItem(ctx, fields) {
     updated_at: at,
     values,
   });
-}
-
-/**
- * Appends an update; `authorName` (SPEC-5 §1.4, imports) names a source
- * author without a Worklane user and is absent otherwise.
- */
-export function insertUpdate(ctx, fields) {
-  const { itemId, body, creatorId, authorName = null } = fields;
-  const update = { id: nextId(ctx.state), item_id: itemId, body };
-  const meta = { creator_id: creatorId, created_at: ctx.now() };
-  const author = authorName === null ? {} : { author_name: authorName };
-  return push(ctx.state.updates, { ...update, ...meta, ...author });
 }
 
 /** Items in board order: group position, then item position, then ID. */
@@ -202,20 +189,6 @@ function itemReads(state) {
     },
     countItems: (boardId) => forBoard(state.items, boardId).length,
     getItem: (id) => byId(state.items, id),
-    /** How many updates each item has: `Map(itemId → count)`, no zeros. */
-    countUpdatesByItem() {
-      const counts = new Map();
-      for (const { item_id } of state.updates) {
-        counts.set(item_id, (counts.get(item_id) ?? 0) + 1);
-      }
-      return counts;
-    },
-    /** Updates of an item, newest first. */
-    listUpdates(itemId, { limit = 25 } = {}) {
-      requireCount(limit, "limit", 0);
-      const updates = state.updates.filter((u) => u.item_id === itemId);
-      return updates.reverse().slice(0, limit);
-    },
   };
 }
 
@@ -328,28 +301,6 @@ function setValues(ctx, { item, changes, actorId }) {
   return commit(ctx, first, next);
 }
 
-/** Adds an update; users assigned to the item are notified. */
-function createUpdate(ctx, { itemId, body, creatorId = null }) {
-  const { state } = ctx;
-  const item = byId(state.items, itemId);
-  if (!item || !knownUser(state, creatorId)) return null;
-  requireText(body, "body");
-  const update = insertUpdate(ctx, { itemId, body, creatorId });
-  const board = byId(state.boards, item.board_id);
-  const columns = forBoard(state.columns, item.board_id);
-  const assigned = columns.flatMap((c) => peopleIds(c, item.values[c.id]));
-  notify(ctx, {
-    userIds: assigned,
-    actorId: creatorId,
-    kind: "update",
-    text: byActor(creatorId, ` posted an update on ${quoted(item.name)}`),
-    url: resourceUrl("board", board.id, item.id),
-    resource: { kind: "board", id: board.id, record: board },
-  });
-  const event = { board_id: item.board_id, item_id: itemId };
-  return commit(ctx, { type: "update_created", ...event }, update);
-}
-
 export function itemApi(ctx) {
   const { state } = ctx;
   const log = (item, kind, extra) =>
@@ -429,6 +380,5 @@ export function itemApi(ctx) {
       const deleted = Object.freeze({ ...item, state: "deleted" });
       return commit(ctx, itemEvent("item_deleted", item), deleted);
     },
-    createUpdate: (fields) => createUpdate(ctx, fields),
   };
 }

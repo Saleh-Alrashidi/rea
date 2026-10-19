@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { validateSnapshot } from "../server/import/snapshot.js";
+import { updateCount } from "../server/import/snapshot-board.js";
 import { FIELD, clickupFixture } from "./fixtures/import/clickup-data.js";
 import {
   boardNamed,
@@ -381,10 +382,9 @@ test("limits that are not positive integers are ignored", async (t) => {
   const snapshot = await run({ options: { limits } });
   assert.equal(boards(snapshot).length, 6);
   assert.equal(boardNamed(snapshot, SPRINT).items.length, 230);
-  assert.equal(
-    itemOf(boardNamed(snapshot, SPRINT), "86c0001").updates.length,
-    32,
-  );
+  const plan = itemOf(boardNamed(snapshot, SPRINT), "86c0001");
+  assert.equal(plan.updates.length, 30);
+  assert.equal(updateCount(plan), 32, "comments and their replies");
   assert.equal(docs(snapshot).length, 55);
   assert.deepEqual(
     snapshot.warnings.filter((w) => w.code.startsWith("limit_")),

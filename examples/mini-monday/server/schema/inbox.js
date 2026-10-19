@@ -1,6 +1,7 @@
 /**
  * The caller's notification inbox and board activity logs. Notifications
- * (lists, unread counts, marking read) only ever include entries that
+ * (lists, filtered by kind on request, e.g. the Inbox's Mentions filter,
+ * SPEC-6 §2.2; unread counts; marking read) only ever include entries that
  * `access.notificationVisible` allows: the caller's own, about resources
  * they can still access. Activity logs need viewer access to the board,
  * which reaching `Board.activity_logs` already implies.
@@ -10,6 +11,7 @@
  * guest's directory read "Someone" (SPEC-2 §6).
  */
 import { notificationVisible } from "../access.js";
+import { NOTIFICATION_KINDS } from "../store-state.js";
 import { actorLabel, renderText } from "../store/activity.js";
 import {
   lookupUser,
@@ -33,11 +35,13 @@ function visibleNotifications(ctx, { unreadOnly = false } = {}) {
 }
 
 const Query = wrapAll(read, {
-  notifications: (_p, args, ctx) =>
-    visibleNotifications(ctx, { unreadOnly: args.unread_only }).slice(
-      0,
-      readLimit(args.limit),
-    ),
+  notifications(_p, args, ctx) {
+    const limit = readLimit(args.limit);
+    const kinds = (args.kinds ?? null) === null ? null : new Set(args.kinds);
+    return visibleNotifications(ctx, { unreadOnly: args.unread_only })
+      .filter((entry) => kinds === null || kinds.has(entry.kind))
+      .slice(0, limit);
+  },
   unread_notifications_count: (_p, _a, ctx) =>
     visibleNotifications(ctx, { unreadOnly: true }).length,
 });
@@ -61,8 +65,9 @@ const rendered = (field) => (record, _a, ctx) =>
   renderText(record[field], namesFor(ctx));
 
 export const definition = {
+  enums: { NotificationKind: [...NOTIFICATION_KINDS] },
   types: {
-    Query: `notifications(unread_only:Boolean=false,limit:Int=50):[Notification!]!
+    Query: `notifications(unread_only:Boolean=false,kinds:[NotificationKind!],limit:Int=50):[Notification!]!
       unread_notifications_count:Int!`,
     Board: "activity_logs(limit:Int=50):[ActivityLog!]!",
     Notification: `id:ID! kind:String! text:String! url:String! read:Boolean!
@@ -88,7 +93,10 @@ export const definition = {
     },
   },
   extras: {
-    "Query.notifications": { description: "Your inbox, newest first." },
+    "Query.notifications": {
+      description:
+        "Your inbox, newest first; kinds keeps only those kinds (the Mentions filter is [mention]).",
+    },
     "ActivityLog.subitems_deleted": {
       description:
         "For item_deleted: how many subitems went with the item. For group_deleted: how many subitems in other groups went with the group's items.",
