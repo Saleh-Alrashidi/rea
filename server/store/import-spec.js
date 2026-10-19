@@ -1,8 +1,8 @@
 /**
  * Readers of a `store.importBoard` spec (SPEC-4 §4, SPEC-5 §2), used by
  * `imports.js`: columns with their roles and status labels (colors and
- * label types), groups, items with their values, parents and updates,
- * and the board's views. They check and convert; nothing is written, and
+ * label types), groups, items with their values, parents and updates
+ * (with their replies), and the board's views. They check and convert; nothing is written, and
  * the first invalid entry fails the whole import (InputError).
  *
  * Items name their parent by key (`key`, `parentKey`): any item of the
@@ -13,6 +13,7 @@
  */
 import { isValidStoredValue } from "../column-values.js";
 import { LIMITS, isPlainObject } from "../input.js";
+import { escapeText } from "../mentions.js";
 import {
   COLUMN_ROLES,
   COLUMN_TYPES,
@@ -169,24 +170,39 @@ function storedValue(ctx, { column, value, assignable }) {
   return { stored, left };
 }
 
+/** One update of `readUpdates`, without its replies. */
+function readUpdate(ctx, raw) {
+  const text = typeof raw?.body === "string" ? raw.body.trim() : "";
+  // Source bodies are plain text: what reads as a token is escaped.
+  const body = escapeText(text);
+  if (text === "" || body.length > LIMITS.updateBody)
+    invalid(`Update bodies must be 1-${LIMITS.updateBody} characters`);
+  const update = {
+    body,
+    creator_id: readUserRef(ctx, raw.creatorId, "Update author"),
+    created_at: readStamp(raw.createdAt, "Update time"),
+  };
+  if (!present(raw.authorName)) return update;
+  if (update.creator_id !== null)
+    invalid("Only updates without a Worklane author name one");
+  return { ...update, author_name: readName(raw.authorName, "Author name") };
+}
+
 /**
- * Updates `[{ body, creatorId, createdAt, authorName? }]`; `authorName`
- * names a source author without a Worklane user (SPEC-5 §1.4).
+ * Updates `[{ body, creatorId, createdAt, authorName?, replies? }]`:
+ * `body` is plain text, `authorName` names a source author without a
+ * Worklane user (SPEC-5 §1.4), and `replies` (updates without replies of
+ * their own, SPEC-6 §2.1) become replies.
  */
 function readUpdates(ctx, updates) {
   return readList(updates ?? [], "updates").map((raw) => {
-    const body = typeof raw?.body === "string" ? raw.body.trim() : "";
-    if (body === "" || body.length > LIMITS.updateBody)
-      invalid(`Update bodies must be 1-${LIMITS.updateBody} characters`);
-    const update = {
-      body,
-      creator_id: readUserRef(ctx, raw.creatorId, "Update author"),
-      created_at: readStamp(raw.createdAt, "Update time"),
-    };
-    if (!present(raw.authorName)) return update;
-    if (update.creator_id !== null)
-      invalid("Only updates without a Worklane author name one");
-    return { ...update, author_name: readName(raw.authorName, "Author name") };
+    const update = readUpdate(ctx, raw);
+    const replies = readList(raw.replies ?? [], "replies").map((reply) => {
+      if (present(reply?.replies) && reply.replies.length > 0)
+        invalid("Replies can't have replies");
+      return readUpdate(ctx, reply);
+    });
+    return { ...update, replies };
   });
 }
 

@@ -254,7 +254,7 @@ test("subitems follow their parent; their columns merge by title and type", asyn
   );
 });
 
-test("updates are plain text, oldest first, with replies", async () => {
+test("updates are plain text, oldest first, with their replies", async () => {
   const { snapshot, valid } = await fullScan();
   const roadmap = boardNamed(snapshot, "Roadmap");
   const updates = itemOf(roadmap, "1001").updates;
@@ -274,10 +274,15 @@ test("updates are plain text, oldest first, with replies", async () => {
         "Dana Scully",
         "2025-03-04T12:00:00Z",
       ],
-      ["Reply: Thanks!", "2", "Fox Mulder", "2025-03-04T12:30:00Z"],
       ["", "1", "Dana Scully", "2025-03-05T08:00:00Z"],
     ],
   );
+  // SPEC-6 §2.1: replies stay replies of their update, as written.
+  assert.deepEqual(
+    updates[2].replies.map((u) => [u.body, u.author_name, u.created_at]),
+    [["Thanks!", "Fox Mulder", "2025-03-04T12:30:00Z"]],
+  );
+  assert.ok(updates.every((u, i) => i === 2 || u.replies === undefined));
   const bodies = boards(snapshot).flatMap((b) =>
     b.items.flatMap((i) => i.updates.map((u) => u.body)),
   );
@@ -293,7 +298,8 @@ test("updates are plain text, oldest first, with replies", async () => {
   const [capped] = codes(snapshot, "updates_capped");
   assert.equal(capped.path, "workspaces[0].boards[0]");
   const kept = itemOf(boardNamed(valid.snapshot, "Roadmap"), "1001").updates;
-  assert.equal(kept.length, 4, "the snapshot drops the empty update");
+  assert.equal(kept.length, 3, "the snapshot drops the empty update");
+  assert.equal(kept[2].replies[0].body, "Thanks!");
   assert.equal(kept[1].author_source_id, null);
   assert.equal(kept[1].author_name, "Former Employee");
 });

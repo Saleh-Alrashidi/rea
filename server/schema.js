@@ -27,6 +27,7 @@ import { definition as people } from "./schema/people.js";
 import { definition as search } from "./schema/search.js";
 import { definition as sharing } from "./schema/sharing.js";
 import { definition as storage } from "./schema/storage.js";
+import { definition as updates } from "./schema/updates.js";
 import { definition as workspaces } from "./schema/workspaces.js";
 
 const MODULES = [
@@ -34,6 +35,7 @@ const MODULES = [
   people,
   boards,
   items,
+  updates,
   storage,
   workspaces,
   sharing,

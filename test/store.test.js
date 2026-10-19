@@ -6,7 +6,8 @@ import { plainEntry } from "./helpers.js";
 // Store API tests for the part-1 board model: mutators, change events,
 // activity entries, ordering, app storage, tokens and listeners. Seed, ID
 // generation and persistence are covered by store-state.test.js; SPEC-2
-// people, sharing and content by the other store-*.test.js files.
+// people, sharing and content by the other store-*.test.js files, and
+// updates by store-updates.test.js.
 const START = Date.UTC(2026, 9, 18, 9, 0, 0);
 const clock = () => {
   let tick = 0;
@@ -479,47 +480,4 @@ test("listBoards filters by IDs and pages", async () => {
   ]);
   assert.deepEqual(store.listBoards({ ids: [] }), []);
   assert.throws(() => store.listBoards({ limit: 0 }), TypeError);
-});
-
-test("updates are listed newest first", async () => {
-  const store = await memoryStore();
-  const roadmap = roadmapOf(store);
-  const item = store.listItems({ boardId: roadmap.id }).items[0];
-  assert.deepEqual(
-    store.listUpdates(item.id).map((u) => u.creator_id),
-    ["1", "2"],
-  );
-  const { events } = record(store);
-  const update = store.createUpdate({
-    itemId: item.id,
-    body: "Shipped!",
-    creatorId: "3",
-  });
-  assert.deepEqual(Object.keys(update), [
-    "id",
-    "item_id",
-    "body",
-    "creator_id",
-    "created_at",
-  ]);
-  assert.deepEqual(
-    store.listUpdates(item.id).map((u) => u.body)[0],
-    "Shipped!",
-  );
-  assert.deepEqual(store.listUpdates(item.id, { limit: 1 }), [update]);
-  assert.deepEqual(boardEvents(events), [
-    { type: "update_created", board_id: roadmap.id, item_id: item.id },
-  ]);
-  // SPEC-2: Alex is assigned to the item and hears about the update.
-  assert.deepEqual(events[1].user_ids, ["1"]);
-  assert.equal(store.createUpdate({ itemId: "999", body: "x" }), null);
-  assert.equal(
-    store.createUpdate({ itemId: item.id, body: "x", creatorId: "99" }),
-    null,
-  );
-  assert.throws(
-    () => store.createUpdate({ itemId: item.id, body: "" }),
-    TypeError,
-  );
-  assert.equal(events.length, 2);
 });

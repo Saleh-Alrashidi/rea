@@ -2,10 +2,11 @@
  * Boards of the monday.com connector (SPEC-4 §3.1): board fields, members
  * (owners → owner, subscribers → editor), groups, items and subitems
  * (subitems follow their parent, in the parent's group, with
- * `parent_source_id`), and updates with their replies (plain text, oldest
- * first; HTML is never kept). `createBoard` builds a board from its listing
- * row; `addItems` converts each page of items as it arrives. Lists are kept
- * within the snapshot's limits, with a warning for what is left out.
+ * `parent_source_id`), and updates with their replies as `replies` (plain
+ * text, oldest first; HTML is never kept). `createBoard` builds a board
+ * from its listing row; `addItems` converts each page of items as it
+ * arrives. Lists are kept within the snapshot's limits, with a warning for
+ * what is left out.
  */
 import { BOARD_LIMITS } from "../snapshot-board.js";
 import { addColumn, readOther, subitemPlan } from "./monday-columns.js";
@@ -92,20 +93,22 @@ function updateText(raw) {
   return htmlText(raw.body);
 }
 
-function addUpdate(ctx, state, updates, raw) {
+/** Adds update `raw` to `list`; null (nothing added) past the limit. */
+function addUpdate(ctx, state, list, raw) {
   if (ctx.counts.updates >= ctx.limits.updates) {
     limitHit(ctx, "updates", state.path);
-    return;
+    return null;
   }
   ctx.counts.updates += 1;
-  const text = updateText(raw);
   const name = str(raw.creator?.name).trim();
-  updates.push({
-    body: text !== "" && raw.reply ? `Reply: ${text}` : text,
+  const update = {
+    body: updateText(raw),
     author_source_id: idOf(raw.creator?.id),
     author_name: name === "" ? null : name,
     created_at: idOf(raw.created_at),
-  });
+  };
+  list.push(update);
+  return update;
 }
 
 const timeOf = (update) => {
@@ -119,15 +122,18 @@ function readUpdates(ctx, state, raws) {
     const message = `Items with ${UPDATES_PER_ITEM} or more updates kept only their latest ${UPDATES_PER_ITEM}`;
     state.scope.count("updates_capped", message);
   }
+  const inTime = (a, b) => timeOf(a) - timeOf(b);
   const updates = [];
   for (const raw of listOf(raws)) {
-    addUpdate(ctx, state, updates, raw);
-    for (const reply of listOf(raw.replies)) {
-      addUpdate(ctx, state, updates, { ...reply, reply: true });
-    }
+    const update = addUpdate(ctx, state, updates, raw);
+    if (!update) continue;
+    const thread = [];
+    for (const reply of listOf(raw.replies))
+      addUpdate(ctx, state, thread, reply);
+    if (thread.length > 0) update.replies = thread.sort(inTime);
   }
   // monday lists updates newest first; Worklane keeps them in time order.
-  return updates.sort((a, b) => timeOf(a) - timeOf(b));
+  return updates.sort(inTime);
 }
 
 function addValues(ctx, state, item, raw) {

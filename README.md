@@ -94,13 +94,16 @@ Tests point the importer at fake upstream servers with
 [Import from monday.com or ClickUp](#import-from-mondaycom-or-clickup));
 leave them unset otherwise.
 
-The data file format is `mini-monday-store/5` (one manual item order per
-board). A part-1 file is refused with a message; move it away and the
-server reseeds. Older files are upgraded once at start-up, the old file
-is kept as `<file>.v<version>.bak` (private, like the data file) and the
-result is saved as `/5`, which older versions refuse as unsupported. A
-`/4` file has its item positions renumbered per board in display order
-(1024, 2048, …), so every board shows its items as before. A `/3` file
+The data file format is `mini-monday-store/6` (one manual item order per
+board; update replies, edits, pins and likes). A part-1 file is refused
+with a message; move it away and the server reseeds. Older files are
+upgraded once at start-up, the old file is kept as
+`<file>.v<version>.bak` (private, like the data file) and the result is
+saved as `/6`, which older versions refuse as unsupported. A `/5` file
+gains an empty `likes` list, and a plain body that would read as a
+mention token is escaped so it still reads as written. A `/4` file has
+its item positions renumbered per board in display order (1024, 2048, …)
+on its way to `/6`, so every board shows its items as before. A `/3` file
 (no subitems, column roles or update authors) goes through the `/4`
 upgrade. A `mini-monday-store/2` file (which wrote people's names into
 notification and activity texts) goes through the `/3` upgrade first:
@@ -412,7 +415,7 @@ after the scan ends, visible only to the admin who started it.
 | ClickUp List           | A board `<Folder> / <List>` (Private when the list, folder or space is), groups "Open" and "Closed" by status type, opening in a List view (then Main table and Kanban).                               |
 | CSV file, Excel export | One closed workspace `Imported from <file>` with one Private board named after the file.                                                                                                               |
 | Subitems / subtasks    | Real subitems of their parent (`parent_id`), in their own group (a ClickUp subtask keeps its own status), up to 5 levels deep; deeper ones join their deepest allowed ancestor (`subitems_flattened`). |
-| Updates / comments     | Updates with their original dates and authors (one without a Worklane user is kept by name, the body as written); replies become "Reply: …"; text only (HTML is never kept).                           |
+| Updates / comments     | Updates with their original dates and authors (one without a Worklane user is kept by name, the body as written); replies become real replies of their update; text only (HTML is never kept).         |
 | Docs                   | Docs owned by the importing admin (public ones Workspace-visible, others Private), as SPEC-2 blocks.                                                                                                   |
 | People                 | Matched by email to active Worklane users, or invited (member, viewer or guest), or skipped (per person).                                                                                              |
 
@@ -582,11 +585,13 @@ server/
                    (monday*, clickup*, files.js file-board.js, common.js)
   access.js        the only interpreter of roles, grants and teams
   store.js         createStore(): records, change events, persistence
-  store/           people workspaces boards items docs notes forms grants
-                   activity storage seed seed-data persistence imports
+  store/           people workspaces boards items updates docs notes forms
+                   grants activity storage seed seed-data persistence
+                   imports
   schema.js        merges server/schema/*.js into one buildSchema() call
-  schema/          common people workspaces boards items sharing docs notes
-                   forms inbox search storage imports
+  schema/          common people workspaces boards items updates sharing
+                   docs notes forms inbox search storage imports
+  mentions.js      the mention token syntax in update bodies (SPEC-6 §2.2)
   graphql/         parse.js schema.js validate.js execute.js errors.js
                    (the engine)
   auth.js          API tokens, browser sessions, app principals, JWTs

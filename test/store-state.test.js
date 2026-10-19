@@ -228,7 +228,7 @@ test("a file store seeds, persists atomically and reloads", async (t) => {
   const made = touchEverything(first);
   await first.flush();
   const saved = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(saved.format, "mini-monday-store/5", "SPEC-6 data format");
+  assert.equal(saved.format, "mini-monday-store/6", "SPEC-6 data format");
   assert.equal(
     "settings_str" in saved.columns[0],
     false,
@@ -364,7 +364,7 @@ test("an invalid data file is rejected and left untouched", async (t) => {
     broken((doc) => (doc.forms[0].questions[0].column_id = "person")),
     broken((doc) => doc.forms[0].questions.reverse()),
     broken((doc) => (doc.forms[1].token = doc.forms[0].token)),
-    broken((doc) => (doc.notifications[0].kind = "mention")),
+    broken((doc) => (doc.notifications[0].kind = "mentioned")),
     broken((doc) => (doc.activity[0].board_id = "999")),
     broken((doc) => (doc.workspaces[0].color = "indigo")),
     // Rich text: a string or non-empty parts { text } / { user_id }.

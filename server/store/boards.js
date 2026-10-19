@@ -44,6 +44,7 @@ import {
 } from "../store-state.js";
 import { recordActivity } from "./activity.js";
 import { withDescendants } from "./subitems.js";
+import { removeUpdates } from "./updates.js";
 import { targetWorkspace } from "./workspaces.js";
 
 /** Groups and columns of a board made by `createBoard`. */
@@ -189,15 +190,15 @@ export function sortedGroups(state, boardId) {
 /**
  * The one way items leave the store: removes the items matching
  * `predicate` with all their descendants, whatever their group (SPEC-5
- * §1.1), and the updates of all of them. Returns the removed items in
- * store order.
+ * §1.1), and the updates of all of them with their replies and likes
+ * (`updates.removeUpdates`). Returns the removed items in store order.
  */
 export function removeItems(state, predicate) {
   const matched = state.items.filter(predicate).map((item) => item.id);
   const ids = withDescendants(state.items, new Set(matched));
   const removed = state.items.filter((item) => ids.has(item.id));
   removeWhere(state.items, (item) => ids.has(item.id));
-  removeWhere(state.updates, (update) => ids.has(update.item_id));
+  removeUpdates(state, (update) => ids.has(update.item_id));
   return removed;
 }
 

@@ -1,15 +1,15 @@
 /**
- * Items, column values and updates (part-1 API) plus `my_work`. Items are
- * reachable only through boards the caller can access; item, value and
- * update writes need editor access (SPEC-2 §1.2). `column-values.js` owns
+ * Items and column values (part-1 API) plus `my_work`; updates are
+ * `updates.js`. Items are reachable only through boards the caller can
+ * access; item and value writes need editor access (SPEC-2 §1.2). `column-values.js` owns
  * every column value format. People values may name only users the caller
  * may see, and show the others as "Someone" (left out of `value`); a write
  * keeps the people the caller cannot see, and the store refuses to add
  * anyone who cannot open the board (SPEC-2 §6).
  *
  * Subitems (SPEC-5 §1.6): `create_subitem` goes through the store path of
- * `create_item`; `Item.subitems`, `subitems_count` and `updates_count` read
- * indexes built once per request (`perRequest`).
+ * `create_item`; `Item.subitems` and `subitems_count` read an index built
+ * once per request (`perRequest`).
  *
  * Moves (SPEC-6 §1.3): `move_item` places an item between neighbors of
  * its board's manual order (`Item.position`, board-wide), changes its
@@ -32,7 +32,7 @@ import {
   peopleIds,
 } from "../column-values.js";
 import { columnOf, groupOf } from "./boards.js";
-import { LIMITS, describe, isPlainObject } from "../input.js";
+import { describe, isPlainObject } from "../input.js";
 import {
   accessibleBoards,
   badInput,
@@ -282,15 +282,6 @@ const Mutation = wrapAll(write, {
   },
   delete_item: (_p, { item_id }, ctx) =>
     ctx.store.deleteItem(requireItem(ctx, item_id, "editor").id, actor(ctx)),
-  create_update(_p, args, ctx) {
-    const item = requireItem(ctx, args.item_id, "editor");
-    const body = args.body.trim();
-    if (body.length === 0 || body.length > LIMITS.updateBody) {
-      badInput(`Update bodies must be 1-${LIMITS.updateBody} characters`);
-    }
-    const creatorId = viewerOf(ctx).id;
-    return ctx.store.createUpdate({ itemId: item.id, body, creatorId });
-  },
 });
 
 const creator = (record, _a, ctx) => lookupUser(ctx, record.creator_id);
@@ -308,28 +299,16 @@ function subitemsOf(ctx, item) {
   return index.get(item.id) ?? [];
 }
 
-/** How many updates `item` has (all items counted once per request). */
-function updatesCount(item, _a, ctx) {
-  const { store } = ctx;
-  const counts = perRequest(ctx, "update_counts", () =>
-    store.countUpdatesByItem(),
-  );
-  return counts.get(item.id) ?? 0;
-}
-
 const Item = {
   board: (item, _a, { store }) => store.getBoard(item.board_id),
   group: (item, _a, { store }) => store.getGroup(item.board_id, item.group_id),
   creator,
   column_values: columnValues,
-  updates: (item, { limit }, { store }) =>
-    store.listUpdates(item.id, { limit: readLimit(limit) }),
   parent_item_id: (item) => item.parent_id ?? null,
   parent_item: (item, _a, { store }) => store.getItem(item.parent_id ?? null),
   subitems: (item, { limit }, ctx) =>
     subitemsOf(ctx, item).slice(0, readLimit(limit)),
   subitems_count: (item, _a, ctx) => subitemsOf(ctx, item).length,
-  updates_count: updatesCount,
   url: (item, _a, { hostOrigin }) =>
     `${hostOrigin}/#/boards/${item.board_id}/items/${item.id}`,
 };
@@ -339,13 +318,10 @@ export const definition = {
     Query: "items(ids:[ID!]!):[Item!]! my_work(limit:Int=50):[Item!]!",
     Item: `id:ID! name:String! state:State! created_at:String!
       updated_at:String! board:Board! group:Group! creator:User
-      column_values(ids:[String!]):[ColumnValue!]!
-      updates(limit:Int=25):[Update!]! url:String! parent_item_id:ID
-      parent_item:Item subitems(limit:Int=100):[Item!]! subitems_count:Int!
-      updates_count:Int! position:Float!`,
+      column_values(ids:[String!]):[ColumnValue!]! url:String!
+      parent_item_id:ID parent_item:Item subitems(limit:Int=100):[Item!]!
+      subitems_count:Int! position:Float!`,
     ColumnValue: "id:String! type:ColumnType! text:String value:String",
-    Update:
-      "id:ID! body:String! author_name:String created_at:String! creator:User",
     Mutation: `create_item(board_id:ID!,group_id:String,item_name:String!,column_values:String):Item!
       create_subitem(parent_item_id:ID!,item_name:String!,column_values:String):Item!
       change_column_value(board_id:ID!,item_id:ID!,column_id:String!,value:String!):Item!
@@ -353,10 +329,9 @@ export const definition = {
       change_multiple_column_values(board_id:ID!,item_id:ID!,column_values:String!):Item!
       move_item(item_id:ID!,before_item_id:ID,after_item_id:ID,parent_item_id:ID,detach_parent:Boolean=false,group_id:String,column_values:String):Item!
       move_item_to_group(item_id:ID!,group_id:String!):Item!
-      delete_item(item_id:ID!):Item!
-      create_update(item_id:ID!,body:String!):Update!`,
+      delete_item(item_id:ID!):Item!`,
   },
-  resolvers: { Query, Mutation, Item, Update: { creator } },
+  resolvers: { Query, Mutation, Item },
   extras: {
     "Item.url": { versions: { addedIn: "2026-04" } },
     "Query.my_work": { description: "Items assigned to the caller." },
@@ -375,10 +350,6 @@ export const definition = {
     "Mutation.move_item_to_group": {
       description:
         "Moves an item to the end of another group of its board (a move within its own group changes nothing).",
-    },
-    "Update.author_name": {
-      description:
-        "The source author of an imported update who has no user here.",
     },
   },
 };

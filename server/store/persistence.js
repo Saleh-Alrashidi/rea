@@ -12,7 +12,10 @@
  * (`legacy-texts.js`), `/3` has no subitems, column roles or update
  * authors, which `/4` adds (SPEC-5 §1.1), and `/4` kept item positions
  * per group, which `/5` renumbers into one order per board in display
- * order (SPEC-6 §1.2, `positions.upgradeItemPositions`). The store keeps
+ * order (SPEC-6 §1.2, `positions.upgradeItemPositions`); `/5` has no
+ * replies, edits, pins, likes or mention tokens, which `/6` adds (SPEC-6
+ * §2.1: `likes` starts empty and plain bodies that would read as tokens
+ * are escaped, `updates.upgradeUpdateBodies`). The store keeps
  * a copy of the old file (`keepLegacyCopy`, `<file>.v<version>.bak`) and
  * saves the result in the current format, which older versions refuse as
  * unsupported. Every load then adds a List view to boards without one
@@ -64,8 +67,9 @@ import { addListViews, columnRoleProblem, makeColumn } from "./boards.js";
 import { upgradeLegacyTexts } from "./legacy-texts.js";
 import { upgradeItemPositions } from "./positions.js";
 import { parentProblem } from "./subitems.js";
+import { updateProblem, upgradeUpdateBodies } from "./updates.js";
 
-const VERSION = 5;
+const VERSION = 6;
 const formatOf = (version) => `mini-monday-store/${version}`;
 export const FORMAT = formatOf(VERSION);
 /** Older versions this one loads: version → upgrade to the next version. */
@@ -74,7 +78,10 @@ const UPGRADES = new Map([
   // Every /4 addition is optional, so a /3 state is a /4 state as it is.
   [3, () => {}],
   [4, upgradeItemPositions],
+  [5, upgradeUpdateBodies],
 ]);
+/** Collections newer versions added: name → the version that added it. */
+const ADDED_IN = new Map([["likes", 6]]);
 export const MAX_DATA_BYTES = 256 * 1024 * 1024;
 const SAVE_DELAY_MS = 50;
 
@@ -213,7 +220,9 @@ const SHAPES = {
     "id:id board_id:id group_id:slug parent_id:id~ name:str position:num " +
     "state:active creator_id:id? created_at:str updated_at:str values:obj",
   updates:
-    "id:id item_id:id body:str author_name:str~ creator_id:id? created_at:str",
+    "id:id item_id:id parent_update_id:id~ body:str author_name:str~ creator_id:id? " +
+    "created_at:str edited_at:str~ pinned_at:str~",
+  likes: "update_id:id user_id:id created_at:str",
   docs:
     "id:id workspace_id:id title:str visibility:docVisibility members:grants blocks:blocks version:int " +
     "created_by:id? updated_by:id? created_at:str updated_at:str",
@@ -290,6 +299,8 @@ function checkItems(state, fail) {
   }
   const parents = parentProblem(state.items);
   if (parents) fail(parents);
+  const updates = updateProblem(state);
+  if (updates) fail(updates);
 }
 
 function checkColumnRoles(state, fail) {
@@ -327,12 +338,20 @@ function checkReferences(state, fail) {
   }
 }
 
-function readCollections(doc, fail) {
+/**
+ * The collections of `doc` (a file of `version`) with checked fields; a
+ * collection added after `version` starts empty.
+ */
+function readCollections(doc, version, fail) {
   const state = { format: FORMAT, next_id: doc.next_id };
   for (const [name, shape] of Object.entries(SHAPES)) {
     const checks = fieldChecks(shape);
-    if (!Array.isArray(doc[name])) fail(`${name} must be an array`);
-    state[name] = doc[name].map((record, index) => {
+    const records =
+      doc[name] === undefined && version < (ADDED_IN.get(name) ?? 0)
+        ? []
+        : doc[name];
+    if (!Array.isArray(records)) fail(`${name} must be an array`);
+    state[name] = records.map((record, index) => {
       if (!isPlainObject(record) || !checks.every(([f, ok]) => ok(record[f])))
         fail(`${name}[${index}] is malformed`);
       const fields = checks
@@ -381,7 +400,7 @@ export async function loadState(file) {
   }
   if (!Number.isSafeInteger(doc.next_id) || doc.next_id < 1)
     fail("invalid next_id");
-  const state = readCollections(doc, fail);
+  const state = readCollections(doc, version, fail);
   state.columns = state.columns.map((c) => deepFreeze(makeColumn(c)));
   state.groups.sort((a, b) => a.position - b.position);
   checkCounters(state, fail);

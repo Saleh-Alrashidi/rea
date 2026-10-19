@@ -6,7 +6,8 @@
  * are cleared with a warning, parent cycles are broken, and an item
  * nested deeper than Worklane's MAX_SUBITEM_DEPTH becomes a subitem of
  * its deepest ancestor that is allowed to have one (`subitems_flattened`).
- * `readBoard` is a generator that yields every ITEMS_PER_STEP items
+ * Beyond SPEC-4 §2, an update may carry its `replies` (updates, one level;
+ * SPEC-6 §2.1), absent when it has none. `readBoard` is a generator that yields every ITEMS_PER_STEP items
  * (`slices.js`).
  *
  * Beyond SPEC-4 §2, a Board may say where it sits in its source: `folder`
@@ -18,6 +19,7 @@
 import { ACCESS_ROLES, ROLE_RANK } from "../access.js";
 import { LIMITS, isPlainObject } from "../input.js";
 import { BOARD_KINDS, GROUP_COLOR, deepFreeze } from "../store-state.js";
+import { fitText } from "../mentions.js";
 import { MAX_SUBITEM_DEPTH } from "../store/subitems.js";
 import {
   capLabels,
@@ -46,6 +48,11 @@ const ITEMS_PER_STEP = 64;
 
 // ------------------------------------------------------------------- items
 
+/**
+ * One update without its replies: null on an error, undefined when it is
+ * left out (empty). The body is cut so that its stored form (mention
+ * tokens escaped, `mentions.fitText`) fits LIMITS.updateBody.
+ */
 function readUpdate(c, raw, { path, users, scope }) {
   if (!readObject(c, raw, path)) return null;
   if (typeof raw.body !== "string") {
@@ -57,7 +64,8 @@ function readUpdate(c, raw, { path, users, scope }) {
     c.repeat(scope, "empty_update", path, "An empty update was left out");
     return undefined;
   }
-  if (body.length > LIMITS.updateBody) {
+  const fitted = fitText(body, LIMITS.updateBody);
+  if (fitted !== body) {
     const message = `An update longer than ${LIMITS.updateBody} characters was cut`;
     c.repeat(scope, "truncated", path, message);
   }
@@ -75,7 +83,7 @@ function readUpdate(c, raw, { path, users, scope }) {
       "An unknown update author was left out",
     );
   return {
-    body: truncate(body, LIMITS.updateBody),
+    body: fitted,
     author_source_id: known ? authorId : null,
     author_name: name,
     created_at: readTime(c, raw.created_at, {
@@ -85,8 +93,28 @@ function readUpdate(c, raw, { path, users, scope }) {
   };
 }
 
+/**
+ * The `replies` of update `raw` at `args.path`, read as replies (one
+ * level: replies of a reply join its thread, `replies_flattened`).
+ */
+function readReplies(c, raw, args) {
+  const { path, scope } = args;
+  const list = raw.replies;
+  if (args.reply && Array.isArray(list) && list.length > 0) {
+    const message = "Replies to a reply joined its thread";
+    c.repeat(scope, "replies_flattened", `${path}.replies`, message);
+  }
+  const at = `${path}.replies`;
+  return readUpdates(c, list, { ...args, path: at, reply: true });
+}
+
+/**
+ * Updates (`args.reply`: a thread's replies), each top-level one with its
+ * `replies` when it has any. The replies of an empty update that was left
+ * out become updates (`replies_promoted`).
+ */
 function readUpdates(c, raw, args) {
-  const { path, totals } = args;
+  const { path, totals, scope, reply = false } = args;
   const list = readArray(c, raw, {
     path,
     max: totals.maxUpdates,
@@ -98,11 +126,29 @@ function readUpdates(c, raw, args) {
     c.error(path, "too_large", `At most ${totals.maxUpdates} updates in all`);
     return null;
   }
-  const updates = list.map((entry, index) =>
-    readUpdate(c, entry, { ...args, path: `${path}[${index}]` }),
-  );
-  return updates.includes(null) ? null : updates.filter(Boolean);
+  let failed = false;
+  const updates = [];
+  for (const [index, entry] of list.entries()) {
+    const at = `${path}[${index}]`;
+    const update = readUpdate(c, entry, { ...args, path: at });
+    const thread =
+      update === null ? null : readReplies(c, entry, { ...args, path: at });
+    if (thread === null) failed = true;
+    else if (reply) updates.push(...(update ? [update] : []), ...thread);
+    else if (update) {
+      updates.push(thread.length > 0 ? { ...update, replies: thread } : update);
+    } else if (thread.length > 0) {
+      const message = "Replies to an empty update became updates";
+      c.repeat(scope, "replies_promoted", at, message);
+      updates.push(...thread);
+    }
+  }
+  return failed ? null : updates;
 }
+
+/** How many updates `item` (a snapshot item) has, replies included. */
+export const updateCount = (item) =>
+  item.updates.reduce((n, update) => n + 1 + (update.replies?.length ?? 0), 0);
 
 /** A reference ID (string or safe integer) as text, else null. */
 function refId(value) {

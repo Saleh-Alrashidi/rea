@@ -34,6 +34,7 @@ import {
   warn,
 } from "./report.js";
 import { SOURCE_NAMES, validateSnapshot } from "./snapshot.js";
+import { updateCount } from "./snapshot-board.js";
 import { truncate } from "./snapshot-rules.js";
 
 export const AGAIN_SUFFIX = " (imported again)";
@@ -85,7 +86,7 @@ function checkedPlan(snapshot, plan, options) {
 
 function boardCounts(board) {
   const subitems = board.items.filter((i) => i.parent_source_id !== null);
-  const updates = board.items.reduce((sum, i) => sum + i.updates.length, 0);
+  const updates = board.items.reduce((sum, i) => sum + updateCount(i), 0);
   return {
     columns: board.columns.length,
     groups: board.groups.length,

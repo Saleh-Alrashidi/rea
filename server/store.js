@@ -1,8 +1,8 @@
 /**
  * The mini-monday (Worklane) store: `createStore` wires the shared state,
  * change listeners and persistence to the domain modules in
- * `server/store/` (people, workspaces, boards, items, grants, docs, notes,
- * forms, activity, app storage and imports).
+ * `server/store/` (people, workspaces, boards, items, updates, grants,
+ * docs, notes, forms, activity, app storage and imports).
  *
  * Records returned by the store are frozen. Every mutator emits one change
  * event `{ type, board_id?, item_id?, group_id?, column_id?, user_ids?,
@@ -44,6 +44,7 @@ import {
 } from "./store/persistence.js";
 import { seedState } from "./store/seed.js";
 import { storageApi } from "./store/storage.js";
+import { updateApi } from "./store/updates.js";
 import { workspaceApi } from "./store/workspaces.js";
 
 const DOMAINS = [
@@ -51,6 +52,7 @@ const DOMAINS = [
   workspaceApi,
   boardApi,
   itemApi,
+  updateApi,
   moveApi,
   grantApi,
   docApi,

@@ -5,9 +5,9 @@
  * own name as `source_name` (`snapshot-board.js`), private when
  * its space, folder or list is; two groups, Open (`#579bfc`) and Closed
  * (`#00c875`), chosen by the status type (closed and done → Closed);
- * tasks and subtasks (subtasks keep `parent_source_id`); and comments
- * with their threaded replies as updates (plain `comment_text`, oldest
- * first).
+ * tasks and subtasks (subtasks keep `parent_source_id`); and comments as
+ * updates with their threaded replies as `replies` (plain
+ * `comment_text`, oldest first).
  *
  * `createBoard` builds a board from its listing entry, `addDetail` and
  * `addFields` add what `GET /list/{id}` and `/list/{id}/field` say,
@@ -165,23 +165,24 @@ function commentText(raw) {
     .trim();
 }
 
-function addUpdate(state, item, raw, reply) {
+/** Adds comment `raw` to `list`; null (nothing added) past the limit. */
+function addUpdate(state, list, raw) {
   const { ctx } = state;
   if (ctx.counts.updates >= ctx.limits.updates) {
     limitHit(ctx, "updates", state.path);
-    return false;
+    return null;
   }
   ctx.counts.updates += 1;
-  const text = commentText(raw);
   const user = isObject(raw.user) ? raw.user : {};
   const name = str(user.username).trim();
-  item.updates.push({
-    body: text !== "" && reply ? `Reply: ${text}` : text,
+  const update = {
+    body: commentText(raw),
     author_source_id: idOf(user.id),
     author_name: name === "" ? null : name,
     created_at: timeOf(raw.date),
-  });
-  return true;
+  };
+  list.push(update);
+  return update;
 }
 
 /**
@@ -241,15 +242,22 @@ async function replies(state, item, raw) {
   return listOf(json?.comments);
 }
 
-/** Reads the comments (and replies) of one added task into its updates. */
+/**
+ * Reads the comments of one added task into its updates, each with its
+ * threaded replies as `replies` (when it has any).
+ */
 export async function readComments(state, { item, taskId }) {
   if (taskId === null) return;
+  const inTime = (a, b) => timeKey(a) - timeKey(b);
   for (const raw of await topComments(state, item, taskId)) {
-    if (!addUpdate(state, item, raw, false)) break;
+    const update = addUpdate(state, item.updates, raw);
+    if (!update) break;
+    const thread = [];
     for (const reply of await replies(state, item, raw)) {
-      if (!addUpdate(state, item, reply, true)) break;
+      if (!addUpdate(state, thread, reply)) break;
     }
+    if (thread.length > 0) update.replies = thread.sort(inTime);
   }
   // ClickUp lists comments newest first; Worklane keeps them in time order.
-  item.updates.sort((a, b) => timeKey(a) - timeKey(b));
+  item.updates.sort(inTime);
 }

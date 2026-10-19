@@ -5,9 +5,10 @@
  * `importBoard(spec)` checks everything first (`import-spec.js` reads the
  * columns, groups, items and views) and only then writes the board with
  * its grants, groups, columns, views, items (subitems with their
- * `parent_id`), updates, activity and `import` metadata in one commit: one
- * save and one `board_imported` event, no per-item events and no
- * notifications (an import must not notify everyone it names). Grants
+ * `parent_id`), updates (replies with their `parent_update_id`), activity
+ * and `import` metadata in one commit: one save and one `board_imported`
+ * event, no per-item events and no notifications (an import must not
+ * notify everyone it names). Grants
  * follow `access.canGrant`; refused ones are reported, not applied. People
  * values keep only users who can open the board (`access.canBeAssigned`,
  * as on every write path); the ones left out are reported. Activity
@@ -49,6 +50,7 @@ import {
   readViews,
 } from "./import-spec.js";
 import { POSITION_SPACING, nextItemPosition } from "./positions.js";
+import { insertUpdate } from "./updates.js";
 
 const MAX_SOURCE_ID = 255;
 const MAX_URL = 2048;
@@ -167,7 +169,7 @@ function estimateBytes(prepared) {
   for (const item of prepared.items.prepared) {
     size += ITEM_BYTES + item.name.length;
     for (const key in item.values) size += valueBytes(key, item.values[key]);
-    for (const update of item.updates)
+    for (const update of item.updates.flatMap((u) => [u, ...u.replies]))
       size +=
         UPDATE_BYTES + update.body.length + (update.author_name ?? "").length;
   }
@@ -225,11 +227,21 @@ function prepareBoard(ctx, spec) {
   return prepared;
 }
 
+/** `insertUpdate` fields of a prepared update (`import-spec.js`). */
+const updateFields = (itemId, update, at) => ({
+  itemId,
+  body: update.body,
+  creatorId: update.creator_id,
+  authorName: update.author_name ?? null,
+  createdAt: update.created_at ?? at,
+});
+
 /**
- * Writes the items with their updates: every item gets its ID first, so
- * a subitem may come before its parent or sit in another group. Items
- * take board-wide positions in spec order, each after the one before
- * (SPEC-6 §1.2), so every group keeps the spec's order.
+ * Writes the items with their updates (replies under their update): every
+ * item gets its ID first, so a subitem may come before its parent or sit
+ * in another group. Items take board-wide positions in spec order, each
+ * after the one before (SPEC-6 §1.2), so every group keeps the spec's
+ * order.
  */
 function insertItems(ctx, board, items) {
   const { state } = ctx;
@@ -250,10 +262,14 @@ function insertItems(ctx, board, items) {
       created_at: created_at ?? at,
       updated_at: at,
     });
-    for (const { created_at: posted, ...update } of list) {
-      const record = { id: nextId(state), item_id: ids[index], ...update };
-      push(state.updates, { ...record, created_at: posted ?? at });
-      updates += 1;
+    for (const { replies, ...update } of list) {
+      const itemId = ids[index];
+      const parent = insertUpdate(ctx, updateFields(itemId, update, at));
+      for (const reply of replies) {
+        const fields = updateFields(itemId, reply, at);
+        insertUpdate(ctx, { ...fields, parentId: parent.id });
+      }
+      updates += 1 + replies.length;
     }
   }
   return updates;
@@ -344,9 +360,10 @@ export function importApi(ctx) {
      * key, title, type, labels?: [{ label, color, type? }], role? }],
      * items: [{ key?, parentKey?, groupKey, name, values: { [columnKey]:
      * value }, creatorId, createdAt, updates: [{ body, creatorId,
-     * createdAt, authorName? }] }], views?: [{ type, name }] }` with
-     * status values as labels and people values as user IDs
-     * (`import-spec.js` has the rules). Returns `{ board, counts: {
+     * createdAt, authorName?, replies? }] }], views?: [{ type, name }] }`
+     * with status values as labels and people values as user IDs
+     * (`import-spec.js` has the rules; replies count as updates). Returns
+     * `{ board, counts: {
      * groups, columns, items, updates }, refused: [{ index, userId,
      * reason, message }], unassigned: [{ index, columnKey, userIds }] }`;
      * null for an unknown workspace or an inactive importer; a failure
